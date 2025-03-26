@@ -147,8 +147,6 @@ def gen_samples(inputs,sampler,params):
         rewards.append(reward_correct(inp, a) + reward_format(inp, a))
 
     print(rewards,np.mean(rewards))
-
-
     datas=batch_process(tip_text,answers,rewards,sampler.tokenizer)
     return datas
 
@@ -260,22 +258,22 @@ if __name__=="__main__":
 
     max_cache_length = MAX_LENGTH_SAMPLE
     mesh = get_jax_mesh2("1,-1,1")
-    state,sampler,train_state_sharding=get_state(mesh,100)
+
+    training_steps=100
+
+    state,sampler,train_state_sharding=get_state(mesh,training_steps)
 
 
     test_fn=jax.jit(training_step,donate_argnums=(0,),)
 
-    for i in range(100):
+    for i in range(training_steps):
         inputs = random.sample(QAs, BATCH)
         datas=gen_samples(repeat(inputs,num_pre_Q),sampler,state.params)
         # batch = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), datas)
 
         for j in range(grad_accum_steps):
-
             local_data=jax.tree_util.tree_map(lambda x:slice_data(x,grad_accum_steps,j)      ,datas,     )
             batch=jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
-
-
             state, metrics=test_fn(state,batch)
             print(f"{j=} {metrics=} {test_fn._cache_size()=} ")
 

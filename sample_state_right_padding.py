@@ -47,7 +47,8 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
     # model_path = 'Qwen/Qwen2-0.5B-Instruct'
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
-    print(config)
+    if jax.process_index()==0:
+        print(config)
     # Load the base model with adapters on top
 
     jax_config = LlamaJaxConfig(mesh=mesh)
@@ -123,16 +124,19 @@ class SampleState:
     # logits_buffer:
 
 
-def create_sample_state(input_ids_pad, position_ids, cache, pad_attention, true_length, decoding_step=0):
+def create_sample_state(input_ids_pad, position_ids, cache, pad_attention, true_length, decoding_step=0,key=None):
 
-    key=random.randint(0, 2036)
-    key=2036
+
+    if key is None:
+        key=random.randint(0, 2036)
+        key=2036
+        key=jax.random.PRNGKey(key)
     print(f'{key=}')
 
     sample_state = SampleState(decoding_step=decoding_step, num_input_tokens=true_length, token_buffer=input_ids_pad,
                                positions=position_ids, cache=cache, attention_mask=pad_attention,
                                next_token_buffer=jnp.zeros((pad_attention.shape[0])),
-                               key=jax.random.PRNGKey(key),
+                               key=key,
                                dones=jnp.zeros((pad_attention.shape[0]), dtype=jnp.bool),
                                sample_steps=jnp.zeros((pad_attention.shape[0]), dtype=jnp.int32)
                                )
@@ -147,6 +151,7 @@ class Sampler:
         self.mesh=mesh
 
         # self.sample_fn = _greedy_sampling
+        self.key=jax.random.PRNGKey(2036)
 
         self.sample_fn=_temperature_sampling
 
@@ -258,8 +263,8 @@ class Sampler:
         input_ids_pad, pad_attention, position_ids, prefill_length = self.preprocess_prompt_prefill(prompt,
                                                                                                     prefill_length)
 
-
-        print(f'{prefill_length=}')
+        if jax.process_index()==0:
+            print(f'{prefill_length=}')
         cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,shard_method=self.global_collect_method)
 
         # input_ids_pad, pad_attention, position_ids,cache=self.jit_init_data((input_ids_pad, pad_attention, position_ids,cache))
@@ -287,20 +292,7 @@ class Sampler:
         input_ids_pad = input_ids_pad.at[:, prefill_length].set(next_token_predict)
         sample_state = create_sample_state(input_ids_pad=input_ids_pad, position_ids=position_ids, cache=cache,
                                            pad_attention=pad_attention, true_length=prefill_length,
-                                           decoding_step=prefill_length)
-
-        # output = \
-        #     self.tokenizer.batch_decode(
-        #         np.array(sample_state.token_buffer[0,]).reshape(1, -1),
-        #         skip_special_tokens=False,
-        #         clean_up_tokenization_spaces=False)
-        #
-        # print(output)
-
-
-        exit_token_ids = self.tokenizer.eos_token_id
-
-
+                                           decoding_step=prefill_length,key=self.key)
 
         for i in tqdm(range(max_length)):
             sample_state = self.jit_infer_step(sample_state, params)
@@ -325,6 +317,8 @@ class Sampler:
                                             clean_up_tokenization_spaces=False)
 
             texts.extend(output)
+
+        self.key=sample_state.key
 
         return texts
 

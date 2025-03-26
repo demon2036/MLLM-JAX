@@ -32,8 +32,8 @@ max_prompt_length = 400
 num_pre_Q = 8
 MAX_LENGTH_SAMPLE = 512
 MAX_LENGTH = MAX_LENGTH_SAMPLE + 512  # -128
-BATCH = 16
-grad_accum_steps = 8
+BATCH = 2
+grad_accum_steps = 1
 
 
 def _build_global_shape_and_sharding(

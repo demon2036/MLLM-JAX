@@ -264,7 +264,7 @@ class Sampler:
         position_ids = jnp.max(position_ids,axis=1).reshape((-1,1)) + 1
 
 
-        return self.global_collect_method((cache, input_ids_pad, pad_attention, position_ids))
+        return jax.tree_util.tree_map(self.global_collect_method,(cache, input_ids_pad, pad_attention, position_ids))
 
         # return cache, input_ids_pad, pad_attention, position_ids
 

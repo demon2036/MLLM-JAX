@@ -33,8 +33,24 @@ def _form_global_array(path, array: np.ndarray, global_mesh: Mesh) -> jax.Array:
   return jax.make_array_from_single_device_arrays(global_shape, sharding, local_device_buffers)
 
 
+def _top_k_sampling_batched(rng, logits, k=10, t=0.9):
+  # 对所有样本的 logits 应用温度缩放
+  logits = logits / t
 
+  # 定义对单个样本的 top-k 采样函数
+  def sample_single(rng, logits):
+    # 提取 logits 中最高的 k 个值及其对应的索引
+    top_logits, top_indices = jax.lax.top_k(logits, k)
+    # 在 top_logits 上进行 categorical 采样
+    sampled_index = jax.random.categorical(rng, top_logits)
+    # 返回采样后对应原 logits 的索引
+    return top_indices[sampled_index]
 
+  # 分割 rng 以获得每个 batch 的独立随机数种子
+  batch_size = logits.shape[0]
+  rngs = jax.random.split(rng, batch_size)
+  # 对每个样本使用 vmap 进行采样
+  return jax.vmap(sample_single)(rngs, logits)
 
 def _temperature_sampling(rng,logits ,t=0.9):
   return jax.random.categorical(rng, logits / t)

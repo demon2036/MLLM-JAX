@@ -333,9 +333,9 @@ class Sampler:
 
             texts.extend(output)
 
-        texts2= self.tokenizer.batch_decode(local_token_buffer[:,prefill_length:],
-                                        skip_special_tokens=True,
-                                        )
+        # texts2= self.tokenizer.batch_decode(local_token_buffer[:,prefill_length:],
+        #                                 skip_special_tokens=True,
+        #                                 )
 
 
         # if jax.process_index()==0:

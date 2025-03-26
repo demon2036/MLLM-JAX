@@ -36,42 +36,6 @@ MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 BATCH=16
 grad_accum_steps = 8
 
-
-def _build_global_shape_and_sharding(
-        local_shape: tuple[int, ...], global_mesh: Mesh
-) -> tuple[tuple[int, ...], NamedSharding]:
-    sharding = NamedSharding(global_mesh, PartitionSpec(global_mesh.axis_names))
-
-    global_shape = (jax.process_count() * local_shape[0],) + local_shape[1:]
-
-    return global_shape, sharding
-
-
-def _form_global_array(path, array: np.ndarray, global_mesh: Mesh) -> jax.Array:
-    """Put local sharded array into local devices"""
-
-    global_shape, sharding = _build_global_shape_and_sharding(np.shape(array), global_mesh)
-    try:
-        local_device_arrays = np.split(array, len(global_mesh.local_devices), axis=0)
-    except ValueError as array_split_error:
-        raise ValueError(
-            f"Unable to put to devices shape {array.shape} with "
-            f"local device count {len(global_mesh.local_devices)} "
-            f"at {jtu.keystr(path)}"
-        ) from array_split_error
-
-    local_device_buffers = jax.device_put(local_device_arrays, global_mesh.local_devices)
-    return jax.make_array_from_single_device_arrays(global_shape, sharding, local_device_buffers)
-
-
-
-
-
-
-# model_path = 'Qwen/Qwen2-0.5B'
-# model_path='Qwen/Qwen2-7B-Instruct'
-# model_path = 'Qwen/Qwen2.5-7B'
-# model_path = 'Qwen/Qwen2.5-14B'
 model_path = 'Qwen/Qwen2.5-3B'
 tokenizer = AutoTokenizer.from_pretrained(model_path)
 system_prompt = """You are a helpful assistant. A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the user with the answer.\
@@ -238,8 +202,56 @@ def get_state(mesh,training_steps=100):
 
 
 
+def training_step(state: TrainState, inputs: ArrayTree,) -> tuple[TrainState, ArrayTree]:
+
+    def loss_fn(params: ArrayTree) -> ArrayTree:
+        metrics=state.apply_fn({'params': {'model':params,'ref_model':state.ref_params }, },inputs)
+        metrics = jax.tree_map(jnp.mean, metrics)
+        return metrics["loss"], metrics
+
+    def update_fn(state: TrainState) -> TrainState:
+        # Collect a global gradient from the accumulated gradients and apply actual
+        # parameter update with resetting the accumulations to zero.
+        grads = jax.tree_map(lambda g: g / state.micro_in_mini, state.grad_accum)
+        state = state.apply_gradients(
+            grads=grads,
+            grad_accum=jax.tree_map(jnp.zeros_like, state.grad_accum),
+            micro_step=state.micro_step % state.micro_in_mini,
+        )
+        return state
+
+
+    (_, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params)
+
+    # Update parameters with the gradients. If the gradient accumulation is enabled,
+    # then the parameters will be updated at the end of each mini-batch step. In every
+    # micro steps, the gradients will be accumulated.
+    if state.grad_accum is None:
+        state = state.apply_gradients(grads=grads)
+    else:
+        state = state.replace(
+            grad_accum=jax.tree_map(lambda ga, g: ga + g, state.grad_accum, grads),
+            micro_step=state.micro_step + 1,
+        )
+        state = jax.lax.cond(
+            state.micro_step == state.micro_in_mini, update_fn, lambda x: x, state
+        )
+    return state, metrics
+
+
+def slice_data(x,accumulate_steps,i):
+    b,*_=x.shape
+    assert b%accumulate_steps==0
+    micro_batch_size=b//accumulate_steps
+    data=x[i*micro_batch_size:(i+1)*micro_batch_size]
+    print(data.shape)
+    return data
+
 
 if __name__=="__main__":
+    jax.distributed.initialize()
+
+
     dataset = load_dataset("openai/gsm8k", "main", split="train")
     QAs = [{'Q': x, 'A': y.split('####')[-1].strip()} for x, y in zip(dataset['question'], dataset['answer'])]
 
@@ -249,57 +261,7 @@ if __name__=="__main__":
     state,sampler,train_state_sharding=get_state(mesh,100)
 
 
-
-    def training_step(state: TrainState, inputs: ArrayTree,) -> tuple[TrainState, ArrayTree]:
-
-        def loss_fn(params: ArrayTree) -> ArrayTree:
-            metrics=state.apply_fn({'params': {'model':params,'ref_model':state.ref_params }, },inputs)
-            metrics = jax.tree_map(jnp.mean, metrics)
-            return metrics["loss"], metrics
-
-        def update_fn(state: TrainState) -> TrainState:
-            # Collect a global gradient from the accumulated gradients and apply actual
-            # parameter update with resetting the accumulations to zero.
-            grads = jax.tree_map(lambda g: g / state.micro_in_mini, state.grad_accum)
-            state = state.apply_gradients(
-                grads=grads,
-                grad_accum=jax.tree_map(jnp.zeros_like, state.grad_accum),
-                micro_step=state.micro_step % state.micro_in_mini,
-            )
-            return state
-
-
-        (_, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params)
-
-        # Update parameters with the gradients. If the gradient accumulation is enabled,
-        # then the parameters will be updated at the end of each mini-batch step. In every
-        # micro steps, the gradients will be accumulated.
-        if state.grad_accum is None:
-            state = state.apply_gradients(grads=grads)
-        else:
-            state = state.replace(
-                grad_accum=jax.tree_map(lambda ga, g: ga + g, state.grad_accum, grads),
-                micro_step=state.micro_step + 1,
-            )
-            state = jax.lax.cond(
-                state.micro_step == state.micro_in_mini, update_fn, lambda x: x, state
-            )
-        return state, metrics
-
-
-
-
     test_fn=jax.jit(training_step,donate_argnums=(0,),)
-
-
-    def slice_data(x,accumulate_steps,i):
-        b,*_=x.shape
-        assert b%accumulate_steps==0
-        micro_batch_size=b//accumulate_steps
-        data=x[i*micro_batch_size:(i+1)*micro_batch_size]
-        print(data.shape)
-        return data
-
 
     for i in range(100):
         inputs = random.sample(QAs, BATCH)
@@ -309,7 +271,6 @@ if __name__=="__main__":
         for j in range(grad_accum_steps):
             batch=sampler.jit_init_data(jax.tree_util.tree_map(lambda x:slice_data(x,grad_accum_steps,j)      ,datas,     ))
             state, metrics=test_fn(state,batch)
-
 
         print(f"{i=} {metrics=}")
 

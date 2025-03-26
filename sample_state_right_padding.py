@@ -294,6 +294,14 @@ class Sampler:
             sample_state = self.jit_infer_step(sample_state, params)
             if jnp.all(sample_state.dones):
                 break
+
+
+
+        print(sample_state.token_buffer.shape)
+        while True:
+            params
+
+
         texts=[]
         for i,step in enumerate(sample_state.sample_steps):
             output = \

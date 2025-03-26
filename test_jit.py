@@ -87,7 +87,7 @@ def gen_answers_jax(prompts,sampler,params):
 
     for ans in answers:
         print(ans,len(ans))
-        print()
+        print('\n'*2,flush=True)
 
 
     while True:

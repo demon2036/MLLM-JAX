@@ -43,17 +43,10 @@ pip install einops gcsfs tensorflow tpu-info
 
 #pip install -U flax
 
-#
-## 3. Install Pillow-SIMD.
-conda install -c conda-forge -y libjpeg-turbo
-pip uninstall -y pillow
-CC="cc -mavx2" pip install -U --force-reinstall pillow-simd
-
 
 pip3 install -q "overrides" "ml_collections" "einops~=0.7" "sentencepiece" transformers datasets kaggle kagglehub
 
-pip install cloud_tpu_client fastapi uvicorn math_verify
+pip install cloud_tpu_client fastapi uvicorn math_verify huggingface_hub[hf_transfer]
 
 
-export HF_TOKEN=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
 

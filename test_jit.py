@@ -33,7 +33,7 @@ import jax.numpy as jnp
 
 max_prompt_length=400
 num_pre_Q=16
-MAX_LENGTH_SAMPLE=512
+MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 BATCH=1
 grad_accum_steps = 1
@@ -281,8 +281,8 @@ if __name__=="__main__":
             local_data=jax.tree_util.tree_map(lambda x:slice_data(x,grad_accum_steps,j)      ,datas,     )
             batch=jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
             state, metrics=test_fn(state,batch)
-            print(f"{j=} {metrics=} {test_fn._cache_size()=} ")
-
+            # print(f"{j=} {metrics=} {test_fn._cache_size()=} ")
+        print(f"{i=} ")
 
         # print(metrics)
 

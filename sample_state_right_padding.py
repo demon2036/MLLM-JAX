@@ -314,10 +314,15 @@ class Sampler:
 
         texts=[]
         for i,step in enumerate(local_sample_step):
+            # output = \
+            #     self.tokenizer.batch_decode(local_token_buffer[i, prefill_length:prefill_length+step+1].reshape(1, -1),
+            #                                 skip_special_tokens=False,
+            #                                 clean_up_tokenization_spaces=False)
+
             output = \
-                self.tokenizer.batch_decode(local_token_buffer[i, prefill_length:prefill_length+step+1].reshape(1, -1),
-                                            skip_special_tokens=False,
-                                            clean_up_tokenization_spaces=False)
+                self.tokenizer.batch_decode(local_token_buffer[i, prefill_length:prefill_length + step + 1].reshape(1, -1),
+                                        skip_special_tokens=True,
+                                        )
 
             texts.extend(output)
 

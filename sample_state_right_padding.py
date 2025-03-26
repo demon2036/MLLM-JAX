@@ -126,6 +126,7 @@ class SampleState:
 def create_sample_state(input_ids_pad, position_ids, cache, pad_attention, true_length, decoding_step=0):
 
     key=random.randint(0, 2036)
+    key=2036
     print(f'{key=}')
 
     sample_state = SampleState(decoding_step=decoding_step, num_input_tokens=true_length, token_buffer=input_ids_pad,

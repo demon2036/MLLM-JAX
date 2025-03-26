@@ -66,8 +66,15 @@ class TrainGRPOModule(nn.Module):
         labels=inputs['labels']
         rewards = inputs['rewards']
 
+        print(input_ids.shape)
+        jax.debug.inspect_array_sharding(input_ids,callback=print)
+
         logits, cache = self.model( input_ids=input_ids,
                                        attention_mask=attention_mask)
+
+        print(logits.shape)
+        jax.debug.inspect_array_sharding(logits,callback=print)
+
 
         chosen_ids = input_ids[:, 1:]  # (B, L-1), exclude the first input ID since we don't have logits for it
         mask_loss = labels[:, 1:] != self.pad_token_id

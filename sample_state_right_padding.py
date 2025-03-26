@@ -224,11 +224,9 @@ class Sampler:
 
 
         # global_length=jnp.max(process_allgather(input_ids.shape[1]))
-
+        # _form_global_array(np.array(input_ids.shape[1]))
         global_length=512
 
-
-        # _form_global_array(np.array(input_ids.shape[1]))
 
 
         prefill_length = self.find_ceil(global_length)

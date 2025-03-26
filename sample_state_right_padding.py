@@ -160,7 +160,7 @@ class Sampler:
         self.jit_infer_prefill = jax.jit(self.model.apply)
         self.jit_infer_step = jax.jit(self.infer)
 
-        self.sample_fn=_nucleus_sampling
+        self.sample_fn=_temperature_sampling
 
         self.prefill_bucket = [
              32, 256,512, 1024, 2048, 4096, 8192

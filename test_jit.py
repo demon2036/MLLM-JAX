@@ -32,10 +32,10 @@ from sample_state_right_padding import get_model, Sampler
 import jax.numpy as jnp
 
 max_prompt_length=400
-num_pre_Q=8
+num_pre_Q=16
 MAX_LENGTH_SAMPLE=2048
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-BATCH=16
+BATCH=8
 grad_accum_steps = 8
 
 model_path = 'Qwen/Qwen2.5-3B'
@@ -171,12 +171,12 @@ def get_state(mesh,training_steps=100):
         learning_rate = optax.warmup_cosine_decay_schedule(
             init_value=1e-7,
             peak_value=1e-6,
-            warmup_steps=int(training_steps*0.1),
+            warmup_steps=int(training_steps*0.05),
             decay_steps=training_steps,
             end_value=1e-7,
         )
-        # tx = optax.adamw(learning_rate)
-        tx = optax.lion(learning_rate)
+        tx = optax.adamw(learning_rate)
+        # tx = optax.lion(learning_rate)
         # tx = optax.sgd(learning_rate)
         if grad_accum_steps > 1:
             print(f'{grad_accum_steps=}')

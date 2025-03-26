@@ -50,7 +50,7 @@ def _top_k_sampling_batched(rng, logits, k=50, t=0.9):
 
 
     # 返回采样后对应原 logits 的索引
-    return jnp.take_along_axis(top_indices,sampled_index[None,...],axis=1)
+    return jnp.take_along_axis(top_indices,sampled_index[None,...],axis=1)[...,-1]
 
   # 分割 rng 以获得每个 batch 的独立随机数种子
   batch_size = logits.shape[0]

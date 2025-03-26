@@ -152,7 +152,11 @@ def gen_samples(inputs,sampler,params):
     #         rewards.append(reward_correct(inp, a) + reward_format(inp, a))
 
     for i, (inp,a) in enumerate(zip(inputs,answers)):
-        rewards.append(reward_correct(inp, a) + reward_format(inp, a))
+        try:
+            rewards.append(reward_correct(inp, a) + reward_format(inp, a))
+        except Exception as e:
+            print(e,a)
+            rewards.append(-10)
 
     print(rewards,np.mean(rewards))
     datas=batch_process(tip_text,answers,rewards,sampler.tokenizer)

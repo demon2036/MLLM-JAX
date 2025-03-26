@@ -169,8 +169,8 @@ def get_state(mesh,training_steps=100):
     def init_fn(params):
 
         learning_rate = optax.warmup_cosine_decay_schedule(
-            init_value=1e-6,
-            peak_value=1e-5,
+            init_value=1e-7,
+            peak_value=1e-6,
             warmup_steps=int(training_steps*0.1),
             decay_steps=training_steps,
             end_value=1e-7,

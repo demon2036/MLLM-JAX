@@ -162,6 +162,11 @@ class Sampler:
 
         print(        data_sharding.mesh.shape)
 
+
+        while True:
+            pass
+
+
         def warp_sample_fn(rng,logits):
             rngs=jax.random.split(rng,(data_sharding.mesh.shape)[0])
 

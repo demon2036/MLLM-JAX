@@ -303,9 +303,7 @@ class Sampler:
 
 
 
-        print(sample_state.token_buffer.shape)
-        while True:
-            params
+
 
 
         texts=[]
@@ -318,6 +316,11 @@ class Sampler:
             texts.extend(output)
             # print(output[0])
         # print(texts)
+
+        print(texts[0])
+        print(sample_state.token_buffer.shape)
+        while True:
+            params
 
         # while True:
         #     pass

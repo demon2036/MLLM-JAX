@@ -243,8 +243,8 @@ def get_partition_rules_llama():
         ('.*/mlp/down_proj/kernel', PS('fsdp', 'tp')),
 
         ('embed_tokens/embedding', PS('fsdp', 'tp')),
-        # ('lm_head/kernel', PS('fsdp', 'tp')),
-        ('lm_head/kernel', PS('tp','fsdp', )),
+        ('lm_head/kernel', PS('fsdp', 'tp')),
+        # ('lm_head/kernel', PS('tp','fsdp', )),
 
         ('scale',PS('tp')),
 

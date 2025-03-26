@@ -2,6 +2,8 @@ import copy
 import os
 from typing import Any
 
+import tqdm
+
 os.environ['JAX_TRACEBACK_FILTERING']='off'
 
 
@@ -273,10 +275,9 @@ if __name__=="__main__":
             local_data=jax.tree_util.tree_map(lambda x:slice_data(x,grad_accum_steps,j)      ,datas,     )
             batch=jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
 
-            for i in range(100):
+            for i in tqdm.tqdm(range(100)):
                 state, metrics=test_fn(state,batch)
-
-                print(f"{i=} {metrics=}")
+                print(f"{i=} {metrics=} {test_fn._cache_size()=} ")
 
 
         # print(metrics)

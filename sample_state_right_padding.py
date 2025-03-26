@@ -191,6 +191,10 @@ class Sampler:
         key, key2 = jax.random.split(sample_state.key)
         next_token_predict = self.sample_fn(key2, logits[:, -1])
 
+
+        next_token_predict=jnp.where(sample_state.dones,self.tokenizer.eos_token_id,next_token_predict)
+
+
         dones = sample_state.dones | (next_token_predict == self.tokenizer.eos_token_id)
 
         sample_state.dones=dones

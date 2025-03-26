@@ -33,7 +33,7 @@ def _form_global_array(path, array: np.ndarray, global_mesh: Mesh) -> jax.Array:
   return jax.make_array_from_single_device_arrays(global_shape, sharding, local_device_buffers)
 
 
-def _top_k_sampling_batched(rng, logits, k=10, t=0.9):
+def _top_k_sampling_batched(rng, logits, k=50, t=0.9):
   # 对所有样本的 logits 应用温度缩放
   logits = logits / t
 

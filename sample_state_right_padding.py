@@ -245,15 +245,8 @@ class Sampler:
     def prepare_from_prefill_to_decode(self, cache, input_ids_pad, pad_attention, position_ids, max_length=8192):
 
         b, prefill_length = input_ids_pad.shape
-
-        print('test1')
-
-
         cache,input_ids_pad,pad_attention,position_ids=jax.tree_util.tree_map(collect_process_data,(cache,input_ids_pad,pad_attention,position_ids))
-
-        print('test2')
         cache = pad_cache_right(cache, prefill_length, max_length, )
-        print('test3')
 
         input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length)),
                                 constant_values=self.tokenizer.eos_token_id)
@@ -289,24 +282,19 @@ class Sampler:
         input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method,
                                                                                   (input_ids_pad, pad_attention, position_ids))
 
-        print(1)
         logits, cache = self.jit_infer_prefill({'params': params}, input_ids=input_ids_pad,
                                                position_ids=position_ids,
                                                attention_mask=pad_attention, cache=cache)
-        print(2)
         cache, input_ids_pad, pad_attention, position_ids = self.prepare_from_prefill_to_decode(cache, input_ids_pad,
                                                                                                 pad_attention,
                                                                                                 position_ids,
                                                                                                 max_length=max_length)
 
 
-
-        print(3)
         next_token_logits=jnp.take_along_axis(logits,position_ids[...,None]-1,axis=1)[:,-1]
         # next_token_predict = jnp.argmax(, axis=-1)[:,0]
         next_token_predict=self.sample_fn(self.key,next_token_logits)
 
-        print(4)
         # next_token_predict = jnp.argmax(logits[:, position_ids-1], axis=1)
         input_ids_pad = input_ids_pad.at[:, prefill_length].set(next_token_predict)
         sample_state = create_sample_state(input_ids_pad=input_ids_pad, position_ids=position_ids, cache=cache,
@@ -317,8 +305,6 @@ class Sampler:
             sample_state = self.jit_infer_step(sample_state, params)
             if jnp.all(sample_state.dones):
                 break
-
-
 
 
 

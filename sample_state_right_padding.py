@@ -246,7 +246,12 @@ class Sampler:
 
         b, prefill_length = input_ids_pad.shape
 
+        print('test1')
         cache = pad_cache_right(cache, prefill_length, max_length, )
+
+
+        print('test2')
+
         input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length)),
                                 constant_values=self.tokenizer.eos_token_id)
 

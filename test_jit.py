@@ -33,7 +33,7 @@ import jax.numpy as jnp
 
 max_prompt_length=400
 num_pre_Q=8
-MAX_LENGTH_SAMPLE=1024
+MAX_LENGTH_SAMPLE=1536
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 BATCH=16
 grad_accum_steps = 8
@@ -170,7 +170,7 @@ def get_state(mesh,training_steps=100):
 
         learning_rate = optax.warmup_cosine_decay_schedule(
             init_value=1e-6,
-            peak_value=1e-6,
+            peak_value=5e-5,
             warmup_steps=int(training_steps*0.1),
             decay_steps=training_steps,
             end_value=1e-7,

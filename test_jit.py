@@ -85,13 +85,14 @@ def gen_answers_jax(prompts,sampler,params):
     # if prompt_length > max_prompt_length: return []
     answers=sampler.generate_prefill_auto_regressive(tip_text, max_length=MAX_LENGTH_SAMPLE,params=params)
 
-    for ans in answers:
-        print(ans,len(ans))
-        print('\n'*2,flush=True)
+    # for ans in answers:
+    #     print(ans,len(ans))
+    #     print('\n'*2,flush=True)
 
+    print(answers[-1])
 
-    while True:
-        pass
+    # while True:
+    #     pass
     return tip_text,answers
 
 
@@ -256,6 +257,7 @@ def slice_data(x,accumulate_steps,i):
 
 if __name__=="__main__":
     jax.distributed.initialize()
+    jax.config.update("jax_compilation_cache_dir", "gs://arm-central-2b/jax-cache")
 
 
     dataset = load_dataset("openai/gsm8k", "main", split="train")

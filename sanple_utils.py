@@ -43,6 +43,9 @@ def _top_k_sampling_batched(rng, logits, k=50, t=0.9):
     top_logits, top_indices = jax.lax.top_k(logits, k)
     # 在 top_logits 上进行 categorical 采样
     sampled_index = jax.random.categorical(rng, top_logits)
+
+    print(sampled_index.shape,top_indices.shape)
+
     # 返回采样后对应原 logits 的索引
     return top_indices[sampled_index]
 

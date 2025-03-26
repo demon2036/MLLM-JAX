@@ -51,6 +51,10 @@ class TrainSFTModule(nn.Module):
 
 
 
+
+
+
+
 class TrainGRPOModule(nn.Module):
     model: Any
     pad_token_id:float
@@ -95,6 +99,8 @@ class TrainGRPOModule(nn.Module):
         mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, self.num_pre_Q, axis=0)
         std_grouped_rewards = jnp.repeat(std_grouped_rewards, self.num_pre_Q, axis=0)
         advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
+
+        print(advantages.shape)
 
         per_token_loss = jnp.exp(per_token_logps - jax.lax.stop_gradient(per_token_logps)) * advantages[..., None]
 

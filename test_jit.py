@@ -138,6 +138,14 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
 
 
 
+def cal_advantages(rewards,groups):
+    mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
+    std_grouped_rewards = rewards.reshape(-1, groups).std(axis=1)
+    mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
+    std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
+    advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
+
+
 
 def gen_samples(inputs,sampler,params):
     prompts = [x["Q"] for x in inputs]

@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import torch
+from jax.experimental.shard_map import shard_map
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
@@ -154,7 +155,11 @@ class Sampler:
         # self.sample_fn = _greedy_sampling
         self.key=jax.random.PRNGKey(2036)
 
-        self.sample_fn=jax.jit(_nucleus_sampling)
+        data_sharding = jax.sharding.NamedSharding(mesh, P(['dp', 'fsdp']))
+
+        sample_fn=shard_map(_top_k_sampling_batched,mesh=mesh,in_specs=P(['dp', 'fsdp'],'tp'),out_specs=P(['dp', 'fsdp']))
+
+        self.sample_fn=jax.jit(sample_fn)
 
 
         self.jit_infer_prefill = jax.jit(self.model.apply)
@@ -166,7 +171,7 @@ class Sampler:
              32, 256,512, 1024, 2048, 4096, 8192
         ]
 
-        data_sharding = jax.sharding.NamedSharding(mesh, P(['dp', 'fsdp']))
+
 
         def init_data(data):
             return data

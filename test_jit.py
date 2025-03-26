@@ -32,7 +32,7 @@ from sample_state_right_padding import get_model, Sampler
 import jax.numpy as jnp
 
 max_prompt_length=400
-num_pre_Q=16
+num_pre_Q=8
 MAX_LENGTH_SAMPLE=2048
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 BATCH=1
@@ -87,6 +87,7 @@ def gen_answers_jax(prompts,sampler,params):
 
     for ans in answers:
         print(ans,len(ans))
+        print()
 
 
     while True:

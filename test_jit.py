@@ -272,9 +272,11 @@ if __name__=="__main__":
 
             local_data=jax.tree_util.tree_map(lambda x:slice_data(x,grad_accum_steps,j)      ,datas,     )
             batch=jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
-            state, metrics=test_fn(state,batch)
 
-        print(f"{i=} {metrics=}")
+            for i in range(100):
+                state, metrics=test_fn(state,batch)
+
+                print(f"{i=} {metrics=}")
 
 
         # print(metrics)

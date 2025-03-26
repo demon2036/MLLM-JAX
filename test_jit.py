@@ -246,7 +246,7 @@ def slice_data(x,accumulate_steps,i):
     assert b%accumulate_steps==0
     micro_batch_size=b//accumulate_steps
     data=x[i*micro_batch_size:(i+1)*micro_batch_size]
-    print(data.shape)
+    # print(data.shape)
     return data
 
 
@@ -275,9 +275,9 @@ if __name__=="__main__":
             local_data=jax.tree_util.tree_map(lambda x:slice_data(x,grad_accum_steps,j)      ,datas,     )
             batch=jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
 
-            for i in tqdm.tqdm(range(100)):
-                state, metrics=test_fn(state,batch)
-                print(f"{i=} {metrics=} {test_fn._cache_size()=} ")
+
+            state, metrics=test_fn(state,batch)
+            print(f"{j=} {metrics=} {test_fn._cache_size()=} ")
 
 
         # print(metrics)

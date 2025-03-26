@@ -162,6 +162,10 @@ class Sampler:
         self.jit_init_data = jax.jit(init_data, out_shardings=data_sharding,)
 
 
+        self.global_collect_method=partial(_form_global_array, global_mesh=self.mesh)
+
+
+
     def infer(self, sample_state: SampleState, params):
         i = sample_state.decoding_step
         last_token = sample_state.token_buffer[:, i].reshape((sample_state.token_buffer.shape[0], 1))
@@ -250,13 +254,11 @@ class Sampler:
 
 
         print(f'{prefill_length=}')
-        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,shard_method=self.jit_init_data)
+        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,shard_method=self.global_collect_method)
 
         # input_ids_pad, pad_attention, position_ids,cache=self.jit_init_data((input_ids_pad, pad_attention, position_ids,cache))
-        input_ids_pad, pad_attention, position_ids,cache = (jax.tree_util.tree_map_with_path
-                                                            (partial(_form_global_array, global_mesh=self.mesh),
-                                                                                  (input_ids_pad, pad_attention, position_ids,cache)))
-
+        input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method,
+                                                                                  (input_ids_pad, pad_attention, position_ids))
 
 
         logits, cache = self.jit_infer_prefill({'params': params}, input_ids=input_ids_pad,

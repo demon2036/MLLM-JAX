@@ -51,7 +51,7 @@ def _top_k_sampling_batched(rng, logits, k=50, t=0.9):
   rngs = jax.random.split(rng, batch_size)
   # 对每个样本使用 vmap 进行采样
 
-  out=jax.vmap(sample_single)(rngs, logits)
+  out=jax.vmap(sample_single)(rngs, logits)[:,0]
   print(out.shape)
 
   return out

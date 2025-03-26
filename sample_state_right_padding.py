@@ -289,10 +289,9 @@ class Sampler:
 
 
 
-        next_token_logits=jnp.take_along_axis(logits,position_ids[...,None]-1,axis=1)[-1]
+        next_token_logits=jnp.take_along_axis(logits,position_ids[...,None]-1,axis=1)[:,-1]
         # next_token_predict = jnp.argmax(, axis=-1)[:,0]
-        print(next_token_logits.shape)
-        next_token_predict=self.sample_fn(self.key,next_token_logits)[:,0]
+        next_token_predict=self.sample_fn(self.key,next_token_logits)
         print(next_token_predict.shape)
 
 

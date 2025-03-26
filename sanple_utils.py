@@ -53,7 +53,11 @@ def _top_k_sampling_batched(rng, logits, k=50, t=0.9):
   batch_size = logits.shape[0]
   rngs = jax.random.split(rng, batch_size)
   # 对每个样本使用 vmap 进行采样
-  return jax.vmap(sample_single)(rngs, logits)
+
+  out=jax.vmap(sample_single)(rngs, logits)
+  print(out.shape)
+
+  return out
 
 def _temperature_sampling(rng,logits ,t=0.9):
   return jax.random.categorical(rng, logits / t)

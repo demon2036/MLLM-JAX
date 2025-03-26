@@ -337,7 +337,7 @@ class Sampler:
 
         if jax.process_index()==0:
             print(texts2[-1])
-            print()
+            print('\n'*5)
             print(texts[-1])
 
 

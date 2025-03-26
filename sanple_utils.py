@@ -44,16 +44,13 @@ def _top_k_sampling_batched(rng, logits, k=50, t=0.9):
     # 在 top_logits 上进行 categorical 采样，返回采样到的相对索引
     sampled_relative_idx = jax.random.categorical(rng, top_logits)
     # 根据采样结果，从 top_indices 中取出对应的绝对索引
-    return top_indices[:,sampled_relative_idx]
+    return top_indices[sampled_relative_idx]  # 修复索引方式
 
   # 分割 rng 以获得每个 batch 的独立随机数种子
   batch_size = logits.shape[0]
   rngs = jax.random.split(rng, batch_size)
   # 对每个样本使用 vmap 进行采样
-
-  out=jax.vmap(sample_single)(rngs, logits)[:,0]
-  print(out.shape)
-
+  out = jax.vmap(sample_single)(rngs, logits)  # 移除多余的[:,0]索引
   return out
 
 def _temperature_sampling(rng,logits ,t=0.9):

@@ -32,7 +32,7 @@ from sample_state_right_padding import get_model, Sampler
 import jax.numpy as jnp
 
 max_prompt_length=400
-num_pre_Q=8
+num_pre_Q=16
 MAX_LENGTH_SAMPLE=512
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 BATCH=1
@@ -89,7 +89,7 @@ def gen_answers_jax(prompts,sampler,params):
     #     print(ans,len(ans))
     #     print('\n'*2,flush=True)
 
-    print(answers[-1])
+    print(answers[-2])
     print('\n' * 2, flush=True)
     return tip_text,answers
 

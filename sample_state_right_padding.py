@@ -124,10 +124,14 @@ class SampleState:
 
 
 def create_sample_state(input_ids_pad, position_ids, cache, pad_attention, true_length, decoding_step=0):
+
+    key=random.randint(0, 2036)
+    print(f'{key=}')
+
     sample_state = SampleState(decoding_step=decoding_step, num_input_tokens=true_length, token_buffer=input_ids_pad,
                                positions=position_ids, cache=cache, attention_mask=pad_attention,
                                next_token_buffer=jnp.zeros((pad_attention.shape[0])),
-                               key=jax.random.PRNGKey(random.randint(0, 2036)),
+                               key=jax.random.PRNGKey(key),
                                dones=jnp.zeros((pad_attention.shape[0]), dtype=jnp.bool),
                                sample_steps=jnp.zeros((pad_attention.shape[0]), dtype=jnp.int32)
                                )
@@ -309,7 +313,7 @@ class Sampler:
         local_sample_step=collect_process_data(sample_state.sample_steps)
         local_token_buffer=collect_process_data(sample_state.token_buffer)
 
-        print(sample_state.token_buffer.shape,local_token_buffer.shape)
+        # print(sample_state.token_buffer.shape,local_token_buffer.shape)
 
 
         texts=[]
@@ -320,16 +324,6 @@ class Sampler:
                                             clean_up_tokenization_spaces=False)
 
             texts.extend(output)
-            # print(output[0])
-        # print(texts)
-
-        print(texts[0])
-
-        while True:
-            params
-
-        # while True:
-        #     pass
 
         return texts
 

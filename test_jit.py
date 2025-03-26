@@ -24,7 +24,7 @@ from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
 from MLLM_JAX.language.llama.llama import convert_torch_to_flax_llama
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
 from MLLM_JAX.train_modules import TrainSFTModule, TrainGRPOModule
-from MLLM_JAX.utils import get_jax_mesh2, match_partition_rules, get_partition_rules_llama
+from MLLM_JAX.utils import get_jax_mesh2, match_partition_rules, get_partition_rules_llama, _form_global_array
 from sample_state_right_padding import get_model, Sampler
 # from sample_state_left_padding import get_model, Sampler
 import jax.numpy as jnp
@@ -269,7 +269,9 @@ if __name__=="__main__":
         # batch = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), datas)
 
         for j in range(grad_accum_steps):
-            batch=sampler.jit_init_data(jax.tree_util.tree_map(lambda x:slice_data(x,grad_accum_steps,j)      ,datas,     ))
+
+            local_data=jax.tree_util.tree_map(lambda x:slice_data(x,grad_accum_steps,j)      ,datas,     )
+            batch=jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
             state, metrics=test_fn(state,batch)
 
         print(f"{i=} {metrics=}")

@@ -1,4 +1,5 @@
 import dataclasses
+import functools
 import math
 from typing import Any
 
@@ -623,8 +624,13 @@ class LlamaAttention(nn.Module):
 
         if q_len%128==0 and value_states.shape[-1]%128==0:
 
-
-
+            @functools.partial(
+                shard_map,
+                mesh=self.mesh,
+                in_specs=P(['dp','fsdp'],'tp',None,None),
+                out_specs=P(['dp','fsdp'],'tp',None,None),
+                check_rep=False,
+            )
             def wrap_flash_attention():
                 mask = splash_attention_mask.CausalMask(shape=(key_states.shape[2], key_states.shape[2]))
                 multi_head_mask = splash_attention_mask.MultiHeadMask(masks=(mask,) * value_states.shape[1])
@@ -641,9 +647,9 @@ class LlamaAttention(nn.Module):
 
 
 
-            wrap_flash_attention=shard_map(wrap_flash_attention,self.jax_config.mesh,
-                                    in_specs=P(['dp','fsdp'],'tp',None,None),out_specs=P(['dp','fsdp'],'tp',None,None),
-                                    check_rep=False,)
+            # wrap_flash_attention=shard_map(wrap_flash_attention,self.jax_config.mesh,
+            #                         in_specs=,out_specs=P(['dp','fsdp'],'tp',None,None),
+            #                         check_rep=False,)
 
             attn_output=wrap_flash_attention(query_states, key_states, value_states,)
 

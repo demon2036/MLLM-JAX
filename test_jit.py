@@ -84,7 +84,7 @@ def gen_answers_jax(prompts,sampler,params):
 
     # if prompt_length > max_prompt_length: return []
     answers=sampler.generate_prefill_auto_regressive(tip_text, max_length=MAX_LENGTH_SAMPLE,params=params)
-    print(answers[0])
+    print(answers)
 
     return tip_text,answers
 

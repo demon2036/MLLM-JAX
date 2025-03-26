@@ -157,7 +157,12 @@ class Sampler:
 
         data_sharding = jax.sharding.NamedSharding(mesh, P(['dp', 'fsdp']))
 
-        sample_fn=shard_map(_top_k_sampling_batched,mesh=mesh,in_specs=P(['dp', 'fsdp'],'tp'),out_specs=P(['dp', 'fsdp']))
+
+        # def warp_sample_fn(rng):
+
+
+        sample_fn=shard_map(_top_k_sampling_batched,mesh=mesh,in_specs=(None,P(['dp', 'fsdp'],'tp'))
+                            ,out_specs=P(['dp', 'fsdp']))
 
         self.sample_fn=jax.jit(sample_fn)
 

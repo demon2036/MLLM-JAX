@@ -16,7 +16,8 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from MLLM_JAX.language.llama.llama import convert_torch_to_flax_llama, LlamaJaxConfig
 from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache, pad_cache_right
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
-from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama, get_jax_mesh2, _form_global_array
+from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama, get_jax_mesh2, _form_global_array, \
+    collect_process_data
 from sanple_utils import _greedy_sampling, _temperature_sampling, _nucleus_sampling
 from jax.sharding import PartitionSpec as P
 from jax.experimental.multihost_utils import process_allgather
@@ -305,11 +306,16 @@ class Sampler:
 
 
 
+        local_sample_step=collect_process_data(sample_state.sample_steps)
+        local_token_buffer=collect_process_data(sample_state.token_buffer)
+
+        print(sample_state.token_buffer.shape,local_token_buffer.shape)
+
 
         texts=[]
-        for i,step in enumerate(sample_state.sample_steps):
+        for i,step in enumerate(local_sample_step):
             output = \
-                self.tokenizer.batch_decode(np.array(sample_state.token_buffer[i, prefill_length:prefill_length+step+1]).reshape(1, -1),
+                self.tokenizer.batch_decode(local_token_buffer[i, prefill_length:prefill_length+step+1].reshape(1, -1),
                                             skip_special_tokens=False,
                                             clean_up_tokenization_spaces=False)
 
@@ -318,7 +324,7 @@ class Sampler:
         # print(texts)
 
         print(texts[0])
-        print(sample_state.token_buffer.shape)
+
         while True:
             params
 

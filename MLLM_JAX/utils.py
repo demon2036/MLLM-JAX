@@ -323,4 +323,19 @@ def _form_global_array(path, array: np.ndarray, global_mesh: Mesh) -> jax.Array:
 
 
 
+def collect_process_data(data):
+    local_data = []
+    local_devices = jax.local_devices()
+
+    for shard in data.addressable_shards:
+        device = shard.device
+        local_shard = shard.data
+        if device in local_devices:
+            # if jax.process_index() == 0:
+            #     print(device, local_devices)
+            local_data.append(np.array(local_shard))
+    local_data = np.concatenate(local_data, axis=0)
+    return local_data
+
+
 

@@ -316,23 +316,33 @@ class Sampler:
         # print(sample_state.token_buffer.shape,local_token_buffer.shape)
 
 
-        # texts=[]
-        # for i,step in enumerate(local_sample_step):
-        #     # output = \
-        #     #     self.tokenizer.batch_decode(local_token_buffer[i, prefill_length:prefill_length+step+1].reshape(1, -1),
-        #     #                                 skip_special_tokens=False,
-        #     #                                 clean_up_tokenization_spaces=False)
-        #
-        #     output = \
-        #         self.tokenizer.batch_decode(local_token_buffer[i, prefill_length:prefill_length + step + 1].reshape(1, -1),
-        #                                 skip_special_tokens=True,
-        #                                 )
-        #
-        #     texts.extend(output)
+        texts=[]
+        for i,step in enumerate(local_sample_step):
+            # output = \
+            #     self.tokenizer.batch_decode(local_token_buffer[i, prefill_length:prefill_length+step+1].reshape(1, -1),
+            #                                 skip_special_tokens=False,
+            #                                 clean_up_tokenization_spaces=False)
 
-        texts= self.tokenizer.batch_decode(local_token_buffer[:,prefill_length:],
+            output = \
+                self.tokenizer.batch_decode(local_token_buffer[i, prefill_length:prefill_length + step + 1].reshape(1, -1),
                                         skip_special_tokens=True,
                                         )
+
+            texts.extend(output)
+
+        texts2= self.tokenizer.batch_decode(local_token_buffer[:,prefill_length:],
+                                        skip_special_tokens=True,
+                                        )
+
+
+        if jax.process_index()==0:
+            print(texts2[-1])
+            print()
+            print(texts[-1])
+
+
+        while True:
+            params
 
         self.key=sample_state.key
 

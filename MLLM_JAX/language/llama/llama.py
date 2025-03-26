@@ -622,21 +622,32 @@ class LlamaAttention(nn.Module):
         key_states=repeat_kv(key_states,self.num_key_value_groups)
 
         if q_len%128==0 and value_states.shape[-1]%128==0:
-            mask = splash_attention_mask.CausalMask(shape=(key_states.shape[2], key_states.shape[2]))
-            multi_head_mask = splash_attention_mask.MultiHeadMask(masks=(mask,) * value_states.shape[1])
-            splash_kernel = splash_attention_kernel.make_splash_mha(
-                mask=multi_head_mask,
-                head_shards=1,
-                q_seq_shards=1,
-                # block_sizes=block_sizes,
-                # attn_logits_soft_cap=attn_logits_soft_cap,
-            )
-            splash_kernel=shard_map(splash_kernel,self.jax_config.mesh,
-                                    in_specs=P('tp',None,None),out_specs=P('tp',None,None),
-                                    check_rep=False,
-                                    )
 
-            attn_output=jax.vmap(splash_kernel)(query_states/ math.sqrt(self.head_dim),key_states,value_states)
+
+
+            def wrap_flash_attention():
+                mask = splash_attention_mask.CausalMask(shape=(key_states.shape[2], key_states.shape[2]))
+                multi_head_mask = splash_attention_mask.MultiHeadMask(masks=(mask,) * value_states.shape[1])
+                splash_kernel = splash_attention_kernel.make_splash_mha(
+                    mask=multi_head_mask,
+                    head_shards=1,
+                    q_seq_shards=1,
+                    # block_sizes=block_sizes,
+                    # attn_logits_soft_cap=attn_logits_soft_cap,
+                )
+
+                attn_output = jax.vmap(splash_kernel)(query_states / math.sqrt(self.head_dim), key_states, value_states)
+                return attn_output
+
+
+
+            wrap_flash_attention=shard_map(wrap_flash_attention,self.jax_config.mesh,
+                                    in_specs=P(['dp','fsdp'],'tp',None,None),out_specs=P(['dp','fsdp'],'tp',None,None),
+                                    check_rep=False,)
+
+            attn_output=wrap_flash_attention(query_states, key_states, value_states,)
+
+
         else:
 
             attn_weights = (query_states @ key_states.swapaxes(2, 3)) / math.sqrt(self.head_dim)

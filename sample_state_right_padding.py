@@ -247,10 +247,13 @@ class Sampler:
         b, prefill_length = input_ids_pad.shape
 
         print('test1')
-        cache = pad_cache_right(cache, prefill_length, max_length, )
 
+
+        cache,input_ids_pad,pad_attention,position_ids=jax.tree_util.tree_map(collect_process_data,(cache,input_ids_pad,pad_attention,position_ids))
 
         print('test2')
+        cache = pad_cache_right(cache, prefill_length, max_length, )
+        print('test3')
 
         input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length)),
                                 constant_values=self.tokenizer.eos_token_id)
@@ -258,11 +261,12 @@ class Sampler:
         pad_attention = jnp.pad(pad_attention, ((0, 0), (0, max_length)),
                                 constant_values=0)
         pad_attention = pad_attention.at[:, prefill_length].set(1)
-        # position_ids = position_ids[:, -1:] + 1
-
         position_ids = jnp.max(position_ids,axis=1).reshape((-1,1)) + 1
 
-        return cache, input_ids_pad, pad_attention, position_ids
+
+        return self.global_collect_method((cache, input_ids_pad, pad_attention, position_ids))
+
+        # return cache, input_ids_pad, pad_attention, position_ids
 
 
     def find_ceil(self, input):

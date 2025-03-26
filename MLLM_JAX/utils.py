@@ -323,7 +323,7 @@ def _form_global_array(path, array: np.ndarray, global_mesh: Mesh) -> jax.Array:
 
 
 
-def collect_process_data(data):
+def collect_process_data(data,):
     local_data = []
     local_devices = jax.local_devices()
 

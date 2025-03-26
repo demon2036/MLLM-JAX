@@ -326,7 +326,7 @@ class Sampler:
         #
         #     texts.extend(output)
 
-        texts= self.tokenizer.batch_decode(local_token_buffer,
+        texts= self.tokenizer.batch_decode(local_token_buffer[:,prefill_length:],
                                         skip_special_tokens=True,
                                         )
 

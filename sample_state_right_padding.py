@@ -160,7 +160,7 @@ class Sampler:
         self.jit_infer_prefill = jax.jit(self.model.apply)
         self.jit_infer_step = jax.jit(self.infer)
 
-        self.sample_fn=_top_k_sampling_batched
+        self.sample_fn=jax.jit(_top_k_sampling_batched)
 
         self.prefill_bucket = [
              32, 256,512, 1024, 2048, 4096, 8192
@@ -292,7 +292,6 @@ class Sampler:
         next_token_logits=jnp.take_along_axis(logits,position_ids[...,None]-1,axis=1)[:,-1]
         # next_token_predict = jnp.argmax(, axis=-1)[:,0]
         next_token_predict=self.sample_fn(self.key,next_token_logits)
-        print(next_token_predict.shape)
 
 
         # next_token_predict = jnp.argmax(logits[:, position_ids-1], axis=1)

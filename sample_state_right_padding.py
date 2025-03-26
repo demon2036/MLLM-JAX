@@ -335,14 +335,14 @@ class Sampler:
                                         )
 
 
-        if jax.process_index()==0:
-            print(texts2[-1])
-            print('\n'*5)
-            print(texts[-1])
-
-
-        while True:
-            params
+        # if jax.process_index()==0:
+        #     print(texts2[-1])
+        #     print('\n'*5)
+        #     print(texts[-1])
+        #
+        #
+        # while True:
+        #     params
 
         self.key=sample_state.key
 

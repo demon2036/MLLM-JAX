@@ -89,8 +89,11 @@ def gen_answers_jax(prompts,sampler,params):
     #     print(ans,len(ans))
     #     print('\n'*2,flush=True)
 
-    print(answers[-2])
-    print('\n' * 2, flush=True)
+
+    if jax.process_index()==0:
+
+        print(answers[-2:])
+        print('\n' * 2, flush=True)
     return tip_text,answers
 
 

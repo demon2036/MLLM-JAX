@@ -18,7 +18,7 @@ from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache, p
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
 from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama, get_jax_mesh2, _form_global_array, \
     collect_process_data
-from sanple_utils import _greedy_sampling, _temperature_sampling, _nucleus_sampling, _top_k_sampling, \
+from sanple_utils import _greedy_sampling, _temperature_sampling, _nucleus_sampling,  \
     _top_k_sampling_batched
 from jax.sharding import PartitionSpec as P
 from jax.experimental.multihost_utils import process_allgather
@@ -154,13 +154,13 @@ class Sampler:
         # self.sample_fn = _greedy_sampling
         self.key=jax.random.PRNGKey(2036)
 
-        self.sample_fn=_top_k_sampling_batched
+        # self.sample_fn=_top_k_sampling_batched
 
 
         self.jit_infer_prefill = jax.jit(self.model.apply)
         self.jit_infer_step = jax.jit(self.infer)
 
-        # self.sample_fn=_nucleus_sampling
+        self.sample_fn=_nucleus_sampling
 
         self.prefill_bucket = [
              32, 256,512, 1024, 2048, 4096, 8192

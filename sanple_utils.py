@@ -59,7 +59,7 @@ def _greedy_sampling(rng, logits, ):
   del rng
   return jnp.argmax(logits, axis=-1)
 
-def _nucleus_sampling(rng,logits ,p: float=0.95, t: float = 0.6, ):
+def _nucleus_sampling(rng,logits ,p: float=0.95, t: float = 0.9, ):
   logits = logits / t
   neg_inf = np.array(-1.0e7)  # Effective negative infinity.
   logits_sorted = jnp.sort(logits, axis=-1, descending=True)

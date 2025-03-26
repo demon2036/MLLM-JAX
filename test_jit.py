@@ -91,9 +91,6 @@ def gen_answers_jax(prompts,sampler,params):
 
     print(answers[-1])
     print('\n' * 2, flush=True)
-    print(type(answers))
-    while True:
-        pass
     return tip_text,answers
 
 

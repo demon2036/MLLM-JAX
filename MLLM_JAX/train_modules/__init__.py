@@ -64,7 +64,7 @@ class TrainGRPOModule(nn.Module):
 
 
 
-    def __call__(self, inputs) -> ArrayTree:
+    def __call__(self, inputs,mean=None,std=None,advantages=None) -> ArrayTree:
         input_ids=inputs['input_ids']
         attention_mask=inputs['attention_mask']
         labels=inputs['labels']
@@ -94,11 +94,13 @@ class TrainGRPOModule(nn.Module):
             jax.nn.log_softmax(logits[..., :-1, :], axis=-1), chosen_ids[..., None], axis=-1
         )[..., 0]
 
-        mean_grouped_rewards = rewards.reshape(-1, self.num_pre_Q).mean(axis=1)
-        std_grouped_rewards = rewards.reshape(-1, self.num_pre_Q).std(axis=1)
-        mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, self.num_pre_Q, axis=0)
-        std_grouped_rewards = jnp.repeat(std_grouped_rewards, self.num_pre_Q, axis=0)
-        advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
+
+        if advantages is None:
+            mean_grouped_rewards = rewards.reshape(-1, self.num_pre_Q).mean(axis=1)
+            std_grouped_rewards = rewards.reshape(-1, self.num_pre_Q).std(axis=1)
+            mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, self.num_pre_Q, axis=0)
+            std_grouped_rewards = jnp.repeat(std_grouped_rewards, self.num_pre_Q, axis=0)
+            advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
 
         print(advantages.shape)
 

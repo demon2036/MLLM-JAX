@@ -1,4 +1,5 @@
 import random
+from functools import partial
 from typing import Any
 
 import random
@@ -15,7 +16,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from MLLM_JAX.language.llama.llama import convert_torch_to_flax_llama, LlamaJaxConfig
 from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache, pad_cache_right
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
-from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama, get_jax_mesh2
+from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama, get_jax_mesh2, _form_global_array
 from sanple_utils import _greedy_sampling, _temperature_sampling, _nucleus_sampling
 from jax.sharding import PartitionSpec as P
 from jax.experimental.multihost_utils import process_allgather
@@ -251,7 +252,10 @@ class Sampler:
         print(f'{prefill_length=}')
         cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,shard_method=self.jit_init_data)
 
-        input_ids_pad, pad_attention, position_ids,cache=self.jit_init_data((input_ids_pad, pad_attention, position_ids,cache))
+        # input_ids_pad, pad_attention, position_ids,cache=self.jit_init_data((input_ids_pad, pad_attention, position_ids,cache))
+        input_ids_pad, pad_attention, position_ids,cache = (jax.tree_util.tree_map_with_path
+                                                            (partial(_form_global_array, global_mesh=self.mesh),
+                                                                                  (input_ids_pad, pad_attention, position_ids,cache)))
 
 
 

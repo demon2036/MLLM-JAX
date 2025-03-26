@@ -154,13 +154,13 @@ class Sampler:
         # self.sample_fn = _greedy_sampling
         self.key=jax.random.PRNGKey(2036)
 
-        # self.sample_fn=_top_k_sampling_batched
+        self.sample_fn=jax.jit(_nucleus_sampling)
 
 
         self.jit_infer_prefill = jax.jit(self.model.apply)
         self.jit_infer_step = jax.jit(self.infer)
 
-        self.sample_fn=jax.jit(_top_k_sampling_batched)
+        # self.sample_fn=jax.jit(_top_k_sampling_batched)
 
         self.prefill_bucket = [
              32, 256,512, 1024, 2048, 4096, 8192

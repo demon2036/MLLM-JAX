@@ -626,7 +626,7 @@ class LlamaAttention(nn.Module):
 
             @functools.partial(
                 shard_map,
-                mesh=self.mesh,
+                mesh=self.jax_config.mesh,
                 in_specs=P(['dp','fsdp'],'tp',None,None),
                 out_specs=P(['dp','fsdp'],'tp',None,None),
                 check_rep=False,

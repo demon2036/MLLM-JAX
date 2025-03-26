@@ -38,19 +38,13 @@ def _top_k_sampling_batched(rng, logits, k=50, t=0.9):
   logits = logits / t
 
   # 定义对单个样本的 top-k 采样函数
-  def sample_single(rng, logits):
-    # 提取 logits 中最高的 k 个值及其对应的索引
-    top_logits, top_indices = jax.lax.top_k(logits, k)
-    # 在 top_logits 上进行 categorical 采样
-    sampled_index = jax.random.categorical(rng, top_logits)
-
-    print(sampled_index.shape,top_indices.shape)
-
-
-
-
-    # 返回采样后对应原 logits 的索引
-    return jnp.take_along_axis(top_indices,sampled_index[None,...],axis=1)[...,-1]
+  def sample_single(rng, logits_single):
+    # 获取单个样本中最大的 k 个 logits 及其索引
+    top_logits, top_indices = jax.lax.top_k(logits_single, k)
+    # 在 top_logits 上进行 categorical 采样，返回采样到的相对索引
+    sampled_relative_idx = jax.random.categorical(rng, top_logits)
+    # 根据采样结果，从 top_indices 中取出对应的绝对索引
+    return top_indices[sampled_relative_idx]
 
   # 分割 rng 以获得每个 batch 的独立随机数种子
   batch_size = logits.shape[0]

@@ -631,7 +631,7 @@ class LlamaAttention(nn.Module):
                 out_specs=P(['dp','fsdp'],'tp',None,None),
                 check_rep=False,
             )
-            def wrap_flash_attention():
+            def wrap_flash_attention(query_states, key_states, value_states):
                 mask = splash_attention_mask.CausalMask(shape=(key_states.shape[2], key_states.shape[2]))
                 multi_head_mask = splash_attention_mask.MultiHeadMask(masks=(mask,) * value_states.shape[1])
                 splash_kernel = splash_attention_kernel.make_splash_mha(

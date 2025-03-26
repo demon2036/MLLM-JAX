@@ -159,13 +159,19 @@ class Sampler:
 
         # data_sharding.mesh.shape[0]
 
-        # def warp_sample_fn(rng):
+        def warp_sample_fn(rng,logits):
+            rngs=jax.random.split(rng,data_sharding.mesh.shape[0])
 
 
-        sample_fn=shard_map(_top_k_sampling_batched,mesh=mesh,in_specs=(None,P(['dp', 'fsdp'],'tp'))
-                            ,out_specs=P(['dp', 'fsdp']),check_rep=False)
+            def sample_inner(rng,logits):
+                return _top_k_sampling_batched(rng[0],logits)
 
-        self.sample_fn=jax.jit(sample_fn)
+            sample_fn=shard_map(sample_inner,mesh=mesh,in_specs=(P(['dp', 'fsdp']),P(['dp', 'fsdp'],'tp'))
+                                ,out_specs=P(['dp', 'fsdp']),check_rep=False)
+
+            return sample_fn(rngs,logits)
+
+        self.sample_fn=jax.jit(warp_sample_fn)
 
 
         self.jit_infer_prefill = jax.jit(self.model.apply)

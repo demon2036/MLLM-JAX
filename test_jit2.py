@@ -194,7 +194,7 @@ def main():
 
         rewards = []
 
-        for i, (inp, a) in enumerate(zip(inputs, answers)):
+        for i, (inp, a) in enumerate(zip(prompts, answers)):
             try:
                 rewards.append(reward_correct(inp, a) + reward_format(inp, a))
             except Exception as e:

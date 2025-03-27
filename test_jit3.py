@@ -113,8 +113,11 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
 
     labels=jnp.array(labels,dtype=jnp.int32)
 
+    for label,mask in zip(labels,attention_mask):
+        if jax.process_index()==0:
+            print(label-mask)
+            print()
 
-    print(attention_mask[0]-labels[0])
 
 
 

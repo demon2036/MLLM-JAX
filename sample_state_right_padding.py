@@ -204,25 +204,25 @@ class Sampler:
         logits, cache = self.model.apply({'params': params}, input_ids=last_token, position_ids=positions,
                                          attention_mask=mask, cache=cache)
 
-        key, key2 = jax.random.split(sample_state.key)
-        next_token_predict = self.sample_fn(key2, logits[:, -1])
-
-
-        next_token_predict=jnp.where(sample_state.dones,self.tokenizer.eos_token_id,next_token_predict)
-
-
-        dones = sample_state.dones | (next_token_predict == self.tokenizer.eos_token_id)
-
-        sample_state.dones=dones
-
-        sample_state.sample_steps += 1 - sample_state.dones
-
-        sample_state.key = key
-        sample_state.attention_mask = sample_state.attention_mask.at[:, i + 1].set(1)
-        sample_state.positions += 1
-        sample_state.token_buffer = sample_state.token_buffer.at[:, i + 1].set(next_token_predict)
-        sample_state.next_token_buffer = next_token_predict
-        sample_state.decoding_step += 1
+        # key, key2 = jax.random.split(sample_state.key)
+        # next_token_predict = self.sample_fn(key2, logits[:, -1])
+        #
+        #
+        # next_token_predict=jnp.where(sample_state.dones,self.tokenizer.eos_token_id,next_token_predict)
+        #
+        #
+        # dones = sample_state.dones | (next_token_predict == self.tokenizer.eos_token_id)
+        #
+        # sample_state.dones=dones
+        #
+        # sample_state.sample_steps += 1 - sample_state.dones
+        #
+        # sample_state.key = key
+        # sample_state.attention_mask = sample_state.attention_mask.at[:, i + 1].set(1)
+        # sample_state.positions += 1
+        # sample_state.token_buffer = sample_state.token_buffer.at[:, i + 1].set(next_token_predict)
+        # sample_state.next_token_buffer = next_token_predict
+        # sample_state.decoding_step += 1
         sample_state.cache = cache
         return sample_state
 

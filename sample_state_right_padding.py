@@ -222,7 +222,7 @@ class Sampler:
         # sample_state.positions += 1
         # sample_state.token_buffer = sample_state.token_buffer.at[:, i + 1].set(next_token_predict)
         # sample_state.next_token_buffer = next_token_predict
-        # sample_state.decoding_step += 1
+        sample_state.decoding_step += 1
         sample_state.cache = cache
         return sample_state
 

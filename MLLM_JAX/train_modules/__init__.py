@@ -76,7 +76,8 @@ class TrainGRPOModule(nn.Module):
 
 
         chosen_ids = input_ids[:, 1:]  # (B, L-1), exclude the first input ID since we don't have logits for it
-        mask_loss = labels[:, 1:] != self.pad_token_id
+        # mask_loss = labels[:, 1:] != self.pad_token_id
+        mask_loss = labels[:, 1:]
 
         if self.beta!=0:
             ref_logits, cache = self.ref_model( input_ids=input_ids,

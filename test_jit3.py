@@ -104,7 +104,7 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
 
     for label,mask in zip(labels,attention_mask):
         if jax.process_index()==0:
-            print(label==tokenizer.pad_token_id)
+            print(label==tokenizer.pad_token_id,      (label==tokenizer.pad_token_id)|(label==tokenizer.eos_token_id))
             print()
 
 

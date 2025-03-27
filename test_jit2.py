@@ -2,7 +2,7 @@ import os
 
 from jax.experimental.multihost_utils import process_allgather
 
-from training import reward_correct, reward_format, get_state, training_step, repeat
+from training import reward_correct, reward_format, get_state, training_step, repeat, slice_data
 
 os.environ['JAX_TRACEBACK_FILTERING']='off'
 
@@ -32,15 +32,23 @@ system_prompt = """You are a helpful assistant. A conversation between User and 
 The reasoning process and answer are enclosed within <think> </think> and<answer> </answer> tags, respectively, i.e., <think> reasoning process here </think><answer> answer here </answer>."""
 
 
-def slice_data(x,accumulate_steps,i):
-    b,*_=x.shape
-    assert b%accumulate_steps==0
-    micro_batch_size=b//accumulate_steps
-    data=x[i*micro_batch_size:(i+1)*micro_batch_size]
-    print(data.shape)
-    return data
 
-
+    # input_ids_global=jax.tree_util.tree_map_with_path(sampler.global_collect_method,input_ids)
+    #
+    # local_ids=collect_process_data(input_ids_global)
+    #
+    #
+    # oris=sampler.tokenizer.batch_decode(input_ids,
+    #                                          skip_special_tokens=True, )
+    #
+    # local_answers = sampler.tokenizer.batch_decode(local_ids,
+    #                                          skip_special_tokens=True, )
+    #
+    # for ori,loc in zip(oris,local_answers):
+    #     if jax.process_index()==0:
+    #         print(ori==loc)
+    # while True:
+    #     pass
 
 
 
@@ -62,22 +70,6 @@ def gen_answers_jax(prompts,sampler,params):
     input_ids = inputs['input_ids']
 
 
-    # input_ids_global=jax.tree_util.tree_map_with_path(sampler.global_collect_method,input_ids)
-    #
-    # local_ids=collect_process_data(input_ids_global)
-    #
-    #
-    # oris=sampler.tokenizer.batch_decode(input_ids,
-    #                                          skip_special_tokens=True, )
-    #
-    # local_answers = sampler.tokenizer.batch_decode(local_ids,
-    #                                          skip_special_tokens=True, )
-    #
-    # for ori,loc in zip(oris,local_answers):
-    #     if jax.process_index()==0:
-    #         print(ori==loc)
-    # while True:
-    #     pass
 
     position_ids = inputs['attention_mask'].cumsum(-1) - 1
     position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)

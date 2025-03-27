@@ -98,20 +98,23 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
     tip_text=tip_texts[0]
     total_text=total_texts[0]
 
-    tip_text_encoded=tokenizer([tip_text], return_tensors="jax", padding=True, padding_side="right")['input_ids']
-    total_text_encoded=tokenizer([total_text], return_tensors="jax", padding=True, padding_side="right")['input_ids']
+    tip_text_inputs=tokenizer([tip_text], return_tensors="jax", padding=True, padding_side="right")
+    total_text_inputs=tokenizer([total_text], return_tensors="jax", padding=True, padding_side="right")
 
-    diff=total_text_encoded[0,tip_text_encoded.shape[1]:]
+    tip_text_inputs_ids=tip_text_inputs['input_ids']
 
-    out= tokenizer.batch_decode(diff.reshape(1, -1),
-                                        skip_special_tokens=False,
-                                        )
 
-    if jax.process_index()==0:
-        print(out[0])
-        print('\n'*2)
-        print(answers[0]+tokenizer.eos_token)
-        print(out[0]==(answers[0]+tokenizer.eos_token))
+    attention_mask=total_text_inputs['attention_mask']
+
+    labels=[]
+
+    for mask in attention_mask:
+        labels.append(mask.at[:tip_text_inputs_ids].set(tokenizer.pad_token_id))
+
+    labels=jnp.array(labels,dtype=jnp.int32)
+
+
+    print(attention_mask[0]-labels[0])
 
 
 

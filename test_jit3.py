@@ -43,17 +43,10 @@ def gen_answers_jax(prompts,sampler,params):
             tokenize=False, add_generation_prompt=True))
 
     inputs = sampler.tokenizer(prompt, return_tensors="jax", padding=True, padding_side="right")
-
-
-
-    true_lengths = inputs['attention_mask'].sum(axis=1)[0]
-
     input_ids = inputs['input_ids']
-
     position_ids = inputs['attention_mask'].cumsum(-1) - 1
     position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)
 
-    # global_length = jnp.max(process_allgather(input_ids.shape[1]))
     global_length=512
     prefill_length = sampler.find_ceil(global_length)
 
@@ -86,11 +79,6 @@ def gen_answers_jax(prompts,sampler,params):
 
 
 
-    # for label,mask in zip(labels,attention_mask):
-    #     if jax.process_index()==0:
-    #         print(mask==tokenizer.pad_token_id)
-    #         print()
-
 
 def batch_process(tip_texts,answers,rewards,tokenizer):
     total_texts=[tip_text+answer+tokenizer.eos_token for tip_text,answer in zip(tip_texts,answers)]
@@ -108,10 +96,8 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
     labels=jnp.array(labels,dtype=np.int32)
     input_ids=total_text_inputs['input_ids']
 
-
-
     input_ids_pad = jnp.pad(input_ids, ((0, 0), (0, MAX_LENGTH - input_ids.shape[1])),
-                            constant_values=self.tokenizer.eos_token_id)
+                            constant_values=tokenizer.eos_token_id)
 
     pad_attention = jnp.pad(attention_mask, ((0, 0), (0, MAX_LENGTH - input_ids.shape[1])))
     pad_labels = jnp.pad(labels, ((0, 0), (0, MAX_LENGTH - input_ids.shape[1])))

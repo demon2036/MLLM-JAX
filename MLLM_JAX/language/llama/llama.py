@@ -600,21 +600,19 @@ class LlamaAttention(nn.Module):
         if cache is not None:
             end_index = cache['end_index'][0]
             slice_indices = (0, 0, end_index , 0)
-            # value_states = jax.lax.dynamic_update_slice(
-            #     cache['v'],
-            #     value_states,
-            #     slice_indices,
-            # )
-            # key_states = jax.lax.dynamic_update_slice(
-            #     cache['k'], key_states, slice_indices
-            # )
-            # new_cache = {
-            #     'v': value_states,
-            #     'k': key_states,
-            #     'end_index': cache['end_index'] + q_len,
-            # }
-
-            new_cache=cache
+            value_states = jax.lax.dynamic_update_slice(
+                cache['v'],
+                value_states,
+                slice_indices,
+            )
+            key_states = jax.lax.dynamic_update_slice(
+                cache['k'], key_states, slice_indices
+            )
+            new_cache = {
+                'v': value_states,
+                'k': key_states,
+                'end_index': cache['end_index'] + q_len,
+            }
 
         else:
             new_cache = None
@@ -659,15 +657,14 @@ class LlamaAttention(nn.Module):
 
         else:
 
-            # attn_weights = (query_states @ key_states.swapaxes(2, 3)) / math.sqrt(self.head_dim)
-            # if attn_mask is not None:  # no matter the length, we just slice it
-            #     causal_mask = attn_mask
-            #     attn_weights = attn_weights + causal_mask
-            #
-            # attn_weights = nn.softmax(attn_weights.astype(jnp.float32), axis=-1, ).astype(attn_weights.dtype)
-            # attn_output = attn_weights @ value_states
+            attn_weights = (query_states @ key_states.swapaxes(2, 3)) / math.sqrt(self.head_dim)
+            if attn_mask is not None:  # no matter the length, we just slice it
+                causal_mask = attn_mask
+                attn_weights = attn_weights + causal_mask
 
-            attn_output=query_states
+            attn_weights = nn.softmax(attn_weights.astype(jnp.float32), axis=-1, ).astype(attn_weights.dtype)
+            attn_output = attn_weights @ value_states
+
 
         # attn_weights = (query_states @ key_states.swapaxes(2, 3)) / math.sqrt(self.head_dim)
         #

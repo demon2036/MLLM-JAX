@@ -111,8 +111,12 @@ def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
 
 def main():
     dataset = load_dataset("openai/gsm8k", "main", split="train")
+    print(len(dataset))
 
     dataset = dataset.shard(num_shards=jax.process_count(), index=jax.process_index())
+    print(len(dataset))
+
+
 
     QAs = [{'Q': x, 'A': y.split('####')[-1].strip()} for x, y in zip(dataset['question'], dataset['answer'])]
 

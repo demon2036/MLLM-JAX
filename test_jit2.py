@@ -65,13 +65,10 @@ def gen_answers_jax(prompts,sampler,params):
             tokenize=False, add_generation_prompt=True))
 
 
-    print(len(prompt))
 
 
     inputs = sampler.tokenizer(prompt, return_tensors="jax", padding=True, padding_side="right")
     input_ids = inputs['input_ids']
-
-
 
     position_ids = inputs['attention_mask'].cumsum(-1) - 1
     position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)
@@ -92,6 +89,7 @@ def gen_answers_jax(prompts,sampler,params):
     answers=sampler.tokenizer.batch_decode(completion_ids[:,prefill_length:],
                                         skip_special_tokens=True,)
 
+    print(len(prompt),len(answers))
 
 
     if jax.process_index()==0:

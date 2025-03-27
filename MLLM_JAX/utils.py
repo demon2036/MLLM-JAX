@@ -331,8 +331,8 @@ def collect_process_data(data,):
         device = shard.device
         local_shard = shard.data
         if device in local_devices:
-            if jax.process_index()==0:
-                print(device)
+            # if jax.process_index()==0:
+            #     print(device)
 
             local_data.append(np.array(local_shard))
     local_data = np.concatenate(local_data, axis=0)

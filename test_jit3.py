@@ -85,62 +85,39 @@ def gen_answers_jax(prompts,sampler,params):
 
 
 
-
+    # for label,mask in zip(labels,attention_mask):
+    #     if jax.process_index()==0:
+    #         print(mask==tokenizer.pad_token_id)
+    #         print()
 
 
 def batch_process(tip_texts,answers,rewards,tokenizer):
-
-
-
     total_texts=[tip_text+answer+tokenizer.eos_token for tip_text,answer in zip(tip_texts,answers)]
+    tip_text_inputs=tokenizer(tip_texts, return_tensors="jax", padding=True, padding_side="right")
+    total_text_inputs=tokenizer(total_texts, return_tensors="jax", padding=True, padding_side="right")
 
-
-    tip_text=tip_texts[0]
-    total_text=total_texts[0]
-
-    tip_text_inputs=tokenizer([tip_text], return_tensors="jax", padding=True, padding_side="right")
-    total_text_inputs=tokenizer([total_text], return_tensors="jax", padding=True, padding_side="right")
-
-    true_lengths = tip_text_inputs['attention_mask'].sum(axis=1)
-
-
+    true_lengths_prompts = tip_text_inputs['attention_mask'].sum(axis=1)
     attention_mask=total_text_inputs['attention_mask']
-
     labels=[]
-
-    for true_length,mask in zip(true_lengths,attention_mask):
+    for true_length,mask in zip(true_lengths_prompts,attention_mask):
         labels.append(mask.at[:true_length].set(tokenizer.pad_token_id))
-
-    labels=jnp.array(labels,dtype=jnp.int32)
 
     for label,mask in zip(labels,attention_mask):
         if jax.process_index()==0:
-            print(mask==tokenizer.pad_token_id)
+            print(label==tokenizer.pad_token_id)
             print()
 
 
 
-
-
-
-    while True:
-        pass
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    labels=jnp.array(labels,dtype=jnp.int32)
+    input_ids=total_text_inputs['input_ids']
+    rewards=jnp.array([item for item in rewards])
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "labels": labels,
+        'rewards': rewards
+    }
 
 
 

@@ -1,38 +1,23 @@
-import copy
 import os
-from typing import Any
 
-import tqdm
 from jax.experimental.multihost_utils import process_allgather
+
+from training import reward_correct, reward_format, get_state, training_step
 
 os.environ['JAX_TRACEBACK_FILTERING']='off'
 
 
 import random
-import re
 from functools import partial
 
 import jax.tree_util
 import numpy as np
-import optax
-import torch
-from chex import ArrayTree
 from datasets import load_dataset
-from flax.training import train_state
-from jax import NamedSharding
-from jax._src.mesh import Mesh
-from jax._src.partition_spec import PartitionSpec
-from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
+from transformers import AutoTokenizer
 
-from MLLM_JAX.language.llama.llama import convert_torch_to_flax_llama
-from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
-from MLLM_JAX.train_modules import TrainSFTModule, TrainGRPOModule
-from MLLM_JAX.utils import get_jax_mesh2, match_partition_rules, get_partition_rules_llama, _form_global_array
-from sample_state_right_padding import get_model, Sampler
+from MLLM_JAX.utils import get_jax_mesh2, _form_global_array
 # from sample_state_left_padding import get_model, Sampler
 import jax.numpy as jnp
-from math_verify import parse, verify, ExprExtractionConfig
-
 
 max_prompt_length=400
 num_pre_Q=16

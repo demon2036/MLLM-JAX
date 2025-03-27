@@ -181,24 +181,16 @@ class Sampler:
 
         # self.sample_fn=jax.jit(sample_fn)
 
-
         self.jit_infer_prefill = jax.jit(self.model.apply)
         self.jit_infer_step = jax.jit(self.infer)
-
-        # self.sample_fn=jax.jit(_top_k_sampling_batched)
-
         self.prefill_bucket = [
              32, 256,512, 1024, 2048, 4096, 8192
         ]
-
-
 
         def init_data(data):
             return data
 
         self.jit_init_data = jax.jit(init_data, out_shardings=data_sharding,)
-
-
         self.global_collect_method=partial(_form_global_array, global_mesh=self.mesh)
 
 
@@ -247,13 +239,9 @@ class Sampler:
         position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)
 
 
-
-        # global_length=jnp.max(process_allgather(input_ids.shape[1]))
-        # _form_global_array(np.array(input_ids.shape[1]))
-        global_length=512
-
-
-
+        global_length=jnp.max(process_allgather(input_ids.shape[1]))
+        _form_global_array(np.array(input_ids.shape[1]))
+        # global_length=512
         prefill_length = self.find_ceil(global_length)
         # prefill_length = input_ids.shape[1]
 

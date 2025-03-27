@@ -186,23 +186,24 @@ def main():
 
     for i in range(training_steps):
         inputs = random.sample(QAs, BATCH)
-        datas = gen_samples(repeat(inputs, num_pre_Q), sampler, state.params)
+        # datas = gen_samples(repeat(inputs, num_pre_Q), sampler, state.params)
 
-        # prompts = [x["Q"] for x in inputs]
-        #
-        # tip_text, answers = gen_answers_jax(repeat(prompts, num_pre_Q), sampler, state.params)
-        #
-        # rewards = []
-        #
-        # for i, (inp, a) in enumerate(zip(prompts, answers)):
-        #     try:
-        #         rewards.append(reward_correct(inp, a) + reward_format(inp, a))
-        #     except Exception as e:
-        #         print(e, a)
-        #         rewards.append(-10)
-        #
-        # print(rewards, np.mean(rewards))
-        # datas = batch_process(tip_text, answers, rewards, sampler.tokenizer)
+        prompts = [x["Q"] for x in inputs]
+        repeated_prompt=repeat(prompts, num_pre_Q)
+
+
+        tip_text, answers = gen_answers_jax(repeated_prompt, sampler, state.params)
+
+        rewards = []
+        for i, (inp, a) in enumerate(zip(repeated_prompt, answers)):
+            try:
+                rewards.append(reward_correct(inp, a) + reward_format(inp, a))
+            except Exception as e:
+                print(e, a)
+                rewards.append(-10)
+
+        print(rewards, np.mean(rewards))
+        datas = batch_process(tip_text, answers, rewards, sampler.tokenizer)
 
 
         for j in range(grad_accum_steps):

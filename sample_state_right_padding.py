@@ -180,6 +180,8 @@ class Sampler:
 
         # self.sample_fn=jax.jit(_top_k_sampling_batched)
 
+        # self.sample_fn=jax.jit(_top_k_sampling_batched)
+
         self.jit_infer_prefill = jax.jit(self.model.apply)
         self.jit_infer_step = jax.jit(self.infer)
         self.prefill_bucket = [

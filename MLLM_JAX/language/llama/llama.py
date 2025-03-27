@@ -600,19 +600,22 @@ class LlamaAttention(nn.Module):
         if cache is not None:
             end_index = cache['end_index'][0]
             slice_indices = (0, 0, end_index , 0)
-            value_states = jax.lax.dynamic_update_slice(
-                cache['v'],
-                value_states,
-                slice_indices,
-            )
-            key_states = jax.lax.dynamic_update_slice(
-                cache['k'], key_states, slice_indices
-            )
-            new_cache = {
-                'v': value_states,
-                'k': key_states,
-                'end_index': cache['end_index'] + q_len,
-            }
+            # value_states = jax.lax.dynamic_update_slice(
+            #     cache['v'],
+            #     value_states,
+            #     slice_indices,
+            # )
+            # key_states = jax.lax.dynamic_update_slice(
+            #     cache['k'], key_states, slice_indices
+            # )
+            # new_cache = {
+            #     'v': value_states,
+            #     'k': key_states,
+            #     'end_index': cache['end_index'] + q_len,
+            # }
+
+            new_cache=cache
+
         else:
             new_cache = None
 

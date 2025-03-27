@@ -21,11 +21,11 @@ from MLLM_JAX.utils import get_jax_mesh2, _form_global_array, collect_process_da
 import jax.numpy as jnp
 
 max_prompt_length=400
-num_pre_Q=16
+num_pre_Q=32
 MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-BATCH=8
-grad_accum_steps = 8
+BATCH=4
+grad_accum_steps = 4
 
 model_path = 'Qwen/Qwen2.5-3B'
 tokenizer = AutoTokenizer.from_pretrained(model_path)

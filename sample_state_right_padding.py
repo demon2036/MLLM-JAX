@@ -321,10 +321,11 @@ class Sampler:
             if jnp.all(sample_state.dones):
                 break
 
+        local_sample_step = collect_process_data(sample_state.sample_steps)
         local_token_buffer = collect_process_data(sample_state.token_buffer)
 
         self.key = sample_state.key
-        return local_token_buffer
+        return local_token_buffer,local_sample_step
 
 
 

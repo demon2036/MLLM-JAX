@@ -258,7 +258,6 @@ def pad_cache_right(
         cache,
         prefill_length,
         max_cache_length,
-        shard_method=None
 ):
 
     for i in range(len(cache)):
@@ -269,9 +268,5 @@ def pad_cache_right(
         # cache[f'layer_{i}']['end_index']=jnp.zeros((cache[f'layer_{i}']['k'].shape[0],), dtype=jnp.int32)+true_length
         # print(cache[f'layer_{i}']['k'].shape)
         # print(cache[f'layer_{i}']['k'][0,0,:,0])
-
-        if shard_method:
-            cache['v'] = jax.tree_util.tree_map_with_path(shard_method, cache['v'])
-            cache['k'] = jax.tree_util.tree_map_with_path(shard_method, cache['k'])
 
     return cache

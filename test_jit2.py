@@ -63,8 +63,10 @@ def gen_answers_jax(prompts,sampler,params):
         ],
 
             tokenize=False, add_generation_prompt=True))
-    # tip_inputs = tokenizer(tip_text, return_tensors="pt", padding=True, padding_side="left", add_special_tokens=False)
-    # prompt_length = tip_inputs["input_ids"].shape[-1]
+
+
+    print(len(prompt))
+
 
     inputs = sampler.tokenizer(prompt, return_tensors="jax", padding=True, padding_side="right")
     input_ids = inputs['input_ids']
@@ -203,12 +205,6 @@ def main():
 
         print(rewards, np.mean(rewards))
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer)
-
-
-        # jax.tree_util.tree_map_with_path(lambda x,y:print(x,y.shape),datas)
-        #
-        # while True:
-        #     pass
 
 
         for j in range(grad_accum_steps):

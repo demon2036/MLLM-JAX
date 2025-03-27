@@ -380,10 +380,16 @@ class Sampler:
         for i,step in enumerate(local_sample_step):
             output = \
                 self.tokenizer.batch_decode(local_token_buffer[i, prefill_length:prefill_length + step + 1].reshape(1, -1),
-                                        skip_special_tokens=True,
+                                        skip_special_tokens=False,
                                         )
 
             texts.extend(output)
+
+            if jax.process_index()==0:
+                print(output)
+
+            while True:
+                pass
 
         # texts2= self.tokenizer.batch_decode(local_token_buffer[:,prefill_length:],
         #                                 skip_special_tokens=True,

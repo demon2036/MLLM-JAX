@@ -1,6 +1,7 @@
 import os
 
 import numpy
+import wandb
 from jax.experimental.multihost_utils import process_allgather
 
 from training import reward_correct, reward_format, get_state, training_step, repeat, slice_data
@@ -19,6 +20,7 @@ from transformers import AutoTokenizer
 from MLLM_JAX.utils import get_jax_mesh2, _form_global_array, collect_process_data
 # from sample_state_left_padding import get_model, Sampler
 import jax.numpy as jnp
+
 
 max_prompt_length=400
 num_pre_Q=32
@@ -99,7 +101,6 @@ def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
     pad_labels = jnp.pad(labels, ((0, 0), (0, max_length - input_ids.shape[1])))
 
 
-    # rewards=jnp.array([item for item in rewards])
     return {
         "input_ids": input_ids_pad,
         "attention_mask": pad_attention,
@@ -107,19 +108,24 @@ def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
         'rewards': rewards
     }
 
+    # rewards=jnp.array([item for item in rewards])
+
+# rewards = []
+# for _, (inp, a) in enumerate(zip(repeated_inputs, answers)):
+#     try:
+#         rewards.append(reward_correct(inp, a) + reward_format(inp, a))
+#     except Exception as e:
+#         print(e, a)
+#         rewards.append(-10)
 
 
 def main():
     reward_funcs=[reward_correct,reward_format]
 
     dataset = load_dataset("openai/gsm8k", "main", split="train")
-
-
     dataset = dataset.shard(num_shards=jax.process_count(), index=jax.process_index())
 
-
-
-
+    print(jnp.min(process_allgather(np.array(len(dataset)))))
     QAs = [{'Q': x, 'A': y.split('####')[-1].strip()} for x, y in zip(dataset['question'], dataset['answer'])]
 
 
@@ -127,6 +133,11 @@ def main():
     training_steps = 100
     state, sampler, train_state_sharding = get_state(mesh, training_steps,grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q)
     test_fn = jax.jit(training_step, donate_argnums=(0,), )
+
+    if jax.process_index() == 0:
+        # wandb.init(name=configs['name'], project=configs['project'], config=configs)
+        wandb.init(name='test', project='grop-gsm8k',)
+
 
     for i in range(training_steps):
         inputs = random.sample(QAs, BATCH)
@@ -136,27 +147,24 @@ def main():
         tip_text, answers = gen_answers_jax(prompts, sampler, state.params)
 
 
-        rewards_per_func=np.zeros((len(answers), len(reward_funcs) ))
+        rewards_per_func=np.zeros( ( len(reward_funcs), len(answers),  ))
 
         for i, reward_func in enumerate(reward_funcs):
             for j, (inp, a) in enumerate(zip(repeated_inputs, answers)):
-                rewards_per_func[j,i]=reward_func(inp,a)
+                rewards_per_func[i,j]=reward_func(inp,a)
 
-        rewards=rewards_per_func.sum(axis=1)
-
-
-        # rewards = []
-        # for _, (inp, a) in enumerate(zip(repeated_inputs, answers)):
-        #     try:
-        #         rewards.append(reward_correct(inp, a) + reward_format(inp, a))
-        #     except Exception as e:
-        #         print(e, a)
-        #         rewards.append(-10)
+        rewards=rewards_per_func.sum(axis=0)
 
         print(rewards, np.mean(rewards))
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
 
         datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), datas)
+
+        for i, reward_func in enumerate(reward_funcs):
+            reward_funcs_name=reward_func.__name__
+            reward_datas_local=rewards_per_func[i]
+            reward_datas_mean= jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), reward_datas_local).mean()
+            print({f"{reward_funcs_name}":reward_datas_mean})
 
 
         for j in range(grad_accum_steps):

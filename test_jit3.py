@@ -70,20 +70,13 @@ def gen_answers_jax(prompts,sampler,params):
 
         answers.extend(output)
 
-    #
-    # if jax.process_index()==0:
-    #     print(answers[-2:])
-    #     print('\n' * 2, flush=True)
-
     print(answers[-2:])
     print('\n' * 2, flush=True)
     return prompt,answers
 
 
 
-
-
-def batch_process(tip_texts,answers,rewards,tokenizer):
+def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
     total_texts=[tip_text+answer+tokenizer.eos_token for tip_text,answer in zip(tip_texts,answers)]
     tip_text_inputs=tokenizer(tip_texts, return_tensors="np", padding=True, padding_side="right")
     total_text_inputs=tokenizer(total_texts, return_tensors="np", padding=True, padding_side="right")
@@ -99,11 +92,11 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
     labels=jnp.array(labels,dtype=np.int32)
     input_ids=total_text_inputs['input_ids']
 
-    input_ids_pad = jnp.pad(input_ids, ((0, 0), (0, MAX_LENGTH - input_ids.shape[1])),
+    input_ids_pad = jnp.pad(input_ids, ((0, 0), (0, max_length - input_ids.shape[1])),
                             constant_values=tokenizer.eos_token_id)
 
-    pad_attention = jnp.pad(attention_mask, ((0, 0), (0, MAX_LENGTH - input_ids.shape[1])))
-    pad_labels = jnp.pad(labels, ((0, 0), (0, MAX_LENGTH - input_ids.shape[1])))
+    pad_attention = jnp.pad(attention_mask, ((0, 0), (0, max_length - input_ids.shape[1])))
+    pad_labels = jnp.pad(labels, ((0, 0), (0, max_length - input_ids.shape[1])))
 
 
     rewards=jnp.array([item for item in rewards])
@@ -116,25 +109,14 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
 
 
 
-def get_advantages(rewards,groups):
-    mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
-    std_grouped_rewards = rewards.reshape(-1, groups).std(axis=1)
-    mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
-    std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
-    advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
-
-    return mean_grouped_rewards,std_grouped_rewards,advantages
-
-
-
 def main():
     dataset = load_dataset("openai/gsm8k", "main", split="train")
     QAs = [{'Q': x, 'A': y.split('####')[-1].strip()} for x, y in zip(dataset['question'], dataset['answer'])]
 
-    max_cache_length = MAX_LENGTH_SAMPLE
+
     mesh = get_jax_mesh2("-1,8,1")
     training_steps = 100
-    state, sampler, train_state_sharding = get_state(mesh, training_steps)
+    state, sampler, train_state_sharding = get_state(mesh, training_steps,grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q)
     test_fn = jax.jit(training_step, donate_argnums=(0,), )
 
     for i in range(training_steps):
@@ -152,8 +134,7 @@ def main():
                 rewards.append(-10)
 
         print(rewards, np.mean(rewards))
-        datas = batch_process(tip_text, answers, rewards, sampler.tokenizer)
-
+        datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
 
 
         for j in range(grad_accum_steps):

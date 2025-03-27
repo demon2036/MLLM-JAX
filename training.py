@@ -34,17 +34,12 @@ import jax.numpy as jnp
 from math_verify import parse, verify, ExprExtractionConfig
 
 
-max_prompt_length=400
-num_pre_Q=16
-MAX_LENGTH_SAMPLE=1024
-MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-BATCH=8
-grad_accum_steps = 8
+# max_prompt_length=400
+# num_pre_Q=16
+# MAX_LENGTH_SAMPLE=1024
+# MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
+# BATCH=8
 
-model_path = 'Qwen/Qwen2.5-3B'
-tokenizer = AutoTokenizer.from_pretrained(model_path)
-system_prompt = """You are a helpful assistant. A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the user with the answer.\
-The reasoning process and answer are enclosed within <think> </think> and<answer> </answer> tags, respectively, i.e., <think> reasoning process here </think><answer> answer here </answer>."""
 
 
 def slice_data(x,accumulate_steps,i):
@@ -67,13 +62,13 @@ class TrainState(train_state.TrainState):
     ref_params:Any=None
 
 
-def get_state(mesh,training_steps=100):
+def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.5-3B',num_pre_q=16):
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
     model_ref = get_model(mesh, model_path=model_path, only_model=True)
 
     beta=0.0
 
-    train_module = TrainGRPOModule(model=model, pad_token_id=tokenizer.pad_token_id,ref_model=model_ref,num_pre_Q=num_pre_Q,beta=beta)
+    train_module = TrainGRPOModule(model=model, pad_token_id=tokenizer.pad_token_id,ref_model=model_ref,num_pre_Q=num_pre_q,beta=beta)
     def init_fn(params):
 
         learning_rate = optax.warmup_cosine_decay_schedule(
@@ -171,3 +166,16 @@ def reward_format(item, answer):
     pattern = r"^<think>.*?</think>.*?<answer>.*?</answer>$"
     # return 0.75 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -0.5
     return 1.25 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -1
+
+
+
+
+
+def get_advantages(rewards,groups):
+    mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
+    std_grouped_rewards = rewards.reshape(-1, groups).std(axis=1)
+    mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
+    std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
+    advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
+
+    return mean_grouped_rewards,std_grouped_rewards,advantages

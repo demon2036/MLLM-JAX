@@ -66,10 +66,14 @@ def gen_answers_jax(prompts,sampler,params):
 
     local_ids=collect_process_data(input_ids_global)
 
+
+    oris=sampler.tokenizer.batch_decode(input_ids,
+                                             skip_special_tokens=True, )
+
     local_answers = sampler.tokenizer.batch_decode(local_ids,
                                              skip_special_tokens=True, )
 
-    for ori,loc in zip(prompt,local_answers):
+    for ori,loc in zip(oris,local_answers):
         if jax.process_index()==0:
             print(ori,loc)
 

@@ -195,10 +195,10 @@ def main():
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer)
 
 
-        jax.tree_util.tree_map_with_path(lambda x,y:print(x,y.shape),datas)
-
-        while True:
-            pass
+        # jax.tree_util.tree_map_with_path(lambda x,y:print(x,y.shape),datas)
+        #
+        # while True:
+        #     pass
 
 
         for j in range(grad_accum_steps):

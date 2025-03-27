@@ -69,7 +69,7 @@ class TrainGRPOModule(nn.Module):
         attention_mask=inputs['attention_mask']
         labels=inputs['labels']
         rewards = inputs['rewards']
-        advantages=getattr(inputs, "advantages", None)
+        advantages=inputs.get( "advantages", None)
         print(advantages.shape)
 
 

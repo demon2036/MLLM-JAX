@@ -317,6 +317,7 @@ def main():
 if __name__=="__main__":
     jax.distributed.initialize()
     jax.config.update("jax_compilation_cache_dir", "gs://arm-central-2b/jax-cache")
+    main()
 
 
 

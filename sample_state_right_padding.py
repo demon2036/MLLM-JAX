@@ -282,6 +282,53 @@ class Sampler:
                 return num
         return None  # 如果 input 大于所有数字，返回 None
 
+
+
+    def generate(self,input_ids_pad, pad_attention, position_ids, prefill_length, max_length=8192,params=None):
+        # input_ids_pad, pad_attention, position_ids, prefill_length = self.preprocess_prompt_prefill(prompt,
+        #                                                                                             prefill_length)
+
+        if jax.process_index() == 0:
+            print(f'{prefill_length=}')
+        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,
+                           shard_method=self.global_collect_method)
+
+        input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method,
+                                                                                      (input_ids_pad, pad_attention,
+                                                                                       position_ids))
+
+        logits, cache = self.jit_infer_prefill({'params': params}, input_ids=input_ids_pad,
+                                               position_ids=position_ids,
+                                               attention_mask=pad_attention, cache=cache)
+        cache, input_ids_pad, pad_attention, position_ids = self.prepare_from_prefill_to_decode(cache, input_ids_pad,
+                                                                                                pad_attention,
+                                                                                                position_ids,
+                                                                                                max_length=max_length)
+
+        next_token_logits = jnp.take_along_axis(logits, position_ids[..., None] - 1, axis=1)[:, -1]
+        # next_token_predict = jnp.argmax(, axis=-1)[:,0]
+        next_token_predict = self.sample_fn(self.key, next_token_logits)
+
+        # next_token_predict = jnp.argmax(logits[:, position_ids-1], axis=1)
+        input_ids_pad = input_ids_pad.at[:, prefill_length].set(next_token_predict)
+        sample_state = create_sample_state(input_ids_pad=input_ids_pad, position_ids=position_ids, cache=cache,
+                                           pad_attention=pad_attention, true_length=prefill_length,
+                                           decoding_step=prefill_length, key=self.key)
+
+        for i in tqdm(range(max_length)):
+            sample_state = self.jit_infer_step(sample_state, params)
+            if jnp.all(sample_state.dones):
+                break
+
+        local_token_buffer = collect_process_data(sample_state.token_buffer)
+
+        self.key = sample_state.key
+        return local_token_buffer
+
+
+
+
+
     def generate_prefill_auto_regressive(self, prompt, prefill_length=20, max_length=8192,params=None):
 
         input_ids_pad, pad_attention, position_ids, prefill_length = self.preprocess_prompt_prefill(prompt,
@@ -329,11 +376,6 @@ class Sampler:
 
         texts=[]
         for i,step in enumerate(local_sample_step):
-            # output = \
-            #     self.tokenizer.batch_decode(local_token_buffer[i, prefill_length:prefill_length+step+1].reshape(1, -1),
-            #                                 skip_special_tokens=False,
-            #                                 clean_up_tokenization_spaces=False)
-
             output = \
                 self.tokenizer.batch_decode(local_token_buffer[i, prefill_length:prefill_length + step + 1].reshape(1, -1),
                                         skip_special_tokens=True,
@@ -345,18 +387,7 @@ class Sampler:
         #                                 skip_special_tokens=True,
         #                                 )
 
-
-        # if jax.process_index()==0:
-        #     print(texts2[-1])
-        #     print('\n'*5)
-        #     print(texts[-1])
-        #
-        #
-        # while True:
-        #     params
-
         self.key=sample_state.key
-
         return texts
 
 

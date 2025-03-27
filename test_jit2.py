@@ -3,6 +3,7 @@ import os
 from typing import Any
 
 import tqdm
+from jax.experimental.multihost_utils import process_allgather
 
 os.environ['JAX_TRACEBACK_FILTERING']='off'
 
@@ -170,9 +171,9 @@ def reward_format(item, answer):
 
 
 def gen_answers_jax(prompts,sampler,params):
-    tip_text = []
+    prompt = []
     for x in prompts:
-        tip_text.append(tokenizer.apply_chat_template([
+        prompt.append(tokenizer.apply_chat_template([
              {"role": "system", "content": system_prompt},
              {"role": "user", "content": x}
             # {"role": "system", "content": "You are a helpful assistant."},
@@ -183,8 +184,28 @@ def gen_answers_jax(prompts,sampler,params):
     # tip_inputs = tokenizer(tip_text, return_tensors="pt", padding=True, padding_side="left", add_special_tokens=False)
     # prompt_length = tip_inputs["input_ids"].shape[-1]
 
-    # if prompt_length > max_prompt_length: return []
-    answers=sampler.generate_prefill_auto_regressive(tip_text, max_length=MAX_LENGTH_SAMPLE,params=params)
+    inputs = sampler.tokenizer(prompt, return_tensors="jax", padding=True, padding_side="right")
+    input_ids = inputs['input_ids']
+
+    position_ids = inputs['attention_mask'].cumsum(-1) - 1
+    position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)
+
+    global_length = jnp.max(process_allgather(input_ids.shape[1]))
+    # global_length=512
+    prefill_length = sampler.find_ceil(global_length)
+
+    attention_mask = inputs['attention_mask']
+    input_ids_pad = jnp.pad(input_ids, ((0, 0), (0, prefill_length - input_ids.shape[1])),
+                            constant_values=sampler.tokenizer.eos_token_id)
+
+    pad_attention = jnp.pad(attention_mask, ((0, 0), (0, prefill_length - input_ids.shape[1])))
+    pad_position_ids = jnp.pad(position_ids, ((0, 0), (0, prefill_length - input_ids.shape[1])))
+
+    completion_ids=sampler.genrate(input_ids_pad, pad_attention, pad_position_ids, prefill_length, max_length=MAX_LENGTH_SAMPLE,params=params)
+
+    answers=sampler.tokenizer.batch_decode(completion_ids[:,prefill_length:],
+                                        skip_special_tokens=True,
+                                        )
 
     # for ans in answers:
     #     print(ans,len(ans))
@@ -193,7 +214,7 @@ def gen_answers_jax(prompts,sampler,params):
     if jax.process_index()==0:
         print(answers[-2:])
         print('\n' * 2, flush=True)
-    return tip_text,answers
+    return prompt,answers
 
 
 def process_func_padding(prompt,answer, tokenizer):
@@ -317,7 +338,7 @@ def main():
 if __name__=="__main__":
     jax.distributed.initialize()
     jax.config.update("jax_compilation_cache_dir", "gs://arm-central-2b/jax-cache")
-
+    main()
 
 
         # print(metrics)

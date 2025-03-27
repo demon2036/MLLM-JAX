@@ -101,7 +101,7 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
     tip_text_inputs=tokenizer([tip_text], return_tensors="jax", padding=True, padding_side="right")
     total_text_inputs=tokenizer([total_text], return_tensors="jax", padding=True, padding_side="right")
 
-    true_lengths = tip_text_inputs['attention_mask'].sum(axis=1)[0]
+    true_lengths = tip_text_inputs['attention_mask'].sum(axis=1)
 
 
     attention_mask=total_text_inputs['attention_mask']

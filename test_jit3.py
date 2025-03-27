@@ -107,11 +107,11 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
                                         skip_special_tokens=False,
                                         )
 
-
-    print(out[0])
-    print('\n'*2)
-    print(answers[0]+tokenizer.eos_token)
-    print(out==(answers[0]+tokenizer.eos_token))
+    if jax.process_index()==0:
+        print(out[0])
+        print('\n'*2)
+        print(answers[0]+tokenizer.eos_token)
+        print(out==(answers[0]+tokenizer.eos_token))
 
 
 

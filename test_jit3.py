@@ -2,6 +2,7 @@ import os
 
 import numpy
 import wandb
+from jax.experimental import multihost_utils
 from jax.experimental.multihost_utils import process_allgather
 
 from training import reward_correct, reward_format, get_state, training_step, repeat, slice_data
@@ -166,7 +167,10 @@ def main():
             # print({f"{reward_funcs_name}":reward_datas_mean})
             metrics[f"{reward_funcs_name}"]=reward_datas_mean
 
+        print(f"{step=} syn for data")
+        multihost_utils.sync_global_devices('syn for data')
         datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), datas)
+
         for j in range(grad_accum_steps):
             local_data = jax.tree_util.tree_map(lambda x: slice_data(x, grad_accum_steps, j), datas, )
             # batch = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
@@ -175,7 +179,6 @@ def main():
 
         if jax.process_index()==0:
             wandb.log(metrics,step)
-        print(f"{step=} ")
 
 
 if __name__=="__main__":

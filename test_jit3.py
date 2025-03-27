@@ -104,7 +104,7 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
     diff=total_text_encoded[0,tip_text_encoded.shape[1]:]
 
     out= tokenizer.batch_decode(diff.reshape(1, -1),
-                                        skip_special_tokens=True,
+                                        skip_special_tokens=False,
                                         )
 
 

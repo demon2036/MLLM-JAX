@@ -100,11 +100,11 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
     attention_mask=total_text_inputs['attention_mask']
     labels=[]
     for true_length,mask in zip(true_lengths_prompts,attention_mask):
-        labels.append(mask.at[:true_length].set(tokenizer.pad_token_id))
+        labels.append(mask.at[:true_length].set(0))
 
     for label,mask in zip(labels,attention_mask):
         if jax.process_index()==0:
-            print(label==tokenizer.pad_token_id,      (label==tokenizer.pad_token_id)|(label==tokenizer.eos_token_id))
+            print(label==0)
             print()
 
 

@@ -15,7 +15,7 @@ import numpy as np
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
-from MLLM_JAX.utils import get_jax_mesh2, _form_global_array
+from MLLM_JAX.utils import get_jax_mesh2, _form_global_array, collect_process_data
 # from sample_state_left_padding import get_model, Sampler
 import jax.numpy as jnp
 
@@ -60,6 +60,33 @@ def gen_answers_jax(prompts,sampler,params):
 
     inputs = sampler.tokenizer(prompt, return_tensors="jax", padding=True, padding_side="right")
     input_ids = inputs['input_ids']
+
+
+    input_ids_global=jax.tree_util.tree_map_with_path(sampler.global_collect_method,input_ids)
+
+    local_ids=collect_process_data(input_ids_global)
+
+    local_answers = sampler.tokenizer.batch_decode(local_ids,
+                                             skip_special_tokens=True, )
+
+    for ori,loc in zip(prompt,local_answers):
+        if jax.process_index()==0:
+            print(ori,loc)
+
+            print('\n'*5)
+
+
+    while True:
+        pass
+
+
+
+
+
+
+
+
+
 
     position_ids = inputs['attention_mask'].cumsum(-1) - 1
     position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)

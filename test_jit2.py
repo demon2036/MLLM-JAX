@@ -180,7 +180,7 @@ def main():
 
         prompts = [x["Q"] for x in inputs]
 
-        tip_text, answers = gen_answers_jax(repeat(inputs, num_pre_Q), sampler, state.params)
+        tip_text, answers = gen_answers_jax(repeat(prompts, num_pre_Q), sampler, state.params)
 
         rewards = []
 

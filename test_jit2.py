@@ -2,7 +2,7 @@ import os
 
 from jax.experimental.multihost_utils import process_allgather
 
-from training import reward_correct, reward_format, get_state, training_step
+from training import reward_correct, reward_format, get_state, training_step, repeat
 
 os.environ['JAX_TRACEBACK_FILTERING']='off'
 

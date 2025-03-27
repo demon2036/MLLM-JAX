@@ -21,7 +21,7 @@ from MLLM_JAX.utils import get_jax_mesh2, _form_global_array, collect_process_da
 import jax.numpy as jnp
 
 max_prompt_length=400
-num_pre_Q=32
+num_pre_Q=16
 MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 BATCH=8
@@ -121,7 +121,7 @@ def main():
     QAs = [{'Q': x, 'A': y.split('####')[-1].strip()} for x, y in zip(dataset['question'], dataset['answer'])]
 
 
-    mesh = get_jax_mesh2("-1,8,1")
+    mesh = get_jax_mesh2("1,-1,1")
     training_steps = 100
     state, sampler, train_state_sharding = get_state(mesh, training_steps,grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q)
     test_fn = jax.jit(training_step, donate_argnums=(0,), )

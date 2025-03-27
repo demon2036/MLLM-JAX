@@ -111,10 +111,13 @@ def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
 
 def main():
     dataset = load_dataset("openai/gsm8k", "main", split="train")
+
+    dataset = dataset.shard(num_shards=jax.process_count(), index=jax.process_index())
+
     QAs = [{'Q': x, 'A': y.split('####')[-1].strip()} for x, y in zip(dataset['question'], dataset['answer'])]
 
 
-    mesh = get_jax_mesh2("1,-1,2")
+    mesh = get_jax_mesh2("1,-1,1")
     training_steps = 100
     state, sampler, train_state_sharding = get_state(mesh, training_steps,grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q)
     test_fn = jax.jit(training_step, donate_argnums=(0,), )
@@ -135,6 +138,8 @@ def main():
 
         print(rewards, np.mean(rewards))
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
+
+
 
 
         for j in range(grad_accum_steps):

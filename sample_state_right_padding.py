@@ -216,7 +216,6 @@ class Sampler:
         sample_state.dones=dones
 
         sample_state.sample_steps += 1 - sample_state.dones
-        #
         sample_state.key = key
         sample_state.attention_mask = sample_state.attention_mask.at[:, i + 1].set(1)
         sample_state.positions += 1

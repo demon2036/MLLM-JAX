@@ -64,11 +64,13 @@ class TrainGRPOModule(nn.Module):
 
 
 
-    def __call__(self, inputs,mean=None,std=None,advantages=None) -> ArrayTree:
+    def __call__(self, inputs,) -> ArrayTree:
         input_ids=inputs['input_ids']
         attention_mask=inputs['attention_mask']
         labels=inputs['labels']
         rewards = inputs['rewards']
+        advantages=getattr(inputs, "advantages", None)
+        print(advantages.shape)
 
 
         logits, cache = self.model( input_ids=input_ids,

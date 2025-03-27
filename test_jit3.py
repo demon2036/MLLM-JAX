@@ -5,7 +5,7 @@ import wandb
 from jax.experimental import multihost_utils
 from jax.experimental.multihost_utils import process_allgather
 
-from training import reward_correct, reward_format, get_state, training_step, repeat, slice_data
+from training import reward_correct, reward_format, get_state, training_step, repeat, slice_data, get_advantages
 
 os.environ['JAX_TRACEBACK_FILTERING']='off'
 
@@ -135,6 +135,9 @@ def main():
     state, sampler, train_state_sharding = get_state(mesh, training_steps,grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q)
     test_fn = jax.jit(training_step, donate_argnums=(0,), )
 
+    get_advantages_jit=jax.jit(get_advantages,static_argnums=(1,))
+
+
     if jax.process_index() == 0:
         # wandb.init(name=configs['name'], project=configs['project'], config=configs)
         wandb.init(name='test', project='grop-gsm8k',)
@@ -164,12 +167,15 @@ def main():
             reward_funcs_name=reward_func.__name__
             reward_datas_local=rewards_per_func[i]
             reward_datas_mean= jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), reward_datas_local).mean()
-            # print({f"{reward_funcs_name}":reward_datas_mean})
             metrics[f"{reward_funcs_name}"]=reward_datas_mean
 
         print(f"{step=} syn for data")
         multihost_utils.sync_global_devices('syn for data')
         datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), datas)
+        advantages=get_advantages_jit(datas['rewards'])
+        datas['advantages']=advantages
+        metrics['advantages']=advantages.mean()
+
 
         for j in range(grad_accum_steps):
             local_data = jax.tree_util.tree_map(lambda x: slice_data(x, grad_accum_steps, j), datas, )

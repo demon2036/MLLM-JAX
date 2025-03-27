@@ -177,5 +177,5 @@ def get_advantages(rewards,groups):
     mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
     std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
     advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
-
-    return mean_grouped_rewards,std_grouped_rewards,advantages
+    return advantages
+    # return mean_grouped_rewards,std_grouped_rewards,advantages

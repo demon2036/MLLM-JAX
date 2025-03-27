@@ -98,8 +98,8 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
     tip_text=tip_texts[0]
     total_text=total_texts[0]
 
-    tip_text_encoded=tokenizer([tip_text], return_tensors="jax", padding=True, padding_side="right")
-    total_text_encoded=tokenizer([total_text], return_tensors="jax", padding=True, padding_side="right")
+    tip_text_encoded=tokenizer([tip_text], return_tensors="jax", padding=True, padding_side="right")['input_ids']
+    total_text_encoded=tokenizer([total_text], return_tensors="jax", padding=True, padding_side="right")['input_ids']
 
     diff=total_text_encoded[0,tip_text_encoded.shape[1]:]
 

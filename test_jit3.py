@@ -101,29 +101,27 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
     attention_mask=total_text_inputs['attention_mask']
     labels=[]
     for true_length,mask in zip(true_lengths_prompts,attention_mask):
-
-
         temp=numpy.copy(mask)
-
         temp[:true_length]=0
         labels.append(temp)
 
-    labels=jnp.array(labels,dtype=jnp.int32)
+    labels=jnp.array(labels,dtype=np.int32)
     input_ids=total_text_inputs['input_ids']
 
 
-    print(attention_mask[0])
 
-    print(input_ids.shape,labels.shape,attention_mask.shape)
+    input_ids_pad = jnp.pad(input_ids, ((0, 0), (0, MAX_LENGTH - input_ids.shape[1])),
+                            constant_values=self.tokenizer.eos_token_id)
 
-
+    pad_attention = jnp.pad(attention_mask, ((0, 0), (0, MAX_LENGTH - input_ids.shape[1])))
+    pad_labels = jnp.pad(labels, ((0, 0), (0, MAX_LENGTH - input_ids.shape[1])))
 
 
     rewards=jnp.array([item for item in rewards])
     return {
-        "input_ids": input_ids,
-        "attention_mask": attention_mask,
-        "labels": labels,
+        "input_ids": input_ids_pad,
+        "attention_mask": pad_attention,
+        "labels": pad_labels,
         'rewards': rewards
     }
 

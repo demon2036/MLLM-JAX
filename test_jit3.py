@@ -24,8 +24,8 @@ import jax.numpy as jnp
 
 
 max_prompt_length=400
-num_pre_Q=32
-MAX_LENGTH_SAMPLE=1024
+num_pre_Q=64
+MAX_LENGTH_SAMPLE=2048
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 BATCH=1
 grad_accum_steps = 1

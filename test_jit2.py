@@ -73,8 +73,8 @@ def gen_answers_jax(prompts,sampler,params):
     position_ids = inputs['attention_mask'].cumsum(-1) - 1
     position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)
 
-    global_length = jnp.max(process_allgather(input_ids.shape[1]))
-    # global_length=512
+    # global_length = jnp.max(process_allgather(input_ids.shape[1]))
+    global_length=512
     prefill_length = sampler.find_ceil(global_length)
 
     attention_mask = inputs['attention_mask']
@@ -204,7 +204,7 @@ def main():
         tip_text, answers = gen_answers_jax(repeated_prompt, sampler, state.params)
 
         rewards = []
-        for i, (inp, a) in enumerate(zip(repeated_prompt, answers)):
+        for _, (inp, a) in enumerate(zip(repeated_prompt, answers)):
             try:
                 rewards.append(reward_correct(inp, a) + reward_format(inp, a))
             except Exception as e:

@@ -99,7 +99,7 @@ def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
     pad_labels = jnp.pad(labels, ((0, 0), (0, max_length - input_ids.shape[1])))
 
 
-    rewards=jnp.array([item for item in rewards])
+    # rewards=jnp.array([item for item in rewards])
     return {
         "input_ids": input_ids_pad,
         "attention_mask": pad_attention,
@@ -110,11 +110,13 @@ def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
 
 
 def main():
+    reward_funcs=[reward_correct,reward_format]
+
     dataset = load_dataset("openai/gsm8k", "main", split="train")
-    print(len(dataset))
+
 
     dataset = dataset.shard(num_shards=jax.process_count(), index=jax.process_index())
-    print(len(dataset))
+
 
 
 
@@ -132,13 +134,24 @@ def main():
         repeated_inputs=repeat(inputs, num_pre_Q)
         prompts = [x["Q"] for x in repeated_inputs]
         tip_text, answers = gen_answers_jax(prompts, sampler, state.params)
-        rewards = []
-        for _, (inp, a) in enumerate(zip(repeated_inputs, answers)):
-            try:
-                rewards.append(reward_correct(inp, a) + reward_format(inp, a))
-            except Exception as e:
-                print(e, a)
-                rewards.append(-10)
+
+
+        rewards_per_func=np.zeros((len(answers), len(reward_funcs) ))
+
+        for i, reward_func in enumerate(reward_funcs):
+            for j, (inp, a) in enumerate(zip(repeated_inputs, answers)):
+                rewards_per_func[j,i]=reward_func(inp,a)
+
+        rewards=rewards_per_func.sum(axis=1)
+
+
+        # rewards = []
+        # for _, (inp, a) in enumerate(zip(repeated_inputs, answers)):
+        #     try:
+        #         rewards.append(reward_correct(inp, a) + reward_format(inp, a))
+        #     except Exception as e:
+        #         print(e, a)
+        #         rewards.append(-10)
 
         print(rewards, np.mean(rewards))
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)

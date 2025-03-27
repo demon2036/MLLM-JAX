@@ -1,5 +1,6 @@
 import os
 
+import numpy
 from jax.experimental.multihost_utils import process_allgather
 
 from training import reward_correct, reward_format, get_state, training_step, repeat, slice_data
@@ -100,8 +101,12 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
     attention_mask=total_text_inputs['attention_mask']
     labels=[]
     for true_length,mask in zip(true_lengths_prompts,attention_mask):
-        mask[:true_length]=0
-        labels.append(mask)
+
+
+        temp=numpy.copy(mask)
+
+        temp[:true_length]=0
+        labels.append(temp)
 
     labels=jnp.array(labels,dtype=jnp.int32)
     input_ids=total_text_inputs['input_ids']

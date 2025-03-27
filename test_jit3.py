@@ -139,7 +139,7 @@ def main():
         wandb.init(name='test', project='grop-gsm8k',)
 
 
-    for i in range(training_steps):
+    for step in range(training_steps):
         inputs = random.sample(QAs, BATCH)
         # datas = gen_samples(repeat(inputs, num_pre_Q), sampler, state.params)
         repeated_inputs=repeat(inputs, num_pre_Q)
@@ -158,22 +158,24 @@ def main():
         print(rewards, np.mean(rewards))
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
 
-        datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), datas)
-
+        metrics=dict()
         for i, reward_func in enumerate(reward_funcs):
             reward_funcs_name=reward_func.__name__
             reward_datas_local=rewards_per_func[i]
             reward_datas_mean= jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), reward_datas_local).mean()
-            print({f"{reward_funcs_name}":reward_datas_mean})
+            # print({f"{reward_funcs_name}":reward_datas_mean})
+            metrics[f"{reward_funcs_name}"]=reward_datas_mean
 
-
+        datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), datas)
         for j in range(grad_accum_steps):
             local_data = jax.tree_util.tree_map(lambda x: slice_data(x, grad_accum_steps, j), datas, )
             # batch = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
             state, metrics = test_fn(state, local_data)
 
 
-        print(f"{i=} ")
+        if jax.process_index()==0:
+            wandb.log(metrics,step)
+        print(f"{step=} ")
 
 
 if __name__=="__main__":

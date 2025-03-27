@@ -188,7 +188,7 @@ def main():
     QAs = [{'Q': x, 'A': y.split('####')[-1].strip()} for x, y in zip(dataset['question'], dataset['answer'])]
 
     max_cache_length = MAX_LENGTH_SAMPLE
-    mesh = get_jax_mesh2("1,-1,1")
+    mesh = get_jax_mesh2("-1,8,2")
     training_steps = 100
     state, sampler, train_state_sharding = get_state(mesh, training_steps)
     test_fn = jax.jit(training_step, donate_argnums=(0,), )
@@ -196,15 +196,9 @@ def main():
     for i in range(training_steps):
         inputs = random.sample(QAs, BATCH)
         # datas = gen_samples(repeat(inputs, num_pre_Q), sampler, state.params)
-
         repeated_inputs=repeat(inputs, num_pre_Q)
-
         prompts = [x["Q"] for x in repeated_inputs]
-
-
-
         tip_text, answers = gen_answers_jax(prompts, sampler, state.params)
-
         rewards = []
         for _, (inp, a) in enumerate(zip(repeated_inputs, answers)):
             try:
@@ -215,8 +209,6 @@ def main():
 
         print(rewards, np.mean(rewards))
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer)
-
-
 
 
 

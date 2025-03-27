@@ -102,15 +102,16 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
     for true_length,mask in zip(true_lengths_prompts,attention_mask):
         labels.append(mask.at[:true_length].set(0))
 
-    for label,mask in zip(labels,attention_mask):
-        if jax.process_index()==0:
-            print(label==0)
-            print()
-
-
-
     labels=jnp.array(labels,dtype=jnp.int32)
     input_ids=total_text_inputs['input_ids']
+
+
+
+
+    print(input_ids.shape,labels.shape,attention_mask.shape)
+
+
+
     rewards=jnp.array([item for item in rewards])
     return {
         "input_ids": input_ids,

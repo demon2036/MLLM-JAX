@@ -170,7 +170,7 @@ def main():
         for j in range(grad_accum_steps):
             local_data = jax.tree_util.tree_map(lambda x: slice_data(x, grad_accum_steps, j), datas, )
             # batch = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
-            state, metrics = test_fn(state, local_data)
+            state, _ = test_fn(state, local_data)
 
 
         if jax.process_index()==0:

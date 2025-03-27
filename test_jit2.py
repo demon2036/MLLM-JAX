@@ -20,7 +20,7 @@ from MLLM_JAX.utils import get_jax_mesh2, _form_global_array, collect_process_da
 import jax.numpy as jnp
 
 max_prompt_length=400
-num_pre_Q=16
+num_pre_Q=1
 MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 BATCH=8
@@ -75,9 +75,9 @@ def gen_answers_jax(prompts,sampler,params):
 
     for ori,loc in zip(oris,local_answers):
         if jax.process_index()==0:
-            print(ori,loc)
+            print(ori==loc)
 
-            print('\n'*5)
+            # print('\n'*5)
 
 
     while True:

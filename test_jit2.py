@@ -201,7 +201,7 @@ def gen_answers_jax(prompts,sampler,params):
     pad_attention = jnp.pad(attention_mask, ((0, 0), (0, prefill_length - input_ids.shape[1])))
     pad_position_ids = jnp.pad(position_ids, ((0, 0), (0, prefill_length - input_ids.shape[1])))
 
-    completion_ids=sampler.genrate(input_ids_pad, pad_attention, pad_position_ids, prefill_length, max_length=MAX_LENGTH_SAMPLE,params=params)
+    completion_ids=sampler.generate(input_ids_pad, pad_attention, pad_position_ids, prefill_length, max_length=MAX_LENGTH_SAMPLE,params=params)
 
     answers=sampler.tokenizer.batch_decode(completion_ids[:,prefill_length:],
                                         skip_special_tokens=True,

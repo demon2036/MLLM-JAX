@@ -96,6 +96,12 @@ def gen_answers_jax(prompts,sampler,params):
                                         skip_special_tokens=True,
                                         )
 
+        if jax.process_index() == 0:
+            print(output)
+
+        while True:
+            pass
+
         answers.extend(output)
 
     print(len(prompt),len(answers))

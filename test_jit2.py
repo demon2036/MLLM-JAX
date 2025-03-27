@@ -96,7 +96,8 @@ def gen_answers_jax(prompts,sampler,params):
         #                                 skip_special_tokens=False,
         #                                 )
 
-        sampler.tokenizer.batch_decode(completion_ids[i, prefill_length:prefill_length + step + 10].reshape(1, -1),
+        output = \
+            sampler.tokenizer.batch_decode(completion_ids[i, prefill_length:prefill_length + step + 10].reshape(1, -1),
                                        skip_special_tokens=False,
                                        )
 

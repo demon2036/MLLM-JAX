@@ -77,14 +77,6 @@ def gen_answers_jax(prompts,sampler,params):
         answers.extend(output)
 
 
-
-    out_input_ids=jnp.full((inputs.shape[0],MAX_LENGTH) ,fill_value=tokenizer.  ,dtype=jnp.int32 )
-
-
-
-
-
-
     if jax.process_index()==0:
         print(answers[-2:])
         print('\n' * 2, flush=True)
@@ -96,45 +88,52 @@ def gen_answers_jax(prompts,sampler,params):
 
 
 
-def batch_process(prompts,answers,rewards,tokenizer):
+def batch_process(tip_texts,answers,rewards,tokenizer):
 
 
 
-    total_text=[tip_text+answer for tip_text,answer in zip(tip_texts,answers)]
+    total_texts=[tip_text+answer+tokenizer.eos_token for tip_text,answer in zip(tip_texts,answers)]
 
 
+    tip_text=tip_texts[0]
+    total_text=total_texts[0]
+
+    tip_text_encoded=tokenizer([tip_text], return_tensors="jax", padding=True, padding_side="right")
+    total_text_encoded=tokenizer([total_text], return_tensors="jax", padding=True, padding_side="right")
+
+    diff=total_text_encoded[0,tip_text_encoded.shape[1]:]
+
+    out= tokenizer.batch_decode(diff.reshape(1, -1),
+                                        skip_special_tokens=True,
+                                        )
 
 
-
-
-
-
-    # batch_results = [process_func_padding(prompt, answer, tokenizer)
-    #                  for prompt, answer in zip(tip_texts, answers)]
-    #
-    # input_ids = jnp.array([item["input_ids"] for item in batch_results])
-    # attention_mask = jnp.array([item["attention_mask"] for item in batch_results])
-    # labels = jnp.array([item["labels"] for item in batch_results])
-    # rewards=jnp.array([item for item in rewards])
-    # return {'input_ids':input_ids,'attention_mask':attention_mask,'labels':labels,'rewards':rewards}
-
-
-
-
-
+    print(out)
+    print('\n'*2)
+    print(answers+tokenizer.eos_token)
+    print(out==(answers+tokenizer.eos_token))
 
 
 
 
-# def batch_process(tip_texts,answers,rewards,tokenizer):
-#     batch_results = [process_func_padding(prompt, answer, tokenizer)
-#                      for prompt, answer in zip(tip_texts, answers)]
-#
-#     input_ids = jnp.array([item["input_ids"] for item in batch_results])
-#     attention_mask = jnp.array([item["attention_mask"] for item in batch_results])
-#     labels = jnp.array([item["labels"] for item in batch_results])
-#     rewards=jnp.array([item for item in rewards])
-#     return {'input_ids':input_ids,'attention_mask':attention_mask,'labels':labels,'rewards':rewards}
+    while True:
+        pass
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

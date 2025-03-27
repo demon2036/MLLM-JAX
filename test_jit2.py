@@ -91,21 +91,11 @@ def gen_answers_jax(prompts,sampler,params):
 
     answers = []
     for i, step in enumerate(local_sample_step):
-        # output = \
-        #     sampler.tokenizer.batch_decode(completion_ids[i, prefill_length:prefill_length + step + 1].reshape(1, -1),
-        #                                 skip_special_tokens=False,
-        #                                 )
-
         output = \
-            sampler.tokenizer.batch_decode(completion_ids[i, prefill_length:prefill_length + step + 10].reshape(1, -1),
-                                       skip_special_tokens=False,
-                                       )
+            sampler.tokenizer.batch_decode(completion_ids[i, prefill_length:prefill_length + step + 1].reshape(1, -1),
+                                        skip_special_tokens=False,
+                                        )
 
-        if jax.process_index() == 0:
-            print(output)
-
-        while True:
-            pass
 
         answers.extend(output)
 

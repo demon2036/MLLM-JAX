@@ -197,14 +197,16 @@ def main():
         inputs = random.sample(QAs, BATCH)
         # datas = gen_samples(repeat(inputs, num_pre_Q), sampler, state.params)
 
-        prompts = [x["Q"] for x in inputs]
-        repeated_prompt=repeat(prompts, num_pre_Q)
+        repeated_inputs=repeat(inputs, num_pre_Q)
+
+        prompts = [x["Q"] for x in repeated_inputs]
 
 
-        tip_text, answers = gen_answers_jax(repeated_prompt, sampler, state.params)
+
+        tip_text, answers = gen_answers_jax(prompts, sampler, state.params)
 
         rewards = []
-        for _, (inp, a) in enumerate(zip(repeated_prompt, answers)):
+        for _, (inp, a) in enumerate(zip(repeated_inputs, answers)):
             try:
                 rewards.append(reward_correct(inp, a) + reward_format(inp, a))
             except Exception as e:
@@ -213,6 +215,9 @@ def main():
 
         print(rewards, np.mean(rewards))
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer)
+
+
+
 
 
         for j in range(grad_accum_steps):

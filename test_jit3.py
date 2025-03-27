@@ -93,22 +93,24 @@ def gen_answers_jax(prompts,sampler,params):
 
 def batch_process(tip_texts,answers,rewards,tokenizer):
     total_texts=[tip_text+answer+tokenizer.eos_token for tip_text,answer in zip(tip_texts,answers)]
-    tip_text_inputs=tokenizer(tip_texts, return_tensors="jax", padding=True, padding_side="right")
-    total_text_inputs=tokenizer(total_texts, return_tensors="jax", padding=True, padding_side="right")
+    tip_text_inputs=tokenizer(tip_texts, return_tensors="np", padding=True, padding_side="right")
+    total_text_inputs=tokenizer(total_texts, return_tensors="np", padding=True, padding_side="right")
 
     true_lengths_prompts = tip_text_inputs['attention_mask'].sum(axis=1)
     attention_mask=total_text_inputs['attention_mask']
     labels=[]
     for true_length,mask in zip(true_lengths_prompts,attention_mask):
-        labels.append(mask.at[:true_length].set(0))
+        mask[:true_length]=0
+        labels.append(mask)
 
     labels=jnp.array(labels,dtype=jnp.int32)
     input_ids=total_text_inputs['input_ids']
 
 
-
+    print(attention_mask[0])
 
     print(input_ids.shape,labels.shape,attention_mask.shape)
+
 
 
 

@@ -363,8 +363,8 @@ class Sampler:
 
         for i in tqdm(range(max_length)):
             sample_state = self.jit_infer_step(sample_state, params)
-            # if jnp.all(sample_state.dones):
-            #     break
+            if jnp.all(sample_state.dones):
+                break
 
 
 

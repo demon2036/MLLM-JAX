@@ -181,7 +181,7 @@ class Sampler:
         # self.sample_fn=jax.jit(_top_k_sampling_batched)
 
         self.jit_infer_prefill = jax.jit(self.model.apply)
-        self.jit_infer_step = jax.jit(self.infer)
+        self.jit_infer_step = jax.jit(self.infer,donate_argnums=(0,))
         self.prefill_bucket = [
              32, 256,512, 1024, 2048, 4096, 8192
         ]

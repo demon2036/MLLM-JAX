@@ -161,6 +161,8 @@ def main():
 
         print(rewards, np.mean(rewards))
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
+        advantages = get_advantages_jit(datas['rewards'], num_pre_Q)
+        datas['advantages'] = advantages
 
         metrics=dict()
         for i, reward_func in enumerate(reward_funcs):
@@ -172,9 +174,7 @@ def main():
         print(f"{step=} syn for data")
         multihost_utils.sync_global_devices('syn for data')
         datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), datas)
-        advantages=get_advantages_jit(datas['rewards'],num_pre_Q)
-        datas['advantages']=advantages
-        metrics['advantages']=advantages.mean()
+        metrics['advantages']=datas['advantages'].mean()
 
 
         for j in range(grad_accum_steps):

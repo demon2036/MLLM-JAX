@@ -78,8 +78,7 @@ def gen_answers_jax(prompts,sampler,params):
     completion_ids=sampler.generate(input_ids_pad, pad_attention, pad_position_ids, prefill_length, max_length=MAX_LENGTH_SAMPLE,params=params)
 
     answers=sampler.tokenizer.batch_decode(completion_ids[:,prefill_length:],
-                                        skip_special_tokens=True,
-                                        )
+                                        skip_special_tokens=True,)
 
 
 
@@ -181,7 +180,7 @@ def main():
 
         prompts = [x["Q"] for x in inputs]
 
-        tip_text, answers = gen_answers_jax(prompts, sampler, state.params)
+        tip_text, answers = gen_answers_jax(repeat(inputs, num_pre_Q), sampler, state.params)
 
         rewards = []
 

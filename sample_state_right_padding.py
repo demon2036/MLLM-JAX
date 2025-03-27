@@ -316,8 +316,8 @@ class Sampler:
 
         for i in tqdm(range(max_length)):
             sample_state = self.jit_infer_step(sample_state, params)
-            if jnp.all(sample_state.dones):
-                break
+            # if jnp.all(sample_state.dones):
+            #     break
 
         local_sample_step = collect_process_data(sample_state.sample_steps)
         local_token_buffer = collect_process_data(sample_state.token_buffer)

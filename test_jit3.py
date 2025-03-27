@@ -101,15 +101,15 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
     tip_text_inputs=tokenizer([tip_text], return_tensors="jax", padding=True, padding_side="right")
     total_text_inputs=tokenizer([total_text], return_tensors="jax", padding=True, padding_side="right")
 
-    tip_text_inputs_ids=tip_text_inputs['input_ids']
+    true_lengths = tip_text_inputs['attention_mask'].sum(axis=1)[0]
 
 
     attention_mask=total_text_inputs['attention_mask']
 
     labels=[]
 
-    for mask in attention_mask:
-        labels.append(mask.at[:tip_text_inputs_ids].set(tokenizer.pad_token_id))
+    for true_length,mask in zip(true_lengths,attention_mask):
+        labels.append(mask.at[:true_length].set(tokenizer.pad_token_id))
 
     labels=jnp.array(labels,dtype=jnp.int32)
 

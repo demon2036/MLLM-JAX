@@ -93,7 +93,7 @@ def gen_answers_jax(prompts,sampler,params):
     for i, step in enumerate(local_sample_step):
         output = \
             sampler.tokenizer.batch_decode(completion_ids[i, prefill_length:prefill_length + step + 1].reshape(1, -1),
-                                        skip_special_tokens=True,
+                                        skip_special_tokens=False,
                                         )
 
         if jax.process_index() == 0:

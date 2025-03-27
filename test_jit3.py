@@ -108,10 +108,10 @@ def batch_process(tip_texts,answers,rewards,tokenizer):
                                         )
 
 
-    print(out)
+    print(out[0])
     print('\n'*2)
-    print(answers+tokenizer.eos_token)
-    print(out==(answers+tokenizer.eos_token))
+    print(answers[0]+tokenizer.eos_token)
+    print(out==(answers[0]+tokenizer.eos_token))
 
 
 

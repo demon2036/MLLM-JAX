@@ -201,7 +201,7 @@ class Sampler:
         cache = sample_state.cache
         mask = sample_state.attention_mask
 
-        logits, _ = self.model.apply({'params': params}, input_ids=last_token, position_ids=positions,
+        logits, cache = self.model.apply({'params': params}, input_ids=last_token, position_ids=positions,
                                          attention_mask=mask, cache=cache)
 
         key, key2 = jax.random.split(sample_state.key)

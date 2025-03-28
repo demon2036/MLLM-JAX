@@ -600,6 +600,7 @@ class LlamaAttention(nn.Module):
         if cache is not None:
             end_index = cache['end_index'][0]
             slice_indices = (0, 0, end_index , 0)
+            print(cache['v'].shape,value_states.shape)
             value_states = jax.lax.dynamic_update_slice(
                 cache['v'],
                 value_states,
@@ -719,8 +720,10 @@ class LlamaAttention(nn.Module):
             # cache['v']=shard_method(cache['v'])
             # cache['k'] = shard_method(cache['k'])
 
+
             cache['v'] = jax.tree_util.tree_map_with_path(shard_method,cache['v'])
             cache['k'] = jax.tree_util.tree_map_with_path(shard_method,cache['k'])
+
 
 
         return cache

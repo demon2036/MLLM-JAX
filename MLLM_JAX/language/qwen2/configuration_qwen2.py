@@ -233,6 +233,9 @@ def init_cache(
     return cache
 
 
+
+
+
 def pad_cache(
         cache,
         prefill_length,
@@ -258,6 +261,8 @@ def pad_cache_right(
         cache,
         prefill_length,
         max_cache_length,
+        global_collect_cache_method=None,
+        global_collect_index_method=None,
 ):
 
     for i in range(len(cache)):
@@ -265,6 +270,15 @@ def pad_cache_right(
                 constant_values=0)
         cache[f'layer_{i}']['v']=jnp.pad(cache[f'layer_{i}']['v'], pad_width=((0, 0), (0, 0), (0, max_cache_length), (0, 0)),  # 只在 cache_size 维度上填充,
                 constant_values=0)
+
+
+        if global_collect_cache_method is not None:
+            cache['v'] = jax.tree_util.tree_map_with_path(global_collect_cache_method, cache['v'])
+            cache['k'] = jax.tree_util.tree_map_with_path(global_collect_cache_method, cache['k'])
+            assert global_collect_index_method is not None
+            cache['end_index'] = jax.tree_util.tree_map_with_path(global_collect_index_method, cache['end_index'])
+
+
         # cache[f'layer_{i}']['end_index']=jnp.zeros((cache[f'layer_{i}']['k'].shape[0],), dtype=jnp.int32)+true_length
         # print(cache[f'layer_{i}']['k'].shape)
         # print(cache[f'layer_{i}']['k'][0,0,:,0])

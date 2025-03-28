@@ -189,8 +189,9 @@ def main():
 
         rewards_per_func=jnp.array(rewards_per_func)
 
-        print(f"{step=} syn for metric")
+        print(f"{step=} syn for metric start")
         multihost_utils.sync_global_devices('syn for metric')
+        print(f"{step=} syn for metric end")
 
         metrics=dict()
         for i, reward_func in enumerate(reward_funcs):
@@ -199,11 +200,11 @@ def main():
             reward_datas_mean= mean_jit(jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), reward_datas_local))
             metrics[f"{reward_funcs_name}"]=reward_datas_mean
 
-        print(f"{step=} syn for data")
+        print(f"{step=} syn for data start")
         multihost_utils.sync_global_devices('syn for data')
         datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), datas)
         # metrics['advantages']=datas['advantages'].mean()
-        print(f"{step=} syn for data 2")
+        print(f"{step=} syn for data end")
 
         for j in range(grad_accum_steps):
             local_data = jax.tree_util.tree_map(lambda x: slice_data(x, grad_accum_steps, j), datas, )

@@ -304,10 +304,19 @@ def _build_global_shape_and_sharding(
     return global_shape, sharding
 
 
-def _form_global_array(path, array: np.ndarray, global_mesh: Mesh) -> jax.Array:
+def _form_global_array(path, array: np.ndarray, global_mesh: Mesh,sharding=None) -> jax.Array:
     """Put local sharded array into local devices"""
 
-    global_shape, sharding = _build_global_shape_and_sharding(np.shape(array), global_mesh)
+
+    if sharding is not None:
+        # global_shape, _ = _build_global_shape_and_sharding(np.shape(array), global_mesh)
+        b,h,n,d=array.shape
+        global_shape = (b,h*4,n,d)
+        # global_shape=
+        print(array.shape,global_shape,sharding)
+
+    else:
+        global_shape, sharding = _build_global_shape_and_sharding(np.shape(array), global_mesh)
     try:
         local_device_arrays = np.split(array, len(global_mesh.local_devices), axis=0)
     except ValueError as array_split_error:
@@ -323,7 +332,11 @@ def _form_global_array(path, array: np.ndarray, global_mesh: Mesh) -> jax.Array:
 
 
 
-def collect_process_data(data,):
+
+
+
+
+def collect_process_data(data:jnp.ndarray,axis=0):
     local_data = []
     local_devices = jax.local_devices()
 
@@ -335,7 +348,7 @@ def collect_process_data(data,):
             #     print(device)
 
             local_data.append(np.array(local_shard))
-    local_data = np.concatenate(local_data, axis=0)
+    local_data = np.concatenate(local_data, axis=axis)
     return local_data
 
 

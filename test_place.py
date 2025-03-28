@@ -1,33 +1,76 @@
 import jax
 import jax.numpy as jnp
+from jax import NamedSharding
+import numpy as np
+from jax._src.mesh import Mesh
+from jax._src.partition_spec import PartitionSpec
+
+from MLLM_JAX.utils import get_jax_mesh2
+jax.config.update('jax_platform_name', 'cpu')
+jax.config.update('jax_num_cpu_devices', 4)
 
 
-def _top_k_sampling_batched(rng, logits, k=50, t=0.9):
-  # 对所有样本的 logits 应用温度缩放
-  logits = logits / t
+def collect_process_data(data: jnp.ndarray):
+  local_devices = jax.local_devices()
+  shard_infos = []
 
-  # 定义对单个样本的 top-k 采样函数
-  def sample_single(rng, logits_single):
-    # 获取单个样本中最大的 k 个 logits 及其索引
-    top_logits, top_indices = jax.lax.top_k(logits_single, k)
-    # 在 top_logits 上进行 categorical 采样，返回采样到的相对索引
-    sampled_relative_idx = jax.random.categorical(rng, top_logits)
+  # 收集每个本地 shard 的 index 和数据
+  for shard in data.addressable_shards:
+    if shard.device in local_devices:
+      shard_infos.append((shard.index, np.array(shard.data)))
+
+  if not shard_infos:
+    raise ValueError("未发现本地设备上的 shard 数据")
+
+  n_dims = len(shard_infos[0][0])  # 数据的维度
+  sharded_axes = []  # 记录所有被分片的轴
+  axis_slices = {}  # 记录每个轴的切片范围
+
+  # 找出所有被分片的轴
+  for axis in range(n_dims):
+    slices = [info[0][axis] for info in shard_infos]
+    unique_slices = {(s.start, s.stop) for s in slices}
+
+    if len(unique_slices) > 1:
+      sharded_axes.append(axis)
+      axis_slices[axis] = sorted(unique_slices)
+
+  if not sharded_axes:
+    raise ValueError("未能检测到任何分片轴")
+
+  # **按照多个轴依次拼接**
+  restored_data = {}
+  for axis in sorted(sharded_axes):
+    shard_infos.sort(key=lambda x: (x[0][axis].start or 0))  # 先排序
+    data_list = [info[1] for info in shard_infos]
+    restored_data[axis] = np.concatenate(data_list, axis=axis)  # 逐步拼接
+
+  # **确保最终数据形状与原始数据形状匹配**
+  final_data = list(restored_data.values())[-1]  # 取最后一个拼接后的数据
+  return final_data
 
 
-    print(logits_single.shape)
+mesh= get_jax_mesh2("2,1,-1")
 
-    # 根据采样结果，从 top_indices 中取出对应的绝对索引
-    return top_indices[jnp.arange(0,logits_single.shape[0]),sampled_relative_idx]  # 修复索引方式
+data_sharding = jax.sharding.NamedSharding(mesh, PartitionSpec(['dp', 'fsdp'] ,'tp' ))
 
-  # 分割 rng 以获得每个 batch 的独立随机数种子
-  batch_size = logits.shape[0]
-  rngs = jax.random.split(rng, batch_size)
-  # 对每个样本使用 vmap 进行采样
-  out = jax.vmap(sample_single)(rngs, logits)  # 移除多余的[:,0]索引
-  return out
+def init_data(data):
+  return data
 
 
-key=jax.random.PRNGKey(3)
-x=jax.random.uniform(key,(2,1,128))
+jit_init_data = jax.jit(init_data, out_shardings=data_sharding, )
 
-print(_top_k_sampling_batched(key,x).shape)
+b,h,n,d=12,4,1024,128
+x=jnp.zeros((b,h,n,d))
+x=jit_init_data(x)
+
+print(x.shape)
+
+print(collect_process_data(x).shape)
+
+
+
+
+
+
+

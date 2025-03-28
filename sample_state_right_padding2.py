@@ -151,7 +151,7 @@ class Sampler:
         self.jit_infer_step = jax.jit(self.infer)
 
 
-        self.sample_fn=_greedy_sampling
+        self.sample_fn=_temperature_sampling
 
 
         self.prefill_bucket = [
@@ -166,6 +166,15 @@ class Sampler:
             return data
 
         self.jit_init_data = jax.jit(init_data, out_shardings=data_sharding,)
+
+
+
+
+
+
+
+
+
 
 
     def infer(self, sample_state: SampleState, params):
@@ -217,8 +226,8 @@ class Sampler:
         input_ids = inputs['input_ids']
         true_length = input_ids.shape[1]
 
-        # prefill_length = self.find_ceil(true_length)
-        prefill_length=true_length
+        prefill_length = self.find_ceil(true_length)
+        # prefill_length=true_length
         # prefill_length = 32
 
         attention_mask = inputs['attention_mask']
@@ -259,7 +268,7 @@ class Sampler:
         return None  # 如果 input 大于所有数字，返回 None
 
 
-    def generate_prefill_auto_regressive(self, prompt, prefill_length=20, max_length=8192, stream=False):
+    def generate_prefill_auto_regressive(self, prompt, prefill_length=20, max_length=8192, ):
 
         input_ids_pad, pad_attention, position_ids, true_length, prefill_length = self.preprocess_prompt_prefill(prompt,
                                                                                                                  prefill_length)
@@ -281,6 +290,7 @@ class Sampler:
                                                                                                 max_length=max_length)
 
         next_token_predict = jnp.argmax(logits[:, true_length - 1], axis=1)
+        print(next_token_predict)
 
         # next_token_predict = jnp.argmax(logits[:, - 1], axis=1)
 
@@ -294,16 +304,17 @@ class Sampler:
         exit_token_ids=106
 
 
-
+        print(max_length-true_length)
         res = [next_token_predict]
         for i in tqdm(range(max_length - true_length)):
             sample_state = self.jit_infer_step(sample_state, self.params)
             select_ids = sample_state.next_token_buffer
             res.append(select_ids)
 
+            print(select_ids)
 
 
-            if select_ids[0] == exit_token_ids:
+            if np.asarray(select_ids[0]) == exit_token_ids:
                 output = \
                     self.tokenizer.batch_decode(np.array(res).reshape(1, -1), skip_special_tokens=False,
                                                 clean_up_tokenization_spaces=False)[

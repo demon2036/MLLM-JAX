@@ -211,7 +211,10 @@ class Sampler:
         next_token_predict=jnp.where(sample_state.dones,self.tokenizer.eos_token_id,next_token_predict)
 
 
-        dones = sample_state.dones | (next_token_predict == self.tokenizer.eos_token_id) | (jnp.sum(sample_state.token_buffer[:,i-5:i]==sample_state.token_buffer[:,i],axis=1)==5)
+        slice_tokens=jax.lax.dynamic_slice(sample_state.token_buffer,(0,i-5),(sample_state.token_buffer.shape[0],5))
+        print(slice_tokens.shape)
+
+        dones = sample_state.dones | (next_token_predict == self.tokenizer.eos_token_id) | (jnp.sum(slice_tokens==sample_state.token_buffer[:,i],axis=1)==5)
 
         sample_state.dones=dones
 

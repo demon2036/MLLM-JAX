@@ -5,7 +5,7 @@ os.environ['JAX_TRACEBACK_FILTERING']='off'
 
 
 jax.distributed.initialize()
-jax.config.update("jax_compilation_cache_dir", "gs://arm-central-2b/jax-cache")
+# jax.config.update("jax_compilation_cache_dir", "gs://arm-central-2b/jax-cache")
 
 from jax.sharding import PartitionSpec as P
 from jax import NamedSharding

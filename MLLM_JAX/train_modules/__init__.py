@@ -61,6 +61,7 @@ class TrainGRPOModule(nn.Module):
     num_pre_Q:int =8
     ref_model: Any =None
     beta:float =0.04
+    temperature:float =0.9
 
 
 
@@ -94,7 +95,7 @@ class TrainGRPOModule(nn.Module):
 
         per_token_logps = jnp.take_along_axis(  # [B, S]
             jax.nn.log_softmax(logits[..., :-1, :], axis=-1), chosen_ids[..., None], axis=-1
-        )[..., 0]
+        )[..., 0]/self.temperature
 
 
         if advantages is None:

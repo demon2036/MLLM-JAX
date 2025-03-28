@@ -170,6 +170,9 @@ def main():
         prompts = [x["Q"] for x in repeated_inputs]
         tip_text, answers = gen_answers_jax(prompts, sampler, state.params)
 
+        print(f"{step=} syn for generate")
+        multihost_utils.sync_global_devices('syn for metric')
+
 
         rewards_per_func=np.zeros( ( len(reward_funcs), len(answers),  ))
 

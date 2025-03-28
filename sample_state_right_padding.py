@@ -364,15 +364,13 @@ class Sampler:
 
         for i in tqdm(range(max_length)):
             sample_state = self.jit_infer_step(sample_state, params)
-            if jnp.all(sample_state.dones):
-                break
+            # if jnp.all(sample_state.dones):
+            #     break
 
 
 
         local_sample_step=collect_process_data(sample_state.sample_steps)
         local_token_buffer=collect_process_data(sample_state.token_buffer)
-
-        # print(sample_state.token_buffer.shape,local_token_buffer.shape)
 
 
         texts=[]
@@ -383,7 +381,6 @@ class Sampler:
                                         )
 
             texts.extend(output)
-
 
         # texts2= self.tokenizer.batch_decode(local_token_buffer[:,prefill_length:],
         #                                 skip_special_tokens=True,

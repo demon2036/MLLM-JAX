@@ -1,4 +1,12 @@
 import os
+import jax
+
+os.environ['JAX_TRACEBACK_FILTERING']='off'
+
+
+jax.distributed.initialize()
+jax.config.update("jax_compilation_cache_dir", "gs://arm-central-2b/jax-cache")
+
 
 import numpy
 import wandb
@@ -7,7 +15,6 @@ from jax.experimental.multihost_utils import process_allgather
 
 from training import reward_correct, reward_format, get_state, training_step, repeat, slice_data, get_advantages
 
-os.environ['JAX_TRACEBACK_FILTERING']='off'
 
 
 import random
@@ -191,8 +198,7 @@ def main():
 
 
 if __name__=="__main__":
-    jax.distributed.initialize()
-    jax.config.update("jax_compilation_cache_dir", "gs://arm-central-2b/jax-cache")
+
     main()
 
 

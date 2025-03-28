@@ -70,7 +70,6 @@ class TrainGRPOModule(nn.Module):
         labels=inputs['labels']
         rewards = inputs['rewards']
         advantages=inputs.get( "advantages", None)
-        print(advantages.shape)
 
 
         logits, cache = self.model( input_ids=input_ids,

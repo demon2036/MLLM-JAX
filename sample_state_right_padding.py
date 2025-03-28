@@ -214,7 +214,7 @@ class Sampler:
         slice_tokens=jax.lax.dynamic_slice(sample_state.token_buffer,(0,i-5),(sample_state.token_buffer.shape[0],5))
         print(slice_tokens.shape)
 
-        dones = sample_state.dones | (next_token_predict == self.tokenizer.eos_token_id) | (jnp.sum(slice_tokens==sample_state.token_buffer[:,i],axis=1)==5)
+        dones = sample_state.dones | (next_token_predict == self.tokenizer.eos_token_id) | (jnp.sum(slice_tokens==sample_state.token_buffer[:,i][:,None],axis=1)==5)
 
         sample_state.dones=dones
 

@@ -145,6 +145,14 @@ def main():
     get_advantages_jit=jax.jit(get_advantages,static_argnums=(1,))
 
 
+
+
+
+
+
+
+
+
     if jax.process_index() == 0:
         # wandb.init(name=configs['name'], project=configs['project'], config=configs)
         wandb.init(name='test', project='grop-gsm8k',)
@@ -170,6 +178,8 @@ def main():
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
         # advantages = get_advantages_jit(datas['rewards'], num_pre_Q)
         # datas['advantages'] = advantages
+
+        rewards_per_func=jnp.array(rewards_per_func)
 
         print(f"{step=} syn for metric")
         multihost_utils.sync_global_devices('syn for metric')

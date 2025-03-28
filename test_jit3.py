@@ -31,11 +31,11 @@ import jax.numpy as jnp
 
 
 max_prompt_length=400
-num_pre_Q=32
+num_pre_Q=16
 MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-BATCH=1
-grad_accum_steps = 1
+BATCH=4
+grad_accum_steps = 4
 
 model_path = 'Qwen/Qwen2.5-3B'
 tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -138,7 +138,7 @@ def main():
 
 
     mesh = get_jax_mesh2("1,-1,1")
-    training_steps = 1000
+    training_steps = 100
     state, sampler, train_state_sharding = get_state(mesh, training_steps,grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q)
     test_fn = jax.jit(training_step, donate_argnums=(0,), )
 

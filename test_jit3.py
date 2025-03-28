@@ -7,6 +7,8 @@ os.environ['JAX_TRACEBACK_FILTERING']='off'
 jax.distributed.initialize()
 jax.config.update("jax_compilation_cache_dir", "gs://arm-central-2b/jax-cache")
 
+from jax.sharding import PartitionSpec as P
+from jax import NamedSharding
 
 import numpy
 import wandb
@@ -146,7 +148,10 @@ def main():
 
 
 
+    def mean(x):
+        return x.mean()
 
+    mean_jit=jax.jit(mean,in_shardings=NamedSharding(mesh,P(['dp','fsdp'])))
 
 
 
@@ -188,7 +193,7 @@ def main():
         for i, reward_func in enumerate(reward_funcs):
             reward_funcs_name=reward_func.__name__
             reward_datas_local=rewards_per_func[i]
-            reward_datas_mean= jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), reward_datas_local).mean()
+            reward_datas_mean= mean_jit(jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), reward_datas_local))
             metrics[f"{reward_funcs_name}"]=reward_datas_mean
 
         print(f"{step=} syn for data")

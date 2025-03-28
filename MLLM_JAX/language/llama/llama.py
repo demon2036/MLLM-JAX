@@ -19,6 +19,7 @@ from tqdm import tqdm
 
 from jax.sharding import PartitionSpec as P
 
+from MLLM_JAX.language.llama.attention_kernel import ragged_mha
 
 K_MASK = -2.3819763e38  # Set to a large negative number.
 LayerCache = dict[str, jax.Array]
@@ -657,13 +658,29 @@ class LlamaAttention(nn.Module):
 
         else:
 
-            attn_weights = (query_states @ key_states.swapaxes(2, 3)) / math.sqrt(self.head_dim)
-            if attn_mask is not None:  # no matter the length, we just slice it
-                causal_mask = attn_mask
-                attn_weights = attn_weights + causal_mask
+            # attn_weights = (query_states @ key_states.swapaxes(2, 3)) / math.sqrt(self.head_dim)
+            # if attn_mask is not None:  # no matter the length, we just slice it
+            #     causal_mask = attn_mask
+            #     attn_weights = attn_weights + causal_mask
+            #
+            # attn_weights = nn.softmax(attn_weights.astype(jnp.float32), axis=-1, ).astype(attn_weights.dtype)
+            # attn_output = attn_weights @ value_states
 
-            attn_weights = nn.softmax(attn_weights.astype(jnp.float32), axis=-1, ).astype(attn_weights.dtype)
-            attn_output = attn_weights @ value_states
+            @functools.partial(
+                shard_map,
+                mesh=self.jax_config.mesh,
+                in_specs=P(['dp', 'fsdp'], 'tp', None, None),
+                out_specs=P(['dp', 'fsdp'], 'tp', None, None),
+                check_rep=False,
+            )
+            def wrap_ragged_attention(query_states, key_states, value_states):
+                attn_output, (m, l) = ragged_mha(query_states, key_states, value_states, layer=None,
+                                                 ragged_batch_index=None, ragged_block_index=None,
+                                                 start=jnp.zeros_like(cache['end_index']), end=cache['end_index'])
+                return attn_output
+
+            attn_output=wrap_ragged_attention(query_states, key_states, value_states)
+
 
 
         # attn_weights = (query_states @ key_states.swapaxes(2, 3)) / math.sqrt(self.head_dim)

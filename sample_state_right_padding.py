@@ -216,7 +216,7 @@ class Sampler:
         dones = sample_state.dones | (next_token_predict == self.tokenizer.eos_token_id) | (jnp.sum(slice_tokens==sample_state.token_buffer[:,i][:,None],axis=1)==5)
 
 
-        jax.debug.print('f',f=jnp.sum(slice_tokens==sample_state.token_buffer[:,i][:,None],axis=1))
+        jax.debug.print('{f}',f=jnp.sum(slice_tokens==sample_state.token_buffer[:,i][:,None],axis=1))
 
 
         sample_state.dones=dones

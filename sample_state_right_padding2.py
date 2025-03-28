@@ -296,7 +296,7 @@ class Sampler:
 def test_qwen2_fast_jit_sample2():
     max_cache_length = 32
     mesh = get_jax_mesh2("-1,1,1")
-    model, params, tokenizer, cache = get_model(mesh, max_cache_length=max_cache_length)
+    model, params, tokenizer = get_model(mesh, )
     exit_token_ids = tokenizer.eos_token_id
     print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')
     prompt = tokenizer.apply_chat_template(messages, tokenize=False,

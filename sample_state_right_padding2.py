@@ -38,7 +38,7 @@ def get_params(model_path):
 
 
 def get_model(mesh,model_path='Qwen/Qwen2-3B-Instruct', only_model=False):
-    # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
+    model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
     # model_path = 'Qwen/Qwen2-0.5B-Instruct'
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
@@ -295,7 +295,7 @@ class Sampler:
 
 def test_qwen2_fast_jit_sample2():
     max_cache_length = 32
-    mesh = get_jax_mesh2("-1,1,1")
+    mesh = get_jax_mesh2("1,-1,1")
     model, params, tokenizer = get_model(mesh, )
     exit_token_ids = tokenizer.eos_token_id
     print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')
@@ -304,7 +304,7 @@ def test_qwen2_fast_jit_sample2():
 
     sampler = Sampler(model, params, tokenizer, max_length=max_cache_length)
     print('hi hi')
-    sampler.generate_prefill_auto_regressive(prompt, max_length=max_cache_length)
+    sampler.generate_prefill_auto_regressive(prompt, max_length=max_cache_length,params=params)
 
 
 

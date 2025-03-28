@@ -164,6 +164,9 @@ def main():
         # advantages = get_advantages_jit(datas['rewards'], num_pre_Q)
         # datas['advantages'] = advantages
 
+        print(f"{step=} syn for metric")
+        multihost_utils.sync_global_devices('syn for metric')
+
         metrics=dict()
         for i, reward_func in enumerate(reward_funcs):
             reward_funcs_name=reward_func.__name__

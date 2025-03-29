@@ -389,6 +389,7 @@ def reconstruct_from_slices(subarray_info):
 
   # 遍历所有切片，确定全局数组的尺寸
   for slices, sub in subarray_info:
+    print(slices)
     for i, s in enumerate(slices):
       # 如果 s.start 或 s.stop 为 None，则默认起点为 0，终点为子数组该维度大小
       start = s.start if s.start is not None else 0
@@ -397,9 +398,10 @@ def reconstruct_from_slices(subarray_info):
       min_starts[i] = min(min_starts[i], start)
       max_stops[i] = max(max_stops[i], stop)
 
+
   # 计算全局数组形状（假设各维度连续无间断）
   global_shape = tuple(int(max_stop - min_start) for min_start, max_stop in zip(min_starts, max_stops))
-  print(min_starts,max_stops,global_shape)
+  # print(min_starts,max_stops,global_shape)
 
   # 创建全局数组，注意这里选择了 np.empty，你也可以选择 np.zeros 等方法
   full_array = np.empty(global_shape, dtype=np.result_type(subarray_info[0][1]))

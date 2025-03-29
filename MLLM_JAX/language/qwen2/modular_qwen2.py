@@ -99,10 +99,6 @@ class Qwen2Model(nn.Module):
                 (attention_mask.shape[1], attention_mask.shape[1]), -1e37
             )
             attention_mask = jnp.triu(attention_mask, 1)[...]
-
-            # jax. debug. print("hello {bar}", bar=attention_mask)
-
-
         else:
             attention_mask = jnp.where(attention_mask, 0, -1e37)[:,None,None,...]
 
@@ -133,8 +129,6 @@ class Qwen2ForCausalLM(nn.Module):
     def setup(self) -> None:
         # self.model = Qwen2Model(self.config, jax_config=self.jax_config)
         # self.lm_head = nn.Dense(self.config.vocab_size, use_bias=False)
-
-
         self.model = nn.remat(Qwen2Model)(self.config, jax_config=self.jax_config)
         self.lm_head = nn.remat(nn.Dense)(self.config.vocab_size, use_bias=False)
 

@@ -600,7 +600,6 @@ class LlamaAttention(nn.Module):
         if cache is not None:
             end_index = cache['end_index'][0]
             slice_indices = (0, 0, end_index , 0)
-            print(cache['v'].shape,value_states.shape)
             value_states = jax.lax.dynamic_update_slice(
                 cache['v'],
                 value_states,

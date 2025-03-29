@@ -45,7 +45,7 @@ def get_params(model_path):
 
 
 def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
-    model_path='Qwen/Qwen2.5-7B'
+    # model_path='Qwen/Qwen2.5-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
     # model_path = 'Qwen/Qwen2-0.5B-Instruct'

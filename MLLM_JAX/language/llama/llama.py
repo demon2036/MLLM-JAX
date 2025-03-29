@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from flax.linen.spmd import RulesFallback
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask, splash_attention_kernel
+from jax.experimental.pallas.ops.tpu.flash_attention import flash_attention
 from jax.experimental.shard_map import shard_map
 from jax.sharding import Mesh,PartitionSpec,NamedSharding
 from tensorflow.python.framework.tensor import DenseSpec
@@ -632,7 +633,7 @@ class LlamaAttention(nn.Module):
                 out_specs=P(['dp','fsdp'],'tp',None,None),
                 check_rep=False,
             )
-            def wrap_flash_attention(query_states, key_states, value_states):
+            def wrap_splash_attention(query_states, key_states, value_states):
                 mask = splash_attention_mask.CausalMask(shape=(key_states.shape[2], key_states.shape[2]))
                 multi_head_mask = splash_attention_mask.MultiHeadMask(masks=(mask,) * value_states.shape[1])
                 splash_kernel = splash_attention_kernel.make_splash_mha(
@@ -643,6 +644,18 @@ class LlamaAttention(nn.Module):
 
                 attn_output = jax.vmap(splash_kernel)(query_states , key_states, value_states)
                 return attn_output
+
+            @functools.partial(
+                shard_map,
+                mesh=self.jax_config.mesh,
+                in_specs=P(['dp', 'fsdp'], 'tp', None, None),
+                out_specs=P(['dp', 'fsdp'], 'tp', None, None),
+                check_rep=False,
+            )
+            def wrap_flash_attention(query_states, key_states, value_states):
+                attn_output = flash_attention(query_states, key_states, value_states,causal=True)
+                return attn_output
+
 
             attn_output=wrap_flash_attention(query_states/ math.sqrt(self.head_dim), key_states, value_states,).astype(jnp.bfloat16)
 

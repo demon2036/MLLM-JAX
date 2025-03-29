@@ -45,8 +45,8 @@ def get_params(model_path):
 
 
 def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
-    model_path='Qwen/Qwen2.5-3B'
-    # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
+    # model_path='Qwen/Qwen2.5-3B'
+    model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
     # model_path = 'Qwen/Qwen2-0.5B-Instruct'
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
@@ -101,7 +101,7 @@ messages = [
     [
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Who are you?"},
-    ] for _ in range(12)
+    ] for _ in range(16*8)
 
 ]
 # messages.append(
@@ -274,6 +274,20 @@ class Sampler:
 
         cache,input_ids_pad, pad_attention, position_ids=jax.tree_util.tree_map_with_path(self.global_collect_method,(cache,input_ids_pad, pad_attention, position_ids))
 
+
+        def init_data(params):
+            return params
+
+        jit_init_data=jax.jit(init_data,out_shardings=NamedSharding(self.mesh,P(['dp','fsdp'] ,'tp')))
+
+
+        for i in range(len(cache)):
+            cache[f'layer_{i}']['k'] = jit_init_data(cache[f'layer_{i}']['k'])
+            cache[f'layer_{i}']['v'] = jit_init_data(cache[f'layer_{i}']['v'])
+
+
+
+
         return cache, input_ids_pad, pad_attention, position_ids
 
 
@@ -363,7 +377,7 @@ class Sampler:
 
 def test_qwen2_fast_jit_sample2():
     max_cache_length = 1024
-    mesh = get_jax_mesh2("2,1,-1")
+    mesh = get_jax_mesh2("1,1,-1")
     model, params, tokenizer = get_model(mesh, )
     exit_token_ids = tokenizer.eos_token_id
     print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')

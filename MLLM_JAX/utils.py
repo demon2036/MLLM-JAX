@@ -430,5 +430,5 @@ def collect_process_data2(data: jnp.ndarray, ):
         s.append((shard.index, shard.data))
 
   out=reconstruct_from_slices(s)
-  print(out.shape)
+  # print(out.shape)
   return out

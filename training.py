@@ -149,13 +149,13 @@ def repeat(lst:list,repeats:int):
 def reward_correct(item, answer):
     pattern = r'\d+\.\d+|\d+/\d+|\d+'
     nums = re.findall(pattern, answer) # 使用正则表达式在answer中查找所有数字
-    if len(nums) == 0: return -1.0
+    if len(nums) == 0: return 0.0
     lastnum = nums[-1] # 用answer中最后一个数字和ground_truth做比较
     ans = parse(lastnum, extraction_config=[ExprExtractionConfig()])
     ground_truth = parse(item["A"], extraction_config=[ExprExtractionConfig()])
     # print(item["A"],ans)
 
-    return 1 if verify(ans, ground_truth) else -1
+    return 1 if verify(ans, ground_truth) else 0.0
 def reward_format(item, answer):
     # pattern = r"^<think>(?:(?!</?think>)[\s\S]*?)</think>\s*<answer>(?:(?!</?answer>)[\s\S]*?)</answer><\|im_end\|>$"
     # pattern = r"^<think>.*?</think>.*?<answer>.*?</answer>$"

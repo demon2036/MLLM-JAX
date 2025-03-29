@@ -268,6 +268,10 @@ class Sampler:
         pad_attention = jnp.pad(pad_attention, ((0, 0), (0, max_length)),
                                 constant_values=0)
         pad_attention = pad_attention.at[:, prefill_length].set(1)
+
+
+        print(position_ids.shape)
+
         position_ids = jnp.max(position_ids,axis=1).reshape((-1,1)) + 1
 
         cache = pad_cache_right(cache, prefill_length, max_length,)

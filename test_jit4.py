@@ -35,7 +35,6 @@ max_prompt_length=400
 num_pre_Q=16
 MAX_LENGTH_SAMPLE=512
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-BATCH=1
 grad_accum_steps = 4
 
 model_path = 'Qwen/Qwen2.5-7B'
@@ -151,6 +150,8 @@ def init_fn(x):
 
 
 def main():
+    BATCH = 1
+
     reward_funcs=[reward_correct,reward_format]
 
     dataset = load_dataset("openai/gsm8k", "main", split="train")
@@ -199,7 +200,6 @@ def main():
 
         if step==10:
             sampler.dtype=jnp.bfloat16
-            global BATCH
             BATCH=4
 
 

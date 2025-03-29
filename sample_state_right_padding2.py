@@ -25,11 +25,33 @@ from sanple_utils import _greedy_sampling, _temperature_sampling, _nucleus_sampl
 from jax.sharding import PartitionSpec as P
 from jax.experimental.multihost_utils import process_allgather
 
-content = """1+1=2 1+2=?
-"""
+content = """这里的问题在于无法jit,如何修正
+    def apply_top_p(probs, top_p):
+        # 按概率降序排列
+        sorted_probs = jnp.sort(probs)[::-1]
+        cumulative_probs = jnp.cumsum(sorted_probs)
+        # 找到累积概率超过top_p的最小阈值
+        cutoff_mask = cumulative_probs < top_p
+        # 保留至少一个token（避免全mask）
+        cutoff = jnp.max(jnp.where(cutoff_mask, jnp.arange(len(probs)), -1)) + 1
+        cutoff = jnp.maximum(cutoff, 1)  # 保证至少选1个
+        # 获取保留的probs对应的原始索引
+        sorted_indices = jnp.argsort(probs)[::-1][:cutoff]
+        kept_probs = probs[sorted_indices]
+        # 重新归一化概率
+        kept_probs = kept_probs / jnp.sum(kept_probs)
+        return sorted_indices, kept_probs
+
+    def sample_fn(logits_batch, top_p=0.95):
+    probs = jax.nn.softmax(logits_batch, axis=-1)
+    sorted_indices, kept_probs = apply_top_p(probs, top_p)
+    # 从保留的token中采样
+    return jax.random.choice(
+        key2, sorted_indices, p=kept_probs
+    )"""
 
 # dtype = jnp.bfloat16
-dtype = jnp.float32
+dtype = jnp.bfloat16
 
 
 def get_params(model_path):
@@ -103,7 +125,8 @@ messages = [
     [
         {"role": "system", "content": "You are a helpful assistant."},
         # {"role": "system", "content": system_prompt},
-        {"role": "user", "content": system_prompt+"Who are you?"},
+        {"role": "user", "content": content},
+        # {"role": "user", "content": system_prompt+"Who are you?"},
     ] for _ in range(4)
 
 ]
@@ -175,7 +198,7 @@ class Sampler:
 
             return sample_fn(rngs,logits)
 
-        self.sample_fn=jax.jit(_greedy_sampling)
+        self.sample_fn=jax.jit(_temperature_sampling)
 
         # self.sample_fn=shard_map(_top_k_sampling_batched,mesh=mesh,in_specs=(None,P(['dp', 'fsdp'],'tp'))
         #                     ,out_specs=P(['dp', 'fsdp']),check_rep=False)

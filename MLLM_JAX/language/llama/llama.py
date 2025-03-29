@@ -627,7 +627,7 @@ class LlamaAttention(nn.Module):
         value_states=repeat_kv(value_states,self.num_key_value_groups)
         key_states=repeat_kv(key_states,self.num_key_value_groups)
 
-        if q_len%128==0 and value_states.shape[-1]%128==0 and q_len>=256:
+        if q_len%128==0 and value_states.shape[-1]%128==0 and q_len>512:
 
             @functools.partial(
                 shard_map,

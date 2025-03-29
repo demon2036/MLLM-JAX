@@ -430,6 +430,9 @@ def collect_process_data2(data: jnp.ndarray, ):
     if device in local_devices:
         s.append((shard.index, shard.data))
 
+        if jax.process_index()==0:
+            print(shard.index)
+
   out=reconstruct_from_slices(s)
 
 

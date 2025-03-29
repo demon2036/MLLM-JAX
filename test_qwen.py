@@ -51,18 +51,23 @@ os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 # content="""写出一个可以jax jit的top p 采样,注意要定长，static，这是关键，认真思考"""
 
-content="""写出一个可以jax jit的top p 采样,注意要定长，static，这是关键，认真思考.
-    def static_top_p_sampling(logits, key, top_p=0.95):
-        # 确保所有操作保持静态形状
-        sorted_indices = jnp.argsort(-logits)  # 降序排列
-        sorted_logits = logits[sorted_indices]
+# content="""写出一个可以jax jit的top p 采样,注意要定长，static，这是关键，认真思考.
+#     def static_top_p_sampling(logits, key, top_p=0.95):
+#         # 确保所有操作保持静态形状
+#         sorted_indices = jnp.argsort(-logits)  # 降序排列
+#         sorted_logits = logits[sorted_indices]
+#
+#         # 计算排序后的概率分布
+#         sorted_probs = jax.nn.softmax(sorted_logits)
+#
+#         # 计算累积概率（使用双精度提升数值稳定性）
+#         cum_probs = jnp.cumsum(sorted_probs)  # .astype(sorted_probs.dtype)
+# """
 
-        # 计算排序后的概率分布
-        sorted_probs = jax.nn.softmax(sorted_logits)
 
-        # 计算累积概率（使用双精度提升数值稳定性）
-        cum_probs = jnp.cumsum(sorted_probs)  # .astype(sorted_probs.dtype)
-"""
+# content="""who are you
+# """
+
 
 #
 # content = """1+1=2 1+2=?
@@ -89,7 +94,7 @@ def get_params(model_path):
 def get_model(mesh, max_cache_length=8192):
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
-    model_path = 'Qwen/Qwen2.5-14B-Instruct'
+    model_path = 'Qwen/Qwen2.5-7B-Instruct'
     # model_path = 'Qwen/QwQ-32B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
 
@@ -124,13 +129,13 @@ def get_model(mesh, max_cache_length=8192):
 
 
 messages = [
-    # {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "system", "content": "You are a helpful assistant."},
     # {"role": "system", "content": "You are a helpful and harmless assistant. You should think step-by-step."},
-    # {"role": "user", "content": "Who are you?"},
+    {"role": "user", "content": "Who are you?"},
     # {"role": "user", "content": "Give me a short introduction to large language model."},
     # {"role": "user", "content": "1+1=2 1+2=?"},
     # {"role": "user", "content": "Mnist examples in jax?"},
-    {"role": "user", "content": content, },
+    # {"role": "user", "content": content, },
     # {"role": "assistant", "content": "A large language model is a type of artificial intelligence (AI) model that"},
     # {"role": "assistant", "content": "A large language model is a type of"},
 ]
@@ -302,7 +307,9 @@ class Sampler:
 
         # max_length=max(8192,prefill_length*2)
         # cache = init_cache(self.model.config, 1, max_cache_length=prefill_length, dtype=dtype)
-        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,shard_method=self.jit_init_data)
+        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,
+                           # shard_method=self.jit_init_data
+                           )
         # input_ids_pad, pad_attention, position_ids,cache=self.jit_init_data((input_ids_pad, pad_attention, position_ids,cache))
 
         logits, cache = self.jit_infer_prefill({'params': self.params}, input_ids=input_ids_pad,
@@ -331,7 +338,7 @@ class Sampler:
 
 
         exit_token_ids = self.tokenizer.eos_token_id
-        exit_token_ids=106
+        # exit_token_ids=106
 
         if stream:
             yield next_token_predict
@@ -358,7 +365,7 @@ class Sampler:
 
 
 def test_qwen2_fast_jit_sample2():
-    max_cache_length = 8192
+    max_cache_length = 1024
     mesh = get_jax_mesh2("1,1,-1")
     model, params, tokenizer, cache = get_model(mesh, max_cache_length=max_cache_length)
     exit_token_ids = tokenizer.eos_token_id
@@ -368,7 +375,7 @@ def test_qwen2_fast_jit_sample2():
 
     sampler = Sampler(model, params, tokenizer,mesh=mesh)
     print('hi hi')
-    for _ in sampler.generate_prefill_auto_regressive(prompt):
+    for _ in sampler.generate_prefill_auto_regressive(prompt,max_length=max_length):
         pass
 
 

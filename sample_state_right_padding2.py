@@ -235,13 +235,14 @@ class Sampler:
         inputs = self.tokenizer(prompt, return_tensors="jax", padding=True, padding_side="right")
         input_ids = inputs['input_ids']
 
-        position_ids = inputs['attention_mask'].cumsum(-1) - 1
-        position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)
+        # position_ids = inputs['attention_mask'].cumsum(-1) - 1
+        # position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)
 
 
-        global_length=jnp.max(process_allgather(input_ids.shape[1]))
+        # global_length=jnp.max(process_allgather(input_ids.shape[1]))
         # global_length=512
-        prefill_length = self.find_ceil(global_length)
+        # prefill_length = self.find_ceil(global_length)
+        prefill_length=128
         # prefill_length = input_ids.shape[1]
 
         attention_mask = inputs['attention_mask']
@@ -249,27 +250,34 @@ class Sampler:
                                 constant_values=self.tokenizer.eos_token_id)
 
         pad_attention = jnp.pad(attention_mask, ((0, 0), (0,prefill_length - input_ids.shape[1])))
-        pad_position_ids = jnp.pad(position_ids, ((0, 0), (0,prefill_length - input_ids.shape[1])))
+        # pad_position_ids = jnp.pad(position_ids, ((0, 0), (0,prefill_length - input_ids.shape[1])))
+
+        position_ids = jnp.arange(0, input_ids_pad.shape[1])[None, ...]
+        pad_position_ids = position_ids
 
 
         return input_ids_pad, pad_attention, pad_position_ids, prefill_length
 
+
+
     def prepare_from_prefill_to_decode(self, cache, input_ids_pad, pad_attention, position_ids, max_length=8192):
 
         b, prefill_length = input_ids_pad.shape
-        cache,input_ids_pad,pad_attention,position_ids=jax.tree_util.tree_map(collect_process_data,(cache,input_ids_pad,pad_attention,position_ids))
-        cache = pad_cache_right(cache, prefill_length, max_length, )
+        # cache,input_ids_pad,pad_attention,position_ids=jax.tree_util.tree_map(collect_process_data,(cache,input_ids_pad,pad_attention,position_ids))
+        cache = pad_cache_right(cache, prefill_length, max_length,)
 
-        input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length)),
+        input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length - prefill_length)),
                                 constant_values=self.tokenizer.eos_token_id)
 
-        pad_attention = jnp.pad(pad_attention, ((0, 0), (0, max_length)),
+        pad_attention = jnp.pad(pad_attention, ((0, 0), (0, max_length- prefill_length)),
                                 constant_values=0)
+
         pad_attention = pad_attention.at[:, prefill_length].set(1)
         position_ids = jnp.max(position_ids,axis=1).reshape((-1,1)) + 1
+        # position_ids = jnp.arange(prefill_length, prefill_length + 1)[None, ...]
 
-
-        return jax.tree_util.tree_map_with_path(self.global_collect_method,(cache, input_ids_pad, pad_attention, position_ids))
+        return cache, input_ids_pad, pad_attention, position_ids
+        # return jax.tree_util.tree_map_with_path(self.global_collect_method,(cache, input_ids_pad, pad_attention, position_ids))
 
         # return cache, input_ids_pad, pad_attention, position_ids
 
@@ -280,51 +288,6 @@ class Sampler:
             if num >= input:
                 return num
         return None  # 如果 input 大于所有数字，返回 None
-
-
-
-    def generate(self,input_ids_pad, pad_attention, position_ids, prefill_length, max_length=8192,params=None):
-        # input_ids_pad, pad_attention, position_ids, prefill_length = self.preprocess_prompt_prefill(prompt,
-        #                                                                                             prefill_length)
-
-        if jax.process_index() == 0:
-            print(f'{prefill_length=}')
-        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,
-                           shard_method=self.global_collect_method)
-
-        input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method,
-                                                                                      (input_ids_pad, pad_attention,
-                                                                                       position_ids))
-
-        logits, cache = self.jit_infer_prefill({'params': params}, input_ids=input_ids_pad,
-                                               position_ids=position_ids,
-                                               attention_mask=pad_attention, cache=cache)
-        cache, input_ids_pad, pad_attention, position_ids = self.prepare_from_prefill_to_decode(cache, input_ids_pad,
-                                                                                                pad_attention,
-                                                                                                position_ids,
-                                                                                                max_length=max_length)
-
-        next_token_logits = jnp.take_along_axis(logits, position_ids[..., None] - 1, axis=1)[:, -1]
-        # next_token_predict = jnp.argmax(, axis=-1)[:,0]
-        next_token_predict = self.sample_fn(self.key, next_token_logits)
-
-        # next_token_predict = jnp.argmax(logits[:, position_ids-1], axis=1)
-        input_ids_pad = input_ids_pad.at[:, prefill_length].set(next_token_predict)
-        sample_state = create_sample_state(input_ids_pad=input_ids_pad, position_ids=position_ids, cache=cache,
-                                           pad_attention=pad_attention, true_length=prefill_length,
-                                           decoding_step=prefill_length, key=self.key)
-
-        for i in tqdm(range(max_length)):
-            sample_state = self.jit_infer_step(sample_state, params)
-            if jnp.all(sample_state.dones):
-                break
-
-        local_sample_step = collect_process_data(sample_state.sample_steps)
-        local_token_buffer = collect_process_data(sample_state.token_buffer)
-
-        self.key = sample_state.key
-        return local_token_buffer,local_sample_step
-
 
 
 
@@ -339,12 +302,15 @@ class Sampler:
         cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,shard_method=self.global_collect_method)
 
         # input_ids_pad, pad_attention, position_ids,cache=self.jit_init_data((input_ids_pad, pad_attention, position_ids,cache))
-        input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method,
-                                                                                  (input_ids_pad, pad_attention, position_ids))
+
+        # input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method,
+        #                                                                           (input_ids_pad, pad_attention, position_ids))
 
         logits, cache = self.jit_infer_prefill({'params': params}, input_ids=input_ids_pad,
                                                position_ids=position_ids,
                                                attention_mask=pad_attention, cache=cache)
+
+
         cache, input_ids_pad, pad_attention, position_ids = self.prepare_from_prefill_to_decode(cache, input_ids_pad,
                                                                                                 pad_attention,
                                                                                                 position_ids,
@@ -368,8 +334,8 @@ class Sampler:
 
 
 
-        local_sample_step=collect_process_data(sample_state.sample_steps)
-        local_token_buffer=collect_process_data(sample_state.token_buffer)
+        local_sample_step=sample_state.sample_steps
+        local_token_buffer=sample_state.token_buffer
 
 
         texts=[]

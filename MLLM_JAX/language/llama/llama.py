@@ -623,7 +623,7 @@ class LlamaAttention(nn.Module):
         value_states=repeat_kv(value_states,self.num_key_value_groups)
         key_states=repeat_kv(key_states,self.num_key_value_groups)
 
-        if q_len%128==0 and value_states.shape[-1]%128==0:
+        if q_len%128==0 and value_states.shape[-1]%128==0 :
 
             @functools.partial(
                 shard_map,
@@ -639,20 +639,12 @@ class LlamaAttention(nn.Module):
                     mask=multi_head_mask,
                     head_shards=1,
                     q_seq_shards=1,
-                    # block_sizes=block_sizes,
-                    # attn_logits_soft_cap=attn_logits_soft_cap,
                 )
 
                 attn_output = jax.vmap(splash_kernel)(query_states / math.sqrt(self.head_dim), key_states, value_states)
                 return attn_output
 
-
-
-            # wrap_flash_attention=shard_map(wrap_flash_attention,self.jax_config.mesh,
-            #                         in_specs=,out_specs=P(['dp','fsdp'],'tp',None,None),
-            #                         check_rep=False,)
-
-            attn_output=wrap_flash_attention(query_states, key_states, value_states,)
+            attn_output=wrap_flash_attention(query_states.astype(jnp.float32), key_states.astype(jnp.float32), value_states.astype(jnp.float32),).astype(jnp.bfloat16)
 
 
         else:

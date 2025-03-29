@@ -28,7 +28,8 @@ from jax.experimental.multihost_utils import process_allgather
 content = """1+1=2 1+2=?
 """
 
-dtype = jnp.bfloat16
+# dtype = jnp.bfloat16
+dtype = jnp.float32
 
 
 def get_params(model_path):
@@ -95,11 +96,14 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
 #     # {"role": "assistant", "content": "A large language model is a type of"},
 # ]
 
+system_prompt = """You are a helpful assistant. A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the user with the answer.\
+The reasoning process and answer are enclosed within <think> </think> and<answer> </answer> tags, respectively, i.e., <think> reasoning process here </think><answer> answer here </answer>."""
 
 messages = [
     [
         {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Who are you?"},
+        # {"role": "system", "content": system_prompt},
+        {"role": "user", "content": system_prompt+"Who are you?"},
     ] for _ in range(4)
 
 ]
@@ -239,10 +243,10 @@ class Sampler:
         # position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)
 
 
-        # global_length=jnp.max(process_allgather(input_ids.shape[1]))
+        global_length=jnp.max(process_allgather(input_ids.shape[1]))
         # global_length=512
-        # prefill_length = self.find_ceil(global_length)
-        prefill_length=128
+        prefill_length = self.find_ceil(global_length)
+        # prefill_length=128
         # prefill_length = input_ids.shape[1]
 
         attention_mask = inputs['attention_mask']
@@ -266,10 +270,10 @@ class Sampler:
         # cache,input_ids_pad,pad_attention,position_ids=jax.tree_util.tree_map(collect_process_data,(cache,input_ids_pad,pad_attention,position_ids))
         cache = pad_cache_right(cache, prefill_length, max_length,)
 
-        input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length - prefill_length)),
+        input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length )),
                                 constant_values=self.tokenizer.eos_token_id)
 
-        pad_attention = jnp.pad(pad_attention, ((0, 0), (0, max_length- prefill_length)),
+        pad_attention = jnp.pad(pad_attention, ((0, 0), (0, max_length)),
                                 constant_values=0)
 
         pad_attention = pad_attention.at[:, prefill_length].set(1)
@@ -369,7 +373,7 @@ class Sampler:
 
 def test_qwen2_fast_jit_sample2():
     max_cache_length = 1024
-    mesh = get_jax_mesh2("-1,1,1")
+    mesh = get_jax_mesh2("1,-1,1")
     model, params, tokenizer = get_model(mesh,model_path='Qwen/Qwen2.5-7B-Instruct' )
     exit_token_ids = tokenizer.eos_token_id
     print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')

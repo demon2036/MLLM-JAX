@@ -266,9 +266,9 @@ def pad_cache_right(
 ):
 
     for i in range(len(cache)):
-        cache[f'layer_{i}']['k']=jnp.pad(cache[f'layer_{i}']['k'], pad_width=((0, 0), (0, 0), (0, max_cache_length-prefill_length), (0, 0)),  # 只在 cache_size 维度上填充,
+        cache[f'layer_{i}']['k']=jnp.pad(cache[f'layer_{i}']['k'], pad_width=((0, 0), (0, 0), (0, max_cache_length), (0, 0)),  # 只在 cache_size 维度上填充,
                 constant_values=0)
-        cache[f'layer_{i}']['v']=jnp.pad(cache[f'layer_{i}']['v'], pad_width=((0, 0), (0, 0), (0, max_cache_length-prefill_length), (0, 0)),  # 只在 cache_size 维度上填充,
+        cache[f'layer_{i}']['v']=jnp.pad(cache[f'layer_{i}']['v'], pad_width=((0, 0), (0, 0), (0, max_cache_length), (0, 0)),  # 只在 cache_size 维度上填充,
                 constant_values=0)
 
         # if global_collect_cache_method is not None:

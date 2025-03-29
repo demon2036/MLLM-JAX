@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from flax.linen.spmd import RulesFallback
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask, splash_attention_kernel
+
 from jax.experimental.pallas.ops.tpu.flash_attention import flash_attention
 from jax.experimental.shard_map import shard_map
 from jax.sharding import Mesh,PartitionSpec,NamedSharding
@@ -590,7 +591,6 @@ class LlamaAttention(nn.Module):
         """
 
         dtype = query_states.dtype
-
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
@@ -603,17 +603,20 @@ class LlamaAttention(nn.Module):
             slice_indices = (0, 0, end_index , 0)
             value_states = jax.lax.dynamic_update_slice(
                 cache['v'],
-                value_states,
+                value_states.astype(cache['v'].dtype),
                 slice_indices,
             )
             key_states = jax.lax.dynamic_update_slice(
-                cache['k'], key_states, slice_indices
+                cache['k'], key_states.astype(cache['k'].dtype), slice_indices
             )
             new_cache = {
                 'v': value_states,
                 'k': key_states,
                 'end_index': cache['end_index'] + q_len,
             }
+
+            value_states=value_states.astype(dtype)
+            key_states=key_states.astype(dtype)
 
         else:
             new_cache = None
@@ -624,7 +627,7 @@ class LlamaAttention(nn.Module):
         value_states=repeat_kv(value_states,self.num_key_value_groups)
         key_states=repeat_kv(key_states,self.num_key_value_groups)
 
-        if q_len%128==0 and value_states.shape[-1]%128==0 :
+        if q_len%128==0 and value_states.shape[-1]%128==0 and q_len>=256:
 
             @functools.partial(
                 shard_map,
@@ -636,10 +639,24 @@ class LlamaAttention(nn.Module):
             def wrap_splash_attention(query_states, key_states, value_states):
                 mask = splash_attention_mask.CausalMask(shape=(key_states.shape[2], key_states.shape[2]))
                 multi_head_mask = splash_attention_mask.MultiHeadMask(masks=(mask,) * value_states.shape[1])
+
+                block_sizes = splash_attention_kernel.BlockSizes(
+                    block_q=min(512, query_states.shape[2]),
+                    block_kv_compute=min(512, key_states.shape[2]),
+                    block_kv=min(512, key_states.shape[2]),
+                    block_q_dkv=min(512, query_states.shape[2]),
+                    block_kv_dkv=min(512, key_states.shape[2]),
+                    block_kv_dkv_compute=min(512, query_states.shape[2]),
+                    block_q_dq=min(512, query_states.shape[2]),
+                    block_kv_dq=min(512, query_states.shape[2]),
+                )
+
                 splash_kernel = splash_attention_kernel.make_splash_mha(
                     mask=multi_head_mask,
                     head_shards=1,
                     q_seq_shards=1,
+                    mask_value=-1e17,
+                    block_sizes=block_sizes
                 )
 
                 attn_output = jax.vmap(splash_kernel)(query_states , key_states, value_states)
@@ -655,7 +672,7 @@ class LlamaAttention(nn.Module):
             def wrap_flash_attention(query_states, key_states, value_states):
                 attn_output = flash_attention(query_states, key_states, value_states,causal=True)
                 return attn_output
-            attn_output=wrap_splash_attention(query_states* (self.head_dim**-0.5), key_states, value_states,).astype(jnp.bfloat16)
+            attn_output=wrap_splash_attention(query_states/ math.sqrt(self.head_dim), key_states, value_states).astype(jnp.bfloat16)
 
 
         else:

@@ -142,7 +142,7 @@ def main():
     mesh = get_jax_mesh2("1,-1,1")
     training_steps = 100
     state, sampler, train_state_sharding = get_state(mesh, training_steps,
-                                                     grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH*BATCH*num_pre_Q)
+                                                     grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH)
     test_fn = jax.jit(training_step, donate_argnums=(0,), )
 
     get_advantages_jit=jax.jit(get_advantages,static_argnums=(1,))

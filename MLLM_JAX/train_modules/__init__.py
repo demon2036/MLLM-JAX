@@ -62,6 +62,7 @@ class TrainGRPOModule(nn.Module):
     ref_model: Any =None
     beta:float =0.04
     temperature:float =0.9
+    max_lengths:float=2048
 
 
 
@@ -118,5 +119,8 @@ class TrainGRPOModule(nn.Module):
             per_token_loss = -per_token_loss
 
 
-        loss = ((per_token_loss * mask_loss).sum(axis=1) / mask_loss.sum(axis=1)).mean()
+        # loss = ((per_token_loss * mask_loss).sum(axis=1) / mask_loss.sum(axis=1)).mean()
+
+        loss = ((per_token_loss * mask_loss).sum(axis=1) / self.max_lengths
+
         return {"loss": loss, }

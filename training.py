@@ -34,11 +34,6 @@ import jax.numpy as jnp
 from math_verify import parse, verify, ExprExtractionConfig
 
 
-# max_prompt_length=400
-# num_pre_Q=16
-# MAX_LENGTH_SAMPLE=1024
-# MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-# BATCH=8
 
 
 
@@ -62,13 +57,13 @@ class TrainState(train_state.TrainState):
     ref_params:Any=None
 
 
-def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.5-3B',num_pre_q=16):
+def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.5-3B',num_pre_q=16,max_lengths=None):
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
     model_ref = get_model(mesh, model_path=model_path, only_model=True)
 
     beta=0.0
 
-    train_module = TrainGRPOModule(model=model, pad_token_id=tokenizer.pad_token_id,ref_model=model_ref,num_pre_Q=num_pre_q,beta=beta)
+    train_module = TrainGRPOModule(model=model, pad_token_id=tokenizer.pad_token_id,ref_model=model_ref,num_pre_Q=num_pre_q,beta=beta,max_lengths=max_lengths)
     def init_fn(params):
 
         learning_rate = optax.warmup_cosine_decay_schedule(

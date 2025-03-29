@@ -141,7 +141,8 @@ def main():
 
     mesh = get_jax_mesh2("1,-1,1")
     training_steps = 100
-    state, sampler, train_state_sharding = get_state(mesh, training_steps,grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q)
+    state, sampler, train_state_sharding = get_state(mesh, training_steps,
+                                                     grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH*BATCH*num_pre_Q)
     test_fn = jax.jit(training_step, donate_argnums=(0,), )
 
     get_advantages_jit=jax.jit(get_advantages,static_argnums=(1,))
@@ -170,12 +171,12 @@ def main():
         prompts = [x["Q"] for x in repeated_inputs]
         tip_text, answers = gen_answers_jax(prompts, sampler, state.params)
 
-        print(f"{step=} syn for generate")
+        print(f"{step=} syn for generate start")
         multihost_utils.sync_global_devices('syn for metric')
+        print(f"{step=} syn for generate end")
 
 
         rewards_per_func=np.zeros( ( len(reward_funcs), len(answers),  ))
-
         for i, reward_func in enumerate(reward_funcs):
             for j, (inp, a) in enumerate(zip(repeated_inputs, answers)):
                 rewards_per_func[i,j]=reward_func(inp,a)
@@ -183,7 +184,10 @@ def main():
         rewards=rewards_per_func.sum(axis=0)
 
         print(rewards, np.mean(rewards))
+        print(f"{step=} syn for batch_process start")
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
+        multihost_utils.sync_global_devices('syn for batch_process')
+        print(f"{step=} syn for batch_process end")
         # advantages = get_advantages_jit(datas['rewards'], num_pre_Q)
         # datas['advantages'] = advantages
 

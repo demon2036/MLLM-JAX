@@ -16,10 +16,10 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from MLLM_JAX.language.llama.llama import convert_torch_to_flax_llama, LlamaJaxConfig
-from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache, pad_cache_right, init_cache2
+from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache, pad_cache_right
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
 from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama, get_jax_mesh2, _form_global_array, \
-    collect_process_data
+    collect_process_data, collect_process_data2
 from sanple_utils import _greedy_sampling, _temperature_sampling, _nucleus_sampling,  \
     _top_k_sampling_batched
 from jax.sharding import PartitionSpec as P
@@ -45,8 +45,8 @@ def get_params(model_path):
 
 
 def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
-    # model_path='Qwen/Qwen2.5-7B'
-    model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
+    model_path='Qwen/Qwen2.5-3B'
+    # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
     # model_path = 'Qwen/Qwen2-0.5B-Instruct'
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
@@ -260,7 +260,7 @@ class Sampler:
 
         b, prefill_length = input_ids_pad.shape
 
-        input_ids_pad,pad_attention,position_ids=jax.tree_util.tree_map(collect_process_data,(cache,input_ids_pad,pad_attention,position_ids))
+        cache,input_ids_pad,pad_attention,position_ids=jax.tree_util.tree_map(collect_process_data2,(cache,input_ids_pad,pad_attention,position_ids))
 
         input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length)),
                                 constant_values=self.tokenizer.eos_token_id)
@@ -270,11 +270,9 @@ class Sampler:
         pad_attention = pad_attention.at[:, prefill_length].set(1)
         position_ids = jnp.max(position_ids,axis=1).reshape((-1,1)) + 1
 
-        cache = pad_cache_right(cache, prefill_length, max_length,
-                                global_collect_cache_method=self.global_collect_method,
-                                global_collect_index_method=self.global_collect_method)
+        cache = pad_cache_right(cache, prefill_length, max_length,)
 
-        input_ids_pad, pad_attention, position_ids=jax.tree_util.tree_map_with_path(self.global_collect_method,(input_ids_pad, pad_attention, position_ids))
+        cache,input_ids_pad, pad_attention, position_ids=jax.tree_util.tree_map_with_path(self.global_collect_method,(cache,input_ids_pad, pad_attention, position_ids))
 
         return cache, input_ids_pad, pad_attention, position_ids
 
@@ -295,9 +293,8 @@ class Sampler:
 
         if jax.process_index()==0:
             print(f'{prefill_length=}')
-        cache = init_cache2(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,
-                            global_collect_cache_method=self.global_collect_method,
-                            global_collect_index_method=self.global_collect_method
+        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,
+                            shard_method=self.global_collect_method
                            )
         # input_ids_pad, pad_attention, position_ids,cache=self.jit_init_data((input_ids_pad, pad_attention, position_ids,cache))
         input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method,
@@ -366,7 +363,7 @@ class Sampler:
 
 def test_qwen2_fast_jit_sample2():
     max_cache_length = 1024
-    mesh = get_jax_mesh2("1,1,-1")
+    mesh = get_jax_mesh2("2,1,-1")
     model, params, tokenizer = get_model(mesh, )
     exit_token_ids = tokenizer.eos_token_id
     print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')

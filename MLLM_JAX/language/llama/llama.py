@@ -628,7 +628,7 @@ class LlamaAttention(nn.Module):
         key_states=repeat_kv(key_states,self.num_key_value_groups)
 
         if q_len%128==0 and value_states.shape[-1]%128==0 and q_len>512:
-
+            print('using splash kernel')
             @functools.partial(
                 shard_map,
                 mesh=self.jax_config.mesh,

@@ -161,7 +161,8 @@ def reward_format(item, answer):
     # pattern = r"^<think>.*?</think>.*?<answer>.*?</answer>$"
     pattern = r"^.*?</think>.*?<answer>.*?</answer>$"
     # return 0.75 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -0.5
-    return 1.25 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -1
+    # return 1.25 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -1
+    return 1 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else 0
 
 
 

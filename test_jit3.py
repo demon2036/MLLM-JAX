@@ -196,7 +196,11 @@ def main():
         rewards_per_func=np.zeros( ( len(reward_funcs), len(answers),  ))
         for i, reward_func in enumerate(reward_funcs):
             for j, (inp, a) in enumerate(zip(repeated_inputs, answers)):
-                rewards_per_func[i,j]=reward_func(inp,a)
+                try:
+                    rewards_per_func[i,j]=reward_func(inp,a)
+                except Exception as e:
+                    print(e)
+                    rewards_per_func[i, j] = -10
 
         rewards=rewards_per_func.sum(axis=0)
 

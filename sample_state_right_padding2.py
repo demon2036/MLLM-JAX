@@ -49,6 +49,7 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
     # model_path = 'Qwen/Qwen2-0.5B-Instruct'
+    print(model_path)
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     if jax.process_index()==0:
         print(config)
@@ -388,18 +389,18 @@ class Sampler:
         return texts
 
 
-def test_qwen2_fast_jit_sample2():
-    max_cache_length = 32
-    mesh = get_jax_mesh2("1,1,-1")
-    model, params, tokenizer = get_model(mesh, )
-    exit_token_ids = tokenizer.eos_token_id
-    print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False,
-                                           add_generation_prompt=True)
-
-    sampler = Sampler(model, tokenizer,mesh=mesh,)
-    print('hi hi')
-    sampler.generate_prefill_auto_regressive(prompt, max_length=max_cache_length,params=params)
+# def test_qwen2_fast_jit_sample2():
+#     max_cache_length = 32
+#     mesh = get_jax_mesh2("1,1,-1")
+#     model, params, tokenizer = get_model(mesh, )
+#     exit_token_ids = tokenizer.eos_token_id
+#     print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')
+#     prompt = tokenizer.apply_chat_template(messages, tokenize=False,
+#                                            add_generation_prompt=True)
+#
+#     sampler = Sampler(model, tokenizer,mesh=mesh,)
+#     print('hi hi')
+#     sampler.generate_prefill_auto_regressive(prompt, max_length=max_cache_length,params=params)
 
 
 def test_qwen2_fast_jit_sample2():

@@ -399,7 +399,7 @@ def reconstruct_from_slices(subarray_info):
 
   # 计算全局数组形状（假设各维度连续无间断）
   global_shape = tuple(int(max_stop - min_start) for min_start, max_stop in zip(min_starts, max_stops))
-  # print(min_starts,max_stops,global_shape)
+  print(min_starts,max_stops,global_shape)
 
   # 创建全局数组，注意这里选择了 np.empty，你也可以选择 np.zeros 等方法
   full_array = np.empty(global_shape, dtype=np.result_type(subarray_info[0][1]))
@@ -430,5 +430,4 @@ def collect_process_data2(data: jnp.ndarray, ):
         s.append((shard.index, shard.data))
 
   out=reconstruct_from_slices(s)
-  # print(out.shape)
   return out

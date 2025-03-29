@@ -33,9 +33,9 @@ import jax.numpy as jnp
 
 max_prompt_length=400
 num_pre_Q=16
-MAX_LENGTH_SAMPLE=2048
+MAX_LENGTH_SAMPLE=512
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-BATCH=4
+BATCH=1
 grad_accum_steps = 4
 
 model_path = 'Qwen/Qwen2.5-7B'
@@ -226,8 +226,8 @@ def main():
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
         multihost_utils.sync_global_devices('syn for batch_process')
         print(f"{step=} syn for batch_process end")
-        # advantages = get_advantages_jit(datas['rewards'], num_pre_Q)
-        # datas['advantages'] = advantages
+        advantages = get_advantages_jit(datas['rewards'], num_pre_Q)
+        datas['advantages'] = advantages
 
         rewards_per_func=jnp.array(rewards_per_func)
 

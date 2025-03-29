@@ -27,7 +27,7 @@ from jax.experimental.multihost_utils import process_allgather
 content = """1+1=2 1+2=?
 """
 
-dtype = jnp.bfloat16
+dtype = jnp.float32
 
 
 def get_params(model_path):

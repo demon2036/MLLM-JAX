@@ -168,11 +168,17 @@ def reward_format(item, answer):
 
 
 
-def get_advantages(rewards,groups):
-    mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
-    std_grouped_rewards = rewards.reshape(-1, groups).std(axis=1)
-    mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
-    std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
-    advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
+def get_advantages(rewards,groups,advantage_estimator='grpo'):
+
+    if advantage_estimator=='grpo':
+        mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
+        std_grouped_rewards = rewards.reshape(-1, groups).std(axis=1)
+        mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
+        std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
+        advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
+    else:
+        mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
+        mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
+        advantages = (rewards - mean_grouped_rewards)
     return advantages
     # return mean_grouped_rewards,std_grouped_rewards,advantages

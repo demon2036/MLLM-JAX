@@ -173,7 +173,7 @@ class Sampler:
 
             return sample_fn(rngs,logits)
 
-        self.sample_fn=jax.jit(warp_sample_fn)
+        self.sample_fn=jax.jit(_greedy_sampling)
 
         # self.sample_fn=shard_map(_top_k_sampling_batched,mesh=mesh,in_specs=(None,P(['dp', 'fsdp'],'tp'))
         #                     ,out_specs=P(['dp', 'fsdp']),check_rep=False)

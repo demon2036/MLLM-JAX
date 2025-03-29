@@ -319,18 +319,20 @@ class Sampler:
                                                attention_mask=pad_attention, cache=cache)
 
 
-        print(logits.shape,position_ids.shape)
-        next_token_logits=jnp.take_along_axis(logits,position_ids[...,None]-1,axis=1)[:,-1]
-        # next_token_predict = jnp.argmax(, axis=-1)[:,0]
-        next_token_predict=self.sample_fn(self.key,next_token_logits)
+        print(logits.shape,position_ids.shape,input_ids_pad.shape)
 
         cache, input_ids_pad, pad_attention, position_ids = self.prepare_from_prefill_to_decode(cache, input_ids_pad,
                                                                                                 pad_attention,
                                                                                                 position_ids,
                                                                                                 max_length=max_length)
 
+        next_token_logits=jnp.take_along_axis(logits,position_ids[...,None]-1,axis=1)[:,-1]
+        # next_token_predict = jnp.argmax(, axis=-1)[:,0]
+        next_token_predict=self.sample_fn(self.key,next_token_logits)
 
         # next_token_predict = jnp.argmax(logits[:, position_ids-1], axis=1)
+
+        print(logits.shape, position_ids.shape, input_ids_pad.shape)
         input_ids_pad = input_ids_pad.at[:, prefill_length].set(next_token_predict)
         sample_state = create_sample_state(input_ids_pad=input_ids_pad, position_ids=position_ids, cache=cache,
                                            pad_attention=pad_attention, true_length=prefill_length,

@@ -641,10 +641,10 @@ class LlamaAttention(nn.Module):
                     q_seq_shards=1,
                 )
 
-                attn_output = jax.vmap(splash_kernel)(query_states / math.sqrt(self.head_dim), key_states, value_states)
+                attn_output = jax.vmap(splash_kernel)(query_states , key_states, value_states)
                 return attn_output
 
-            attn_output=wrap_flash_attention(query_states.astype(jnp.float32), key_states.astype(jnp.float32), value_states.astype(jnp.float32),).astype(jnp.bfloat16)
+            attn_output=wrap_flash_attention(query_states/ math.sqrt(self.head_dim), key_states, value_states,).astype(jnp.bfloat16)
 
 
         else:

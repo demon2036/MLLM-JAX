@@ -203,7 +203,7 @@ def main():
         prompts = [x["Q"] for x in repeated_inputs]
 
 
-        tip_text, answers = gen_answers_jax(prompts, sampler, params_to_dp(state.params))
+        tip_text, answers = gen_answers_jax(prompts, sampler, params_to_fsdp(state.params))
 
         print(f"{step=} syn for generate start")
         multihost_utils.sync_global_devices('syn for metric')

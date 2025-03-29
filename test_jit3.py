@@ -155,10 +155,6 @@ def main():
     mean_jit=jax.jit(mean,in_shardings=NamedSharding(mesh,P(['dp','fsdp'])))
 
 
-
-
-
-
     if jax.process_index() == 0:
         # wandb.init(name=configs['name'], project=configs['project'], config=configs)
         wandb.init(name='test', project='grop-gsm8k',)

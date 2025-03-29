@@ -167,7 +167,7 @@ class Sampler:
             def sample_inner(rng,logits):
                 return _top_k_sampling_batched(rng[0],logits)
 
-            sample_fn=shard_map(sample_inner,mesh=mesh,in_specs=(P(['dp', 'fsdp']),P(['dp', 'fsdp'],'tp'))
+            sample_fn=shard_map(sample_inner,mesh=mesh,in_specs=(P(['dp', 'fsdp']),P(['dp', 'fsdp'],))
                                 ,out_specs=P(['dp', 'fsdp']),check_rep=False)
 
             return sample_fn(rngs,logits)

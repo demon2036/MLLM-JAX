@@ -97,8 +97,6 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
 
 
 messages = [
-
-
     [
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Who are you?"},
@@ -383,7 +381,7 @@ class Sampler:
 
             texts.extend(output)
 
-        print(output)
+        print(texts)
 
         self.key=sample_state.key
         return texts

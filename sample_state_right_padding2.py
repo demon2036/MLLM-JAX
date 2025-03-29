@@ -317,15 +317,18 @@ class Sampler:
         logits, cache = self.jit_infer_prefill({'params': params}, input_ids=input_ids_pad,
                                                position_ids=position_ids,
                                                attention_mask=pad_attention, cache=cache)
-        cache, input_ids_pad, pad_attention, position_ids = self.prepare_from_prefill_to_decode(cache, input_ids_pad,
-                                                                                                pad_attention,
-                                                                                                position_ids,
-                                                                                                max_length=max_length)
+
 
         print(logits.shape,position_ids.shape)
         next_token_logits=jnp.take_along_axis(logits,position_ids[...,None]-1,axis=1)[:,-1]
         # next_token_predict = jnp.argmax(, axis=-1)[:,0]
         next_token_predict=self.sample_fn(self.key,next_token_logits)
+
+        cache, input_ids_pad, pad_attention, position_ids = self.prepare_from_prefill_to_decode(cache, input_ids_pad,
+                                                                                                pad_attention,
+                                                                                                position_ids,
+                                                                                                max_length=max_length)
+
 
         # next_token_predict = jnp.argmax(logits[:, position_ids-1], axis=1)
         input_ids_pad = input_ids_pad.at[:, prefill_length].set(next_token_predict)

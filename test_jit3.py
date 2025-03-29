@@ -101,14 +101,23 @@ def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
         temp[:true_length]=0
         labels.append(temp)
 
-    labels=jnp.array(labels,dtype=np.int32)
+    labels=np.array(labels,dtype=np.int32)
     input_ids=total_text_inputs['input_ids']
 
-    input_ids_pad = jnp.pad(input_ids, ((0, 0), (0, max_length - input_ids.shape[1])),
-                            constant_values=tokenizer.eos_token_id)
+    input_ids_pad=np.full((input_ids.shape[0],MAX_LENGTH),fill_value=tokenizer.eos_token_id)
+    input_ids_pad[:,:input_ids.shape[1]]=input_ids
 
-    pad_attention = jnp.pad(attention_mask, ((0, 0), (0, max_length - input_ids.shape[1])))
-    pad_labels = jnp.pad(labels, ((0, 0), (0, max_length - input_ids.shape[1])))
+    pad_attention=np.full((attention_mask.shape[0],MAX_LENGTH),fill_value=0)
+    attention_mask[:,:attention_mask.shape[1]]=attention_mask
+
+    pad_labels=np.full((labels.shape[0],MAX_LENGTH),fill_value=0)
+    pad_labels[:,:labels.shape[1]]=labels
+
+    # input_ids_pad = jnp.pad(input_ids, ((0, 0), (0, max_length - input_ids.shape[1])),
+    #                         constant_values=tokenizer.eos_token_id)
+    #
+    # pad_attention = jnp.pad(attention_mask, ((0, 0), (0, max_length - input_ids.shape[1])))
+    # pad_labels = jnp.pad(labels, ((0, 0), (0, max_length - input_ids.shape[1])))
 
 
     return {

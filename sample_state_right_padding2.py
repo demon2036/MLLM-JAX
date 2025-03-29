@@ -260,6 +260,10 @@ class Sampler:
 
         b, prefill_length = input_ids_pad.shape
         print(position_ids.shape)
+        position_ids=jax.tree_util.tree_map(collect_process_data2,position_ids)
+        while True:
+            pass
+
         cache,input_ids_pad,pad_attention,position_ids=jax.tree_util.tree_map(collect_process_data2,(cache,input_ids_pad,pad_attention,position_ids))
         print(position_ids.shape)
         input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length)),

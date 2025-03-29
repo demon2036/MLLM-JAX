@@ -389,7 +389,6 @@ def reconstruct_from_slices(subarray_info):
 
   # 遍历所有切片，确定全局数组的尺寸
   for slices, sub in subarray_info:
-    print(slices)
     for i, s in enumerate(slices):
       # 如果 s.start 或 s.stop 为 None，则默认起点为 0，终点为子数组该维度大小
       start = s.start if s.start is not None else 0
@@ -432,4 +431,8 @@ def collect_process_data2(data: jnp.ndarray, ):
         s.append((shard.index, shard.data))
 
   out=reconstruct_from_slices(s)
+
+
+  print(out.shape,len(s))
+
   return out

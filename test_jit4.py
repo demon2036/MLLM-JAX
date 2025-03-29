@@ -27,7 +27,8 @@ import numpy as np
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
-from MLLM_JAX.utils import get_jax_mesh2, _form_global_array, collect_process_data
+from MLLM_JAX.utils import get_jax_mesh2, _form_global_array, collect_process_data, match_partition_rules, \
+    get_partition_rules_llama
 # from sample_state_left_padding import get_model, Sampler
 import jax.numpy as jnp
 
@@ -150,6 +151,13 @@ def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
 #         rewards.append(-10)
 
 
+def mean(x):
+    return x.mean()
+
+def init_fn(x):
+    return x
+
+
 def main():
     reward_funcs=[reward_correct,reward_format]
 
@@ -160,20 +168,29 @@ def main():
     QAs = [{'Q': x, 'A': y.split('####')[-1].strip()} for x, y in zip(dataset['question'], dataset['answer'])]
 
 
-    mesh = get_jax_mesh2("-1,1,1")
+    mesh_dp = get_jax_mesh2("-1,1,1")
+    mesh_fsdp = get_jax_mesh2("1,-1,1")
+
+
+
+
     training_steps = 100
-    state, sampler, train_state_sharding = get_state(mesh, training_steps,
+    state, sampler, train_state_sharding = get_state(mesh_fsdp, training_steps,
                                                      grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH)
     test_fn = jax.jit(training_step, donate_argnums=(0,), )
 
     get_advantages_jit=jax.jit(get_advantages,static_argnums=(1,))
 
 
+    mean_jit=jax.jit(mean,in_shardings=NamedSharding(mesh_dp,P(['dp','fsdp'])))
+    params_shapes = jax.eval_shape(init_fn, state.params, )
+    params_partition = match_partition_rules(get_partition_rules_llama(), params_shapes)
+    params_sharding_dp = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh_dp, x), params_partition)
+    params_sharding_fsdp = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh_fsdp, x), params_partition)
+    params_to_dp = jax.jit(init_fn,out_shardings=params_sharding_dp)
+    params_to_fsdp = jax.jit(init_fn,out_shardings=params_sharding_fsdp)
 
-    def mean(x):
-        return x.mean()
 
-    mean_jit=jax.jit(mean,in_shardings=NamedSharding(mesh,P(['dp','fsdp'])))
 
 
     if jax.process_index() == 0:
@@ -186,7 +203,9 @@ def main():
         # datas = gen_samples(repeat(inputs, num_pre_Q), sampler, state.params)
         repeated_inputs=repeat(inputs, num_pre_Q)
         prompts = [x["Q"] for x in repeated_inputs]
-        tip_text, answers = gen_answers_jax(prompts, sampler, state.params)
+
+
+        tip_text, answers = gen_answers_jax(prompts, sampler, params_to_dp(state.params))
 
         print(f"{step=} syn for generate start")
         multihost_utils.sync_global_devices('syn for metric')
@@ -222,12 +241,12 @@ def main():
         for i, reward_func in enumerate(reward_funcs):
             reward_funcs_name=reward_func.__name__
             reward_datas_local=rewards_per_func[i]
-            reward_datas_mean= mean_jit(jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), reward_datas_local))
+            reward_datas_mean= mean_jit(jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), reward_datas_local))
             metrics[f"{reward_funcs_name}"]=reward_datas_mean
 
         print(f"{step=} syn for data start")
         multihost_utils.sync_global_devices('syn for data')
-        datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), datas)
+        datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), datas)
         # metrics['advantages']=datas['advantages'].mean()
         print(f"{step=} syn for data end")
 

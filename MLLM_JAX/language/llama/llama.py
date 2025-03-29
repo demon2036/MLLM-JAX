@@ -655,9 +655,7 @@ class LlamaAttention(nn.Module):
             def wrap_flash_attention(query_states, key_states, value_states):
                 attn_output = flash_attention(query_states, key_states, value_states,causal=True)
                 return attn_output
-
-
-            attn_output=wrap_flash_attention(query_states/ math.sqrt(self.head_dim), key_states, value_states,).astype(jnp.bfloat16)
+            attn_output=wrap_splash_attention(query_states* (self.head_dim**-0.5), key_states, value_states,).astype(jnp.bfloat16)
 
 
         else:

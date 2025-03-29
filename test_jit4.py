@@ -197,6 +197,13 @@ def main():
         prompts = [x["Q"] for x in repeated_inputs]
 
 
+        if step==10:
+            sampler.dtype=jnp.bfloat16
+            global BATCH
+            BATCH=4
+
+
+
         tip_text, answers = gen_answers_jax(prompts, sampler, params_to_fsdp(state.params))
 
         print(f"{step=} syn for generate start")

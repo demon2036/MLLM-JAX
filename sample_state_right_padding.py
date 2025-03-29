@@ -27,7 +27,7 @@ from jax.experimental.multihost_utils import process_allgather
 content = """1+1=2 1+2=?
 """
 
-dtype = jnp.float32
+
 
 
 def get_params(model_path):
@@ -71,7 +71,7 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
     train_state_partition = match_partition_rules(get_partition_rules_llama(), state_shapes)
     train_state_sharding = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh, x), train_state_partition)
 
-    params = jax.tree_util.tree_map(lambda x, d: jnp.asarray(x, dtype=dtype, device=d), params, train_state_sharding)
+    params = jax.tree_util.tree_map(lambda x, d: jnp.asarray(x, dtype=jnp.bfloat16, device=d), params, train_state_sharding)
 
     params = jax.jit(init_fn,
                      # donate_argnums=(0,),
@@ -149,6 +149,7 @@ class Sampler:
     def __init__(self, model, tokenizer,mesh=None,*args,**kwargs):
         self.model = model
         self.tokenizer = tokenizer
+        self.dtype = jnp.float32
 
         self.mesh=mesh
 
@@ -289,7 +290,7 @@ class Sampler:
 
         if jax.process_index() == 0:
             print(f'{prefill_length=}')
-        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,
+        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=self.dtype,
                            shard_method=self.global_collect_method)
 
         input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method,
@@ -336,7 +337,7 @@ class Sampler:
 
         if jax.process_index()==0:
             print(f'{prefill_length=}')
-        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,shard_method=self.global_collect_method)
+        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=self.dtype,shard_method=self.global_collect_method)
 
         # input_ids_pad, pad_attention, position_ids,cache=self.jit_init_data((input_ids_pad, pad_attention, position_ids,cache))
         input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method,

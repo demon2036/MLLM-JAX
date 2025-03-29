@@ -140,13 +140,7 @@ def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
 
     # rewards=jnp.array([item for item in rewards])
 
-# rewards = []
-# for _, (inp, a) in enumerate(zip(repeated_inputs, answers)):
-#     try:
-#         rewards.append(reward_correct(inp, a) + reward_format(inp, a))
-#     except Exception as e:
-#         print(e, a)
-#         rewards.append(-10)
+
 
 
 def mean(x):

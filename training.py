@@ -158,7 +158,8 @@ def reward_correct(item, answer):
     return 1 if verify(ans, ground_truth) else -1
 def reward_format(item, answer):
     # pattern = r"^<think>(?:(?!</?think>)[\s\S]*?)</think>\s*<answer>(?:(?!</?answer>)[\s\S]*?)</answer><\|im_end\|>$"
-    pattern = r"^<think>.*?</think>.*?<answer>.*?</answer>$"
+    # pattern = r"^<think>.*?</think>.*?<answer>.*?</answer>$"
+    pattern = r"^.*?</think>.*?<answer>.*?</answer>$"
     # return 0.75 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -0.5
     return 1.25 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -1
 

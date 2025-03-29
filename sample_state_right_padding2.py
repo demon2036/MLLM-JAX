@@ -259,9 +259,9 @@ class Sampler:
     def prepare_from_prefill_to_decode(self, cache, input_ids_pad, pad_attention, position_ids, max_length=8192):
 
         b, prefill_length = input_ids_pad.shape
-
+        print(position_ids.shape)
         cache,input_ids_pad,pad_attention,position_ids=jax.tree_util.tree_map(collect_process_data2,(cache,input_ids_pad,pad_attention,position_ids))
-
+        print(position_ids.shape)
         input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length)),
                                 constant_values=self.tokenizer.eos_token_id)
 
@@ -270,7 +270,7 @@ class Sampler:
         pad_attention = pad_attention.at[:, prefill_length].set(1)
 
 
-        print(position_ids.shape)
+
 
         position_ids = jnp.max(position_ids,axis=1).reshape((-1,1)) + 1
 

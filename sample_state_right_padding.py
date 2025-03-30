@@ -80,7 +80,7 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
 
     def test(p,x):
         name_p=tree_path_to_string(p,sep='.')
-        if 'scale' in name_p or 'lm_head.kernel' in name_p:
+        if 'scale' in name_p or 'lm_head.kernel' in name_p  or 'self_attn' in name_p:
             print(name_p)
             return x
         else:

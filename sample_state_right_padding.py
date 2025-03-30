@@ -84,13 +84,12 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
         name_p=tree_path_to_string(p,sep='.')
         if   'embedding' in name_p  or 'lm_head' in name_p:
             return jnp.asarray(x, dtype=jnp.bfloat16)
-
         else:
             return x
 
 
 
-    params = jax.tree_util.tree_map_with_path(test, params)
+    # params = jax.tree_util.tree_map_with_path(test, params)
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 

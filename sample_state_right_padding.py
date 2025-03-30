@@ -86,9 +86,8 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
             return jnp.asarray(x,dtype=jnp.bfloat16)
 
 
-    jax.tree_util.tree_map_with_path(test,params)
 
-    params = jax.tree_util.tree_map(test, params)
+    params = jax.tree_util.tree_map_with_path(test, params)
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 

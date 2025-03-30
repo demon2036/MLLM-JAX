@@ -598,7 +598,7 @@ class LlamaAttention(nn.Module):
 
         """
 
-        dtype = query_states.dtype
+        dtype = x.dtype
         cos, sin = position_embeddings
         query_states=query_states.astype(jnp.float32)
         key_states = key_states.astype(dtype)

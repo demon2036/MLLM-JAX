@@ -24,6 +24,8 @@ from sanple_utils import _greedy_sampling, _temperature_sampling, _nucleus_sampl
 from jax.sharding import PartitionSpec as P
 from jax.experimental.multihost_utils import process_allgather
 
+
+
 content = """1+1=2 1+2=?
 """
 

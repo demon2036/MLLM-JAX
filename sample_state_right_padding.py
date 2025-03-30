@@ -236,8 +236,8 @@ class Sampler:
         inputs = self.tokenizer(prompt, return_tensors="jax", padding=True, padding_side="right")
         input_ids = inputs['input_ids']
 
-        position_ids = inputs['attention_mask'].cumsum(-1) - 1
-        position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)
+        # position_ids = inputs['attention_mask'].cumsum(-1) - 1
+        # position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)
 
 
         global_length=jnp.max(process_allgather(input_ids.shape[1]))
@@ -250,8 +250,8 @@ class Sampler:
                                 constant_values=self.tokenizer.eos_token_id)
 
         pad_attention = jnp.pad(attention_mask, ((0, 0), (0,prefill_length - input_ids.shape[1])))
-        pad_position_ids = jnp.pad(position_ids, ((0, 0), (0,prefill_length - input_ids.shape[1])))
-
+        # pad_position_ids = jnp.pad(position_ids, ((0, 0), (0,prefill_length - input_ids.shape[1])))
+        pad_position_ids=jnp.arange(0,prefill_length)[None,...]
 
         return input_ids_pad, pad_attention, pad_position_ids, prefill_length
 
@@ -259,6 +259,9 @@ class Sampler:
 
         b, prefill_length = input_ids_pad.shape
         cache,input_ids_pad,pad_attention,position_ids=jax.tree_util.tree_map(collect_process_data,(cache,input_ids_pad,pad_attention,position_ids))
+
+        position_ids = jnp.max(position_ids*pad_attention, axis=1).reshape((-1, 1)) + 1
+
         cache = pad_cache_right(cache, prefill_length, max_length, )
 
         input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length)),
@@ -266,8 +269,9 @@ class Sampler:
 
         pad_attention = jnp.pad(pad_attention, ((0, 0), (0, max_length)),
                                 constant_values=0)
+
         pad_attention = pad_attention.at[:, prefill_length].set(1)
-        position_ids = jnp.max(position_ids,axis=1).reshape((-1,1)) + 1
+
 
 
         return jax.tree_util.tree_map_with_path(self.global_collect_method,(cache, input_ids_pad, pad_attention, position_ids))

@@ -144,64 +144,17 @@ def repeat(lst:list,repeats:int):
 
 
 
-# def reward_correct(item, answer):
-#     pattern = r'\d+\.\d+|\d+/\d+|\d+'
-#     nums = re.findall(pattern, answer) # 使用正则表达式在answer中查找所有数字
-#     if len(nums) == 0: return 0.0
-#     lastnum = nums[-1] # 用answer中最后一个数字和ground_truth做比较
-#     ans = parse(lastnum, extraction_config=[ExprExtractionConfig()])
-#     ground_truth = parse(item["A"], extraction_config=[ExprExtractionConfig()])
-#     # print(item["A"],ans)
-#
-#     return 1 if verify(ans, ground_truth) else 0.0
+def reward_correct(item, answer):
+    pattern = r'\d+\.\d+|\d+/\d+|\d+'
+    nums = re.findall(pattern, answer) # 使用正则表达式在answer中查找所有数字
+    if len(nums) == 0: return 0.0
+    lastnum = nums[-1] # 用answer中最后一个数字和ground_truth做比较
+    ans = parse(lastnum, extraction_config=[ExprExtractionConfig()])
+    ground_truth = parse(item["A"], extraction_config=[ExprExtractionConfig()])
+    # print(item["A"],ans)
 
+    return 1 if verify(ans, ground_truth) else 0.0
 
-def reward_correct(item, answer, **kwargs):
-    """Reward function that checks if the completion is the same as the ground truth."""
-    sol=item["A"]
-    content=answer
-
-    # gold_parsed = parse(
-    #     sol,
-    #     extraction_mode="first_match",
-    #     extraction_config=[LatexExtractionConfig()],
-    # )
-
-    gold_parsed=sol
-
-    if len(gold_parsed) != 0:
-        # We require the answer to be provided in correct latex (no malformed operators)
-        answer_parsed = parse(
-            content,
-            extraction_config=[
-                LatexExtractionConfig(
-                    normalization_config=NormalizationConfig(
-                        nits=False,
-                        malformed_operators=False,
-                        basic_latex=True,
-                        equations=True,
-                        boxed="all",
-                        units=True,
-                    ),
-                    # Ensures that boxed is tried first
-                    boxed_match_priority=0,
-                    try_extract_without_anchor=False,
-                )
-            ],
-            extraction_mode="first_match",
-        )
-        # Reward 1 if the content is the same as the ground truth, 0 otherwise
-        try:
-            reward = float(verify(answer_parsed, gold_parsed))
-        except Exception as e:
-            print(f"verify failed: {e}, answer: {answer_parsed}, gold: {gold_parsed}")
-            reward = 0.0
-    else:
-        # If the gold solution is not parseable, we reward 1 to skip this example
-        reward = 1.0
-        print("Failed to parse gold solution: ", sol)
-
-    return reward
 
 
 

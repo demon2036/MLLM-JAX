@@ -90,7 +90,7 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
 
 
 
-    # params = jax.tree_util.tree_map_with_path(test, params)
+    params = jax.tree_util.tree_map_with_path(test, params)
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 

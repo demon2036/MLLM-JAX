@@ -200,7 +200,7 @@ def main():
 
         if step==10:
             sampler.dtype=jnp.bfloat16
-            BATCH=4
+            # BATCH=4
 
 
 

@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+import torch
 from jax import NamedSharding
 import numpy as np
 from jax._src.mesh import Mesh
@@ -11,7 +12,7 @@ jax.config.update('jax_num_cpu_devices', 4)
 
 
 print(-0.7 * float(np.finfo(np.dtype("float32")).max))
-
+print(torch.finfo(torch.bfloat16).min)
 
 def reconstruct_from_slices(subarray_info):
   """

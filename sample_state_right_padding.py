@@ -149,7 +149,7 @@ class Sampler:
     def __init__(self, model, tokenizer,mesh=None,*args,**kwargs):
         self.model = model
         self.tokenizer = tokenizer
-        self.dtype = jnp.bfloat16
+        self.dtype = jnp.float32
 
         self.mesh=mesh
 
@@ -184,7 +184,7 @@ class Sampler:
         self.jit_infer_prefill = jax.jit(self.model.apply)
         self.jit_infer_step = jax.jit(self.infer,donate_argnums=(0,))
         self.prefill_bucket = [
-             32, 256,512, 1024, 2048, 4096, 8192
+             128, 256,512, 1024, 2048, 4096, 8192
         ]
 
         def init_data(data):

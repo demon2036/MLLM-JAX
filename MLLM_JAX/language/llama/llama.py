@@ -720,7 +720,7 @@ class LlamaAttention(nn.Module):
         # else:
         #     new_cache = None
 
-        return new_cache, attn_output
+        return new_cache, attn_output.astype(dtype)
 
     @classmethod
     def init_cache(

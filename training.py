@@ -161,11 +161,14 @@ def reward_correct(item, answer, **kwargs):
     sol=item["A"]
     content=answer
 
-    gold_parsed = parse(
-        sol,
-        extraction_mode="first_match",
-        extraction_config=[LatexExtractionConfig()],
-    )
+    # gold_parsed = parse(
+    #     sol,
+    #     extraction_mode="first_match",
+    #     extraction_config=[LatexExtractionConfig()],
+    # )
+
+    gold_parsed=sol
+
     if len(gold_parsed) != 0:
         # We require the answer to be provided in correct latex (no malformed operators)
         answer_parsed = parse(

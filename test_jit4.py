@@ -198,8 +198,8 @@ def main():
         prompts = [x["Q"] for x in repeated_inputs]
 
 
-        if step==10:
-            sampler.dtype=jnp.bfloat16
+        # if step==10:
+        #     sampler.dtype=jnp.bfloat16
             # BATCH=4
 
 

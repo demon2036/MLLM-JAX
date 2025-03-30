@@ -78,7 +78,7 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
                      out_shardings=train_state_sharding)(params)
 
 
-    # params = jax.tree_util.tree_map(lambda x, d: jnp.asarray(x, dtype=jnp.float32, device=d), params, train_state_sharding)
+    params = jax.tree_util.tree_map(lambda x: jnp.asarray(x, dtype=jnp.bfloat16, ), params)
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 

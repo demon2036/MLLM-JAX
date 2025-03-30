@@ -429,10 +429,18 @@ class LlamaRotaryEmbedding(nn.Module):
 class LlamaRMSNorm(nn.Module):
     """RMSNorm layer."""
     eps: float = 1e-6
+    dtype:Any=jnp.float32
 
     @nn.compact
     def __call__(self, x):
+
+        dtype=x.dtype
+
         scale = self.param('scale', nn.initializers.zeros_init(), (x.shape[-1]))
+
+        scale=scale.astype(self.dtype)
+        x=x.astype(self.dtype)
+
         var = jnp.mean(jnp.square(x), axis=-1, keepdims=True)
 
         # Jax.lax.rsqrt is used because it returns different floats than
@@ -444,7 +452,7 @@ class LlamaRMSNorm(nn.Module):
         # a (1, ..., 1, D) tensor, so the rank of scale matches normed_inputs.
         scale = jnp.expand_dims(scale, axis=range(len(x.shape) - 1))
         normed_inputs = normed_inputs * scale
-        return normed_inputs
+        return normed_inputs.astype(dtype)
 
 
 class LlamaMLP(nn.Module):
@@ -592,8 +600,9 @@ class LlamaAttention(nn.Module):
 
         dtype = query_states.dtype
         cos, sin = position_embeddings
+        query_states=query_states.astype(jnp.float32)
+        key_states = key_states.astype(dtype)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
-
         query_states = query_states.astype(dtype)
         key_states = key_states.astype(dtype)
         # slice_indices = (0, 0, end_index % cache['v'].shape[2], 0)

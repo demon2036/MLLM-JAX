@@ -173,7 +173,7 @@ def reward_format(item, answer):
 
 
 
-def get_advantages(rewards,groups,advantage_estimator='grpo'):
+def get_advantages(rewards,groups,advantage_estimator='dr_grpo'):
 
     if advantage_estimator=='grpo':
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)

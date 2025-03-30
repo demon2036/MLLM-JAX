@@ -19,7 +19,7 @@ from MLLM_JAX.language.llama.llama import convert_torch_to_flax_llama, LlamaJaxC
 from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache, pad_cache_right
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
 from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama, get_jax_mesh2, _form_global_array, \
-    collect_process_data, collect_process_data2
+    collect_process_data, collect_process_data2, tree_path_to_string
 from sanple_utils import _greedy_sampling, _temperature_sampling, _nucleus_sampling,  \
     _top_k_sampling_batched
 from jax.sharding import PartitionSpec as P
@@ -102,6 +102,21 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
                      # donate_argnums=(0,),
                      out_shardings=train_state_sharding)(params)
     tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+
+
+    def test(p,x):
+        name_p=tree_path_to_string(p,sep='.')
+        if 'scale' in name_p:
+            print(name_p, x.shape)
+            return        x
+        else:
+            return jnp.asarray(x,dtype=jnp.bfloat16)
+
+
+    jax.tree_util.tree_map_with_path(test,params)
+    while True:
+        params
 
     return model, params, tokenizer
 

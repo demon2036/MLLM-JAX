@@ -149,7 +149,7 @@ class Sampler:
     def __init__(self, model, tokenizer,mesh=None,*args,**kwargs):
         self.model = model
         self.tokenizer = tokenizer
-        self.dtype = jnp.float32
+        self.dtype = jnp.bfloat16
 
         self.mesh=mesh
 

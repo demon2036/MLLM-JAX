@@ -375,7 +375,7 @@ def test_qwen2_fast_jit_sample2():
 
     sampler = Sampler(model, params, tokenizer,mesh=mesh)
     print('hi hi')
-    for _ in sampler.generate_prefill_auto_regressive(prompt,max_length=max_length):
+    for _ in sampler.generate_prefill_auto_regressive(prompt,max_length=max_cache_length):
         pass
 
 

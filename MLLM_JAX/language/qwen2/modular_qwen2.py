@@ -3,6 +3,7 @@ from typing import Any
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from .configuration_qwen2 import Qwen2Config
 from ..llama.llama import LlamaMLP, LlamaAttention, LlamaDecoderLayer, LlamaRMSNorm, LlamaRotaryEmbedding
@@ -96,11 +97,12 @@ class Qwen2Model(nn.Module):
             #
 
             attention_mask = jnp.full(
-                (attention_mask.shape[1], attention_mask.shape[1]), -1e37
+                (attention_mask.shape[1], attention_mask.shape[1]), -0.7 * float(np.finfo(np.dtype("float32")).max)#-1e37
             )
             attention_mask = jnp.triu(attention_mask, 1)[...]
         else:
-            attention_mask = jnp.where(attention_mask, 0, -1e37)[:,None,None,...]
+            attention_mask = jnp.where(attention_mask, 0, -0.7 * float(np.finfo(np.dtype("float32")).max)#-1e37
+                                       )[:,None,None,...]
 
         position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
 

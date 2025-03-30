@@ -10,6 +10,9 @@ jax.config.update('jax_platform_name', 'cpu')
 jax.config.update('jax_num_cpu_devices', 4)
 
 
+print(-0.7 * float(np.finfo(np.dtype("float32")).max))
+
+
 def reconstruct_from_slices(subarray_info):
   """
   根据一组 (slices, subarray) 自动重构完整数组。

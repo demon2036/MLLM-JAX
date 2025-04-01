@@ -246,8 +246,8 @@ def get_partition_rules_llama():
         ('lm_head/kernel', PS('fsdp', 'tp')),
         # ('lm_head/kernel', PS('tp','fsdp', )),
 
-        ('scale',PS('fsdp')),
-        ('bias', PS('fsdp')),
+        ('scale',PS('tp')),
+        # ('bias', PS('fsdp')),
 
         ('.*', PS(None)),
     )

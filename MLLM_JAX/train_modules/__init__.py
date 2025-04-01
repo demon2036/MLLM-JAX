@@ -79,7 +79,36 @@ class TrainSFTModule(nn.Module):
 #                      )(logits,index)
 
 
+def selective_log_softmax_jax(logits: jnp.ndarray, index: jnp.ndarray) -> jnp.ndarray:
+    """
+    A memory-efficient JAX implementation for `log(softmax(logits))[index]`.
 
+    Equivalent to: `jnp.take_along_axis(jax.nn.log_softmax(logits, axis=-1), index[..., None], axis=-1).squeeze(axis=-1)`
+    but avoids materializing the full log_softmax result.
+
+    Args:
+        logits: Logits tensor of shape `(..., num_classes)`.
+        index: Index tensor of shape `(...)`, specifying the positions to gather
+               from the log-softmax output along the last axis.
+
+    Returns:
+        Gathered log probabilities with the same shape as `index`.
+    """
+    # Ensure index has the same number of dimensions as logits for broadcasting subtraction later
+    # Or ensure index can be broadcasted correctly against logits dimensions before the last one.
+    # If index is (...) and logits is (..., V), ensure (...) matches the prefix shape.
+
+    # Gather the logits corresponding to the target indices: shape (...)
+    # Add a dimension to index for take_along_axis, then remove it
+    selected_logits = jnp.take_along_axis(logits, index[..., None], axis=-1).squeeze(axis=-1)
+
+    # Calculate the logsumexp normalization factor across the last dimension: shape (...)
+    logsumexp_logits = jax.scipy.special.logsumexp(logits, axis=-1)
+
+    # Apply the identity: log_softmax(x)_i = x_i - logsumexp(x)
+    per_token_logps = selected_logits - logsumexp_logits
+
+    return per_token_logps
 
 
 class TrainGRPOModule(nn.Module):
@@ -125,9 +154,11 @@ class TrainGRPOModule(nn.Module):
 
 
 
-        per_token_logps = jnp.take_along_axis(  # [B, S]
-            jax.nn.log_softmax(logits, axis=-1), chosen_ids[..., None], axis=-1
-        )[..., 0]/self.temperature
+        # per_token_logps = jnp.take_along_axis(  # [B, S]
+        #     jax.nn.log_softmax(logits, axis=-1), chosen_ids[..., None], axis=-1
+        # )[..., 0]/self.temperature
+
+        per_token_logps = selective_log_softmax_jax(logits,index=chosen_ids) / self.temperature
 
 
 

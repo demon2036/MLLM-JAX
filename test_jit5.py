@@ -172,8 +172,7 @@ def main():
     state, sampler, train_state_sharding = get_state(mesh_fsdp, training_steps,model_path=model_path,
                                                      grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH)
 
-    opt_state = jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="pinned_host"), train_state_sharding.opt_state)
-    train_state_sharding_cpu = train_state_sharding.replace(opt_state=opt_state, )
+
 
     test_fn = jax.jit(functools.partial(training_step,train_state_sharding=train_state_sharding_cpu),
                       donate_argnums=(0,),
@@ -192,7 +191,8 @@ def main():
     params_to_fsdp = jax.jit(init_fn,out_shardings=params_sharding_fsdp)
 
 
-
+    opt_state = jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="pinned_host"), train_state_sharding.opt_state)
+    train_state_sharding_cpu = train_state_sharding.replace(opt_state=opt_state, )
     state = state.replace(
         opt_state=jax.device_put(
             state.opt_state,

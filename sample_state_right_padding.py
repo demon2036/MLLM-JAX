@@ -187,7 +187,7 @@ class Sampler:
 
             return sample_fn(rngs,logits)
 
-        self.sample_fn=jax.jit(_nucleus_sampling)
+        self.sample_fn=jax.jit(warp_sample_fn)
 
         # self.sample_fn=shard_map(_top_k_sampling_batched,mesh=mesh,in_specs=(None,P(['dp', 'fsdp'],'tp'))
         #                     ,out_specs=P(['dp', 'fsdp']),check_rep=False)
@@ -223,13 +223,9 @@ class Sampler:
         key, key2 = jax.random.split(sample_state.key)
         next_token_predict = self.sample_fn(key2, logits[:, -1])
 
-
         next_token_predict=jnp.where(sample_state.dones,self.tokenizer.eos_token_id,next_token_predict)
-
-
-        slice_tokens=jax.lax.dynamic_slice(sample_state.token_buffer,(0,i-5),(sample_state.token_buffer.shape[0],5))
-
-        dones = sample_state.dones | (next_token_predict == self.tokenizer.eos_token_id) | (jnp.sum(slice_tokens==sample_state.token_buffer[:,i][:,None],axis=1)==5)
+        #slice_tokens=jax.lax.dynamic_slice(sample_state.token_buffer,(0,i-5),(sample_state.token_buffer.shape[0],5))
+        dones = sample_state.dones | (next_token_predict == self.tokenizer.eos_token_id) #| (jnp.sum(slice_tokens==sample_state.token_buffer[:,i][:,None],axis=1)==5)
 
         sample_state.dones=dones
 

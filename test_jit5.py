@@ -173,11 +173,11 @@ def main():
                                                      grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH)
 
 
-
-    test_fn = jax.jit(functools.partial(training_step,train_state_sharding=train_state_sharding_cpu),
-                      donate_argnums=(0,),
-                      in_shardings= (train_state_sharding_cpu,None),
-                      out_shardings=(train_state_sharding,None))
+    #
+    # test_fn = jax.jit(functools.partial(training_step,train_state_sharding=train_state_sharding_cpu),
+    #                   donate_argnums=(0,),
+    #                   in_shardings= (train_state_sharding_cpu,None),
+    #                   out_shardings=(train_state_sharding,None))
 
     get_advantages_jit=jax.jit(get_advantages,static_argnums=(1,))
 

@@ -154,7 +154,7 @@ def training_step(state: TrainState, inputs: ArrayTree,train_state_sharding=None
         state = jax.lax.cond(
             state.micro_step == state.micro_in_mini, update_fn, lambda x: x, state
         )
-    return state, metrics
+    return state#, metrics
 
 
 

@@ -197,11 +197,10 @@ def main():
     )
 
 
-
     test_fn = jax.jit(functools.partial(training_step,train_state_sharding=train_state_sharding_cpu),
-                      donate_argnums=(0,),
-                      in_shardings= (train_state_sharding_cpu,None),
-                      out_shardings=(train_state_sharding,None))
+                      donate_argnums=(0,),)
+                      # in_shardings= train_state_sharding_cpu,
+                      # out_shardings=train_state_sharding,)
 
 
 
@@ -265,7 +264,7 @@ def main():
         for j in range(grad_accum_steps):
             local_data = jax.tree_util.tree_map(lambda x: slice_data(x, grad_accum_steps, j), datas, )
             # batch = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
-            state, _ = test_fn(state, local_data)
+            state= test_fn(state, local_data)
 
 
         if jax.process_index()==0:

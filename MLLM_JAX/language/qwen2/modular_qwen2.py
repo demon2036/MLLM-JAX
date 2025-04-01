@@ -146,7 +146,7 @@ class Qwen2Attention(LlamaAttention):
                 causal_mask = attn_mask
                 attn_weights = attn_weights.astype(jnp.float32) + causal_mask
 
-            attn_weights = nn.softmax(attn_weights.astype(jnp.float32), axis=-1, ).astype(attn_weights.dtype)
+            attn_weights = nn.softmax(attn_weights.astype(jnp.float32), axis=-1, )#.astype(attn_weights.dtype)
             attn_output = attn_weights @ value_states
             attn_output=attn_output.astype(jnp.bfloat16)
 

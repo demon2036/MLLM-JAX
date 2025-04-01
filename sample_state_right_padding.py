@@ -66,7 +66,7 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
 
 
     def init_fn(params):
-        return jnp.array(params,dtype=jnp.bfloat16)
+        return jax.tree_util.tree_map(lambda x: jnp.array(x, dtype=jnp.bfloat16, ), params,)
 
     state_shapes = jax.eval_shape(init_fn, params, )
 

@@ -1,7 +1,7 @@
 import os
 import jax
 
-os.environ['JAX_TRACEBACK_FILTERING']='off'
+# os.environ['JAX_TRACEBACK_FILTERING']='off'
 
 
 jax.distributed.initialize()
@@ -9,7 +9,6 @@ jax.distributed.initialize()
 
 from jax.sharding import PartitionSpec as P
 from jax import NamedSharding
-
 import numpy
 import wandb
 from jax.experimental import multihost_utils
@@ -27,7 +26,6 @@ from transformers import AutoTokenizer
 
 from MLLM_JAX.utils import get_jax_mesh2, _form_global_array, collect_process_data, match_partition_rules, \
     get_partition_rules_llama
-# from sample_state_left_padding import get_model, Sampler
 import jax.numpy as jnp
 
 

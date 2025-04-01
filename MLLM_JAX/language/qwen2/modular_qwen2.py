@@ -154,7 +154,7 @@ class Qwen2Attention(LlamaAttention):
             attn_weights = (query_states @ key_states.swapaxes(2, 3)) / math.sqrt(self.head_dim)
             if attn_mask is not None:  # no matter the length, we just slice it
                 causal_mask = attn_mask
-                attn_weights = attn_weights + causal_mask
+                attn_weights = jnp.where(causal_mask==0,attn_mask,-2.3819763e38)
 
             attn_weights = nn.softmax(attn_weights, axis=-1, )
             attn_output = attn_weights @ value_states
@@ -222,7 +222,7 @@ class Qwen2Model(nn.Module):
             attention_mask = jnp.where(attention_mask, 0, -0.7 * float(np.finfo(np.dtype("float32")).max)  #-1e37
                                        )[:,None,None,...]
             print(attention_mask.dtype)
-            attention_mask=attention_mask.astype(jnp.bfloat16)
+            attention_mask=attention_mask
 
         position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
 

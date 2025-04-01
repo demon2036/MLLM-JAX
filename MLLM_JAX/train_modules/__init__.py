@@ -106,7 +106,9 @@ def selective_log_softmax_jax(logits: jnp.ndarray, index: jnp.ndarray,mesh) -> j
     """
 
 
-    return shard_map(jax.vmap(selective_log_softmax_jax_inner),mesh=mesh,in_specs=P(['dp','fsdp']))(logits,index)
+    return shard_map(jax.vmap(selective_log_softmax_jax_inner),mesh=mesh,
+                     in_specs=P(['dp','fsdp']),out_specs=P(['dp','fsdp'])
+                     )(logits,index)
 
 
 

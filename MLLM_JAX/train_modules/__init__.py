@@ -162,7 +162,7 @@ class TrainGRPOModule(nn.Module):
         #     jax.nn.log_softmax(logits, axis=-1), chosen_ids[..., None], axis=-1
         # )[..., 0]/self.temperature
 
-        per_token_logps = selective_log_softmax_jax(logits,chosen_ids,self.mesh)/self.temperature
+        per_token_logps = selective_log_softmax_jax(logits,chosen_ids,)/self.temperature
 
 
 

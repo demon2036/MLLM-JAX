@@ -187,20 +187,11 @@ def main():
     params_to_fsdp = jax.jit(init_fn,out_shardings=params_sharding_fsdp)
 
 
-    opt_state = jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="pinned_host"), train_state_sharding.opt_state)
-    train_state_sharding=train_state_sharding.replace(opt_state=opt_state)
-
-
-
-    def init_state(state):
-        return state
-
-    state=jax.jit(init_state,out_shardings=train_state_sharding)(state)
 
 
     test_fn = jax.jit(training_step,
                       donate_argnums=(0,),
-                      out_shardings=train_state_sharding,
+                      # out_shardings=train_state_sharding,
     )
 
 

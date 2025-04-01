@@ -136,7 +136,6 @@ def training_step(state: TrainState, inputs: ArrayTree) -> tuple[TrainState, Arr
     # then the parameters will be updated at the end of each mini-batch step. In every
     # micro steps, the gradients will be accumulated.
     if state.grad_accum is None:
-
         state = state.apply_gradients(grads=grads)
     else:
         state = state.replace(

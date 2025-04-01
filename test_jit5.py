@@ -214,8 +214,9 @@ def main():
 
     temp_fn = jax.jit(functools.partial(test, train_state_sharding=train_state_sharding_cpu),
                       donate_argnums=(0,),
-                      in_shardings=train_state_sharding_cpu,
-                      out_shardings=train_state_sharding, )
+                      # in_shardings=train_state_sharding_cpu,
+                      # out_shardings=train_state_sharding,
+                      )
 
     temp_fn(state)
     print('hi')

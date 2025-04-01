@@ -61,7 +61,14 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
 
     beta=0.0
 
-    train_module = TrainGRPOModule(model=model, pad_token_id=tokenizer.pad_token_id,ref_model=model_ref,num_pre_Q=num_pre_q,beta=beta,max_lengths=max_lengths)
+    train_module = TrainGRPOModule(model=model,
+                                   pad_token_id=tokenizer.pad_token_id,
+                                   ref_model=model_ref,
+                                   num_pre_Q=num_pre_q,
+                                   beta=beta,
+                                   max_lengths=max_lengths,
+                                   mesh=mesh
+                                   )
     def init_fn(params):
 
         learning_rate = optax.warmup_cosine_decay_schedule(

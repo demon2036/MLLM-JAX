@@ -8,8 +8,8 @@ import jax.numpy as jnp
 import optax
 import torch
 from chex import Array, ArrayTree
-
-
+from jax.experimental.shard_map import shard_map
+from jax.sharding import PartitionSpec as P
 
 CRITERION_COLLECTION = {
     "ce": optax.softmax_cross_entropy,
@@ -82,8 +82,13 @@ class TrainSFTModule(nn.Module):
 
 
 
+def selective_log_softmax_jax_inner(logits,index):
+    return jnp.take_along_axis(  # [B, S]
+        jax.nn.log_softmax(logits, axis=-1), index[..., None], axis=-1
+    )[..., 0]
 
-def selective_log_softmax_jax(logits: jnp.ndarray, index: jnp.ndarray) -> jnp.ndarray:
+
+def selective_log_softmax_jax(logits: jnp.ndarray, index: jnp.ndarray,mesh) -> jnp.ndarray:
     """
     A memory-efficient JAX implementation for `log(softmax(logits))[index]`.
 
@@ -101,12 +106,7 @@ def selective_log_softmax_jax(logits: jnp.ndarray, index: jnp.ndarray) -> jnp.nd
     """
 
 
-
-    def selective_log_softmax_jax_inner(logits,index):
-        return jnp.take_along_axis(  # [B, S]
-            jax.nn.log_softmax(logits, axis=-1), index[..., None], axis=-1
-        )[..., 0]
-    return jax.vmap(selective_log_softmax_jax_inner)(logits,index)
+    return shard_map(jax.vmap(selective_log_softmax_jax_inner),mesh=mesh,in_specs=P(['dp','fsdp']))(logits,index)
 
 
 
@@ -120,6 +120,7 @@ class TrainGRPOModule(nn.Module):
     beta:float =0.04
     temperature:float =0.9
     max_lengths:float=2048
+    mesh:Any=None
 
 
 
@@ -158,7 +159,7 @@ class TrainGRPOModule(nn.Module):
         #     jax.nn.log_softmax(logits, axis=-1), chosen_ids[..., None], axis=-1
         # )[..., 0]/self.temperature
 
-        per_token_logps = selective_log_softmax_jax(logits,chosen_ids)/self.temperature
+        per_token_logps = selective_log_softmax_jax(logits,chosen_ids,self.mesh)/self.temperature
 
 
 

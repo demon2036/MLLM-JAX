@@ -107,7 +107,7 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
 
 
 
-def training_step(state: TrainState, inputs: ArrayTree,) -> tuple[TrainState, ArrayTree]:
+def training_step(state: TrainState, inputs: ArrayTree,train_state_sharding=None) -> tuple[TrainState, ArrayTree]:
 
     def loss_fn(params: ArrayTree) -> ArrayTree:
         metrics=state.apply_fn({'params': {'model':params,'ref_model':state.ref_params }, },inputs)
@@ -115,6 +115,14 @@ def training_step(state: TrainState, inputs: ArrayTree,) -> tuple[TrainState, Ar
         return metrics["loss"], metrics
 
     def update_fn(state: TrainState) -> TrainState:
+
+        state = state.replace(
+            opt_state=jax.device_put(
+                state.opt_state,
+                jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="device"), train_state_sharding.opt_state),
+            )
+        )
+
         # Collect a global gradient from the accumulated gradients and apply actual
         # parameter update with resetting the accumulations to zero.
         grads = jax.tree_map(lambda g: g / state.micro_in_mini, state.grad_accum)

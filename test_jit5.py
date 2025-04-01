@@ -1,3 +1,4 @@
+import functools
 import os
 import jax
 
@@ -31,7 +32,7 @@ import jax.numpy as jnp
 
 max_prompt_length=400
 num_pre_Q=16
-MAX_LENGTH_SAMPLE=512
+MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 grad_accum_steps = 4
 
@@ -170,7 +171,7 @@ def main():
     training_steps = 100
     state, sampler, train_state_sharding = get_state(mesh_fsdp, training_steps,model_path=model_path,
                                                      grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH)
-    test_fn = jax.jit(training_step, donate_argnums=(0,), )
+    test_fn = jax.jit(functools.partial(training_step,train_state_sharding=train_state_sharding), donate_argnums=(0,), )
 
     get_advantages_jit=jax.jit(get_advantages,static_argnums=(1,))
 

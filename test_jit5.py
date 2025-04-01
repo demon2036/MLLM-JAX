@@ -198,18 +198,6 @@ def main():
     state=jax.jit(init_state,out_shardings=train_state_sharding)(state)
 
 
-    # train_state_sharding_cpu = train_state_sharding.replace(opt_state=opt_state, )
-    # state = state.replace(
-    #     opt_state=jax.device_put(
-    #         state.opt_state,
-    #         jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="pinned_host"), train_state_sharding.opt_state),
-    #     )
-    # )
-
-    opt_state = jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="device"), train_state_sharding.opt_state)
-    train_state_sharding = train_state_sharding.replace(opt_state=opt_state)
-
-
     test_fn = jax.jit(functools.partial(training_step,train_state_sharding=train_state_sharding),
                       donate_argnums=(0,),
                       out_shardings=train_state_sharding,

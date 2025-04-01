@@ -198,7 +198,7 @@ def main():
     state=jax.jit(init_state,out_shardings=train_state_sharding)(state)
 
 
-    test_fn = jax.jit(functools.partial(training_step,train_state_sharding=train_state_sharding),
+    test_fn = jax.jit(training_step,
                       donate_argnums=(0,),
                       out_shardings=train_state_sharding,
     )

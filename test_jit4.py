@@ -183,7 +183,7 @@ def main():
     params_to_dp = jax.jit(init_fn,out_shardings=params_sharding_dp)
     params_to_fsdp = jax.jit(init_fn,out_shardings=params_sharding_fsdp)
 
-    test_fn = jax.jit(training_step,  in_shardings=(  params_sharding_fsdp  ,  NamedSharding(mesh_fsdp,P(['dp','fsdp'])))   ,      donate_argnums=(0,), )
+    test_fn = jax.jit(training_step,  in_shardings=( train_state_sharding  ,  NamedSharding(mesh_fsdp,P(['dp','fsdp'])))   ,      donate_argnums=(0,), )
 
 
 

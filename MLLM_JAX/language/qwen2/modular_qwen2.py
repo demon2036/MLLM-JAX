@@ -19,13 +19,13 @@ class Qwen2MLP(LlamaMLP):
     config: Qwen2Config
     jax_config: Any = None
 
+
     def setup(self) -> None:
-        # self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        # self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        # self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
-        self.gate_proj = nn.Dense(self.config.intermediate_size, use_bias=False)
-        self.up_proj = nn.Dense(self.config.intermediate_size, use_bias=False)
-        self.down_proj = nn.Dense(self.config.hidden_size, use_bias=False)
+        dtype=self.jax_config.dtype
+        param_dtype=self.jax_config.param_dtype
+        self.gate_proj = nn.Dense(self.config.intermediate_size, use_bias=False,dtype=dtype,param_dtype=param_dtype)
+        self.up_proj = nn.Dense(self.config.intermediate_size, use_bias=False,dtype=dtype,param_dtype=param_dtype)
+        self.down_proj = nn.Dense(self.config.hidden_size, use_bias=False,dtype=dtype,param_dtype=param_dtype)
 
 
 class Qwen2Attention(LlamaAttention):
@@ -33,10 +33,8 @@ class Qwen2Attention(LlamaAttention):
     jax_config: Any = None
 
     def setup(self) -> None:
-        # self.q_proj = nn.Linear(config.hidden_size, config.num_attention_heads * self.head_dim, bias=True)
-        # self.k_proj = nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=True)
-        # self.v_proj = nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=True)
-        # self.o_proj = nn.Linear(config.num_attention_heads * self.head_dim, config.hidden_size, bias=False)
+        dtype=self.jax_config.dtype
+        param_dtype=self.jax_config.param_dtype
         config = self.config
         self.attention_dropout = config.attention_dropout
         self.hidden_size = config.hidden_size
@@ -47,10 +45,10 @@ class Qwen2Attention(LlamaAttention):
         self.max_position_embeddings = config.max_position_embeddings
         self.rope_theta = config.rope_theta
         self.is_causal = True
-        self.q_proj = nn.Dense(self.num_heads * self.head_dim, use_bias=True)
-        self.k_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=True)
-        self.v_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=True)
-        self.o_proj = nn.Dense(self.hidden_size, use_bias=False)
+        self.q_proj = nn.Dense(self.num_heads * self.head_dim, use_bias=True,dtype=dtype,param_dtype=param_dtype)
+        self.k_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=True,dtype=dtype,param_dtype=param_dtype)
+        self.v_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=True,dtype=dtype,param_dtype=param_dtype)
+        self.o_proj = nn.Dense(self.hidden_size, use_bias=False,dtype=dtype,param_dtype=param_dtype)
 
     def __call__(
             self,
@@ -173,7 +171,9 @@ class Qwen2Model(nn.Module):
     jax_config: Any = None
 
     def setup(self) -> None:
-        self.embed_tokens = nn.Embed(self.config.vocab_size, self.config.hidden_size, )
+        dtype=self.jax_config.dtype
+        param_dtype=self.jax_config.param_dtype
+        self.embed_tokens = nn.Embed(self.config.vocab_size, self.config.hidden_size,dtype=dtype,param_dtype=param_dtype )
         self.layers = [Qwen2DecoderLayer(self.config, self.jax_config) for layer_idx in
                        range(self.config.num_hidden_layers)]
         self.norm = LlamaRMSNorm(eps=self.config.rms_norm_eps)
@@ -240,10 +240,12 @@ class Qwen2ForCausalLM(nn.Module):
     jax_config: Any = None
 
     def setup(self) -> None:
+        dtype=self.jax_config.dtype
+        param_dtype=self.jax_config.param_dtype
         # self.model = Qwen2Model(self.config, jax_config=self.jax_config)
         # self.lm_head = nn.Dense(self.config.vocab_size, use_bias=False)
         self.model = nn.remat(Qwen2Model)(self.config, jax_config=self.jax_config)
-        self.lm_head = nn.remat(nn.Dense)(self.config.vocab_size, use_bias=False)
+        self.lm_head = nn.remat(nn.Dense)(self.config.vocab_size, use_bias=False,dtype=dtype,param_dtype=param_dtype)
 
 
 

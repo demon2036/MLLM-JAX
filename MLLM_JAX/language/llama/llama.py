@@ -258,6 +258,9 @@ class LlamaConfig:
 class LlamaJaxConfig:
     dense_init:Any =nn.initializers.truncated_normal()
     mesh: Any = None
+    dtype:Any=jnp.bfloat16
+    param_dtype:Any=jnp.float32
+
 
 
 

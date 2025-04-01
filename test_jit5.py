@@ -200,12 +200,7 @@ def main():
         repeated_inputs=repeat(inputs, num_pre_Q)
         prompts = [x["Q"] for x in repeated_inputs]
 
-
-        # if step==10:
-        #     sampler.dtype=jnp.bfloat16
-            # BATCH=4
-
-        tip_text, answers = gen_answers_jax(prompts, sampler,jax.tree_util.tree_map(lambda x:x.astype(jnp.bfloat16) ,state.params ))
+        tip_text, answers = gen_answers_jax(prompts, sampler,)
 
         print(f"{step=} syn for generate start")
         multihost_utils.sync_global_devices('syn for metric')

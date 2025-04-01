@@ -34,7 +34,7 @@ max_prompt_length=400
 num_pre_Q=16
 MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-grad_accum_steps = 1
+grad_accum_steps = 2
 
 model_path = 'Qwen/Qwen2.5-7B'
 # model_path = 'Qwen/Qwen2.5-7B-Instruct'
@@ -188,7 +188,6 @@ def main():
 
 
 
-
     test_fn = jax.jit(training_step,
                       donate_argnums=(0,),
                       # out_shardings=train_state_sharding,
@@ -208,7 +207,7 @@ def main():
         repeated_inputs=repeat(inputs, num_pre_Q)
         prompts = [x["Q"] for x in repeated_inputs]
 
-        tip_text, answers = gen_answers_jax(prompts, sampler,state.params)
+        tip_text, answers = gen_answers_jax(prompts, sampler,params_to_dp(state.params))
 
         print(f"{step=} syn for generate start")
         multihost_utils.sync_global_devices('syn for metric')

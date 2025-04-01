@@ -201,6 +201,32 @@ def main():
     )
 
 
+
+
+    def test(state,train_state_sharding):
+        state = state.replace(
+            opt_state=jax.device_put(
+                state.opt_state,
+                jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="device"), train_state_sharding.opt_state),
+            )
+        )
+        return state
+
+    temp_fn = jax.jit(functools.partial(test, train_state_sharding=train_state_sharding_cpu),
+                      donate_argnums=(0,),
+                      in_shardings=(train_state_sharding_cpu, None),
+                      out_shardings=(train_state_sharding, None))
+
+    temp_fn(state)
+    print('hi')
+    while True:
+        pass
+
+
+
+
+
+
     if jax.process_index() == 0:
         # wandb.init(name=configs['name'], project=configs['project'], config=configs)
         wandb.init(name='test', project='grop-gsm8k',)

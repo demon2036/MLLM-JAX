@@ -171,7 +171,6 @@ def main():
     training_steps = 100
     state, sampler, train_state_sharding = get_state(mesh_fsdp, training_steps,model_path=model_path,
                                                      grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH)
-    test_fn = jax.jit(training_step, donate_argnums=(0,), )
 
     get_advantages_jit=jax.jit(get_advantages,static_argnums=(1,))
 
@@ -184,6 +183,7 @@ def main():
     params_to_dp = jax.jit(init_fn,out_shardings=params_sharding_dp)
     params_to_fsdp = jax.jit(init_fn,out_shardings=params_sharding_fsdp)
 
+    test_fn = jax.jit(training_step,  in_shardings=(  params_sharding_fsdp  ,  NamedSharding(mesh_fsdp,P(['dp','fsdp'])))   ,      donate_argnums=(0,), )
 
 
 

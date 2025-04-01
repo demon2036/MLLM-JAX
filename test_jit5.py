@@ -204,7 +204,7 @@ def main():
 
 
 
-        tip_text, answers = gen_answers_jax(prompts, sampler,jax.tree_util.tree_map(lambda x:x.astype(jnp.bfloat16)) ,state.params )
+        tip_text, answers = gen_answers_jax(prompts, sampler,jax.tree_util.tree_map(lambda x:x.astype(jnp.bfloat16) ,state.params ))
 
         print(f"{step=} syn for generate start")
         multihost_utils.sync_global_devices('syn for metric')

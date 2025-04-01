@@ -141,13 +141,14 @@ class Qwen2Attention(LlamaAttention):
             attn_output=wrap_splash_attention(query_states/ math.sqrt(self.head_dim), key_states, value_states).astype(jnp.bfloat16)
 
         else:
-            attn_weights = (query_states @ key_states.swapaxes(2, 3)) / math.sqrt(self.head_dim)
+            attn_weights = (query_states.astype(jnp.float32) @ key_states.swapaxes(2, 3).astype(jnp.float32)) / math.sqrt(self.head_dim)
             if attn_mask is not None:  # no matter the length, we just slice it
                 causal_mask = attn_mask
                 attn_weights = attn_weights.astype(jnp.float32) + causal_mask
 
-            attn_weights = nn.softmax(attn_weights.astype(jnp.float32), axis=-1, ).astype(attn_weights.dtype)
+            attn_weights = nn.softmax(attn_weights.astype(jnp.float32), axis=-1, )#.astype(attn_weights.dtype)
             attn_output = attn_weights @ value_states
+            attn_output=attn_output.astype(jnp.bfloat16)
 
 
         attn_output = einops.rearrange(attn_output, 'b h n d-> b n (h d)')

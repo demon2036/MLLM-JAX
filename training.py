@@ -139,6 +139,12 @@ def training_step(state: TrainState, inputs: ArrayTree,train_state_sharding=None
     # then the parameters will be updated at the end of each mini-batch step. In every
     # micro steps, the gradients will be accumulated.
     if state.grad_accum is None:
+        state = state.replace(
+            opt_state=jax.device_put(
+                state.opt_state,
+                jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="device"), train_state_sharding.opt_state),
+            )
+        )
         state = state.apply_gradients(grads=grads)
     else:
         state = state.replace(

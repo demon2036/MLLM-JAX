@@ -173,11 +173,7 @@ def main():
                                                      grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH)
 
 
-    #
-    # test_fn = jax.jit(functools.partial(training_step,train_state_sharding=train_state_sharding_cpu),
-    #                   donate_argnums=(0,),
-    #                   in_shardings= (train_state_sharding_cpu,None),
-    #                   out_shardings=(train_state_sharding,None))
+
 
     get_advantages_jit=jax.jit(get_advantages,static_argnums=(1,))
 
@@ -202,28 +198,10 @@ def main():
 
 
 
-
-    def test(state,train_state_sharding):
-        state = state.replace(
-            opt_state=jax.device_put(
-                state.opt_state,
-                jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="device"), train_state_sharding.opt_state),
-            )
-        )
-        return state
-
-    temp_fn = jax.jit(functools.partial(test, train_state_sharding=train_state_sharding_cpu),
+    test_fn = jax.jit(functools.partial(training_step,train_state_sharding=train_state_sharding_cpu),
                       donate_argnums=(0,),
-                      # in_shardings=train_state_sharding_cpu,
-                      # out_shardings=train_state_sharding,
-                      )
-
-    temp_fn(state)
-    print('hi')
-    while True:
-        pass
-
-
+                      in_shardings= (train_state_sharding_cpu,None),
+                      out_shardings=(train_state_sharding,None))
 
 
 

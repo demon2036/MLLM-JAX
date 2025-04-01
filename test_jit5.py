@@ -186,8 +186,12 @@ def main():
 
 
 
-    # state=state.replace(params=jax.tree_util.tree_map(lambda x:x.astype(jnp.bfloat16) ,state.params ))
-
+    state = state.replace(
+        opt_state=jax.device_put(
+            state.opt_state,
+            jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="pinned_host"), train_state_sharding.opt_state),
+        )
+    )
 
 
     if jax.process_index() == 0:

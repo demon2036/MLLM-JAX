@@ -15,8 +15,6 @@ from ..llama.llama import LlamaMLP, LlamaAttention, LlamaDecoderLayer, LlamaRMSN
     apply_rotary_pos_emb, repeat_kv
 from jax.sharding import PartitionSpec as P
 
-
-
 class Qwen2MLP(LlamaMLP):
     config: Qwen2Config
     jax_config: Any = None
@@ -151,14 +149,6 @@ class Qwen2Attention(LlamaAttention):
             attn_weights = nn.softmax(attn_weights.astype(jnp.float32), axis=-1, ).astype(attn_weights.dtype)
             attn_output = attn_weights @ value_states
 
-            # attn_weights = (query_states @ key_states.swapaxes(2, 3)) / math.sqrt(self.head_dim)
-            # if attn_mask is not None:  # no matter the length, we just slice it
-            #     causal_mask = attn_mask
-            #     attn_weights = jnp.where(causal_mask==0,attn_mask,-2.3819763e38)
-            #
-            # attn_weights = nn.softmax(attn_weights, axis=-1, )
-            # attn_output = attn_weights @ value_states
-
 
         attn_output = einops.rearrange(attn_output, 'b h n d-> b n (h d)')
         attn_output = self.o_proj(attn_output)
@@ -219,7 +209,7 @@ class Qwen2Model(nn.Module):
             )
             attention_mask = jnp.triu(attention_mask, 1)[...]
         else:
-            attention_mask = jnp.where(attention_mask, 0, -0.7 * float(np.finfo(np.dtype("float32")).max)  #-1e37
+            attention_mask = jnp.where(attention_mask, 0, -0.7 * float(np.finfo(np.dtype("float32")).max)#-1e37
                                        )[:,None,None,...]
 
         position_embeddings = self.rotary_emb(inputs_embeds, position_ids)

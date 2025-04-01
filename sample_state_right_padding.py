@@ -66,14 +66,15 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
 
 
     def init_fn(params):
-        return jax.tree_util.tree_map(lambda x: jnp.array(x, dtype=jnp.bfloat16, ), params,)
+        return params
+        # return jax.tree_util.tree_map(lambda x: jnp.array(x, dtype=jnp.bfloat16, ), params,)
 
     state_shapes = jax.eval_shape(init_fn, params, )
 
     train_state_partition = match_partition_rules(get_partition_rules_llama(), state_shapes)
     train_state_sharding = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh, x), train_state_partition)
 
-    # params = jax.tree_util.tree_map(lambda x, d: jnp.asarray(x, dtype=jnp.bfloat16, device=d), params, train_state_sharding)
+    params = jax.tree_util.tree_map(lambda x, d: jnp.asarray(x, dtype=jnp.bfloat16, device=d), params, train_state_sharding)
 
     params = jax.jit(init_fn,
                      # donate_argnums=(0,),

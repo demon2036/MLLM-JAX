@@ -688,7 +688,7 @@ class LlamaAttention(nn.Module):
             attn_weights = (query_states @ key_states.swapaxes(2, 3)) / math.sqrt(self.head_dim)
             if attn_mask is not None:  # no matter the length, we just slice it
                 causal_mask = attn_mask
-                attn_weights = attn_weights + causal_mask
+                attn_weights = attn_weights.astype(jnp.float32) + causal_mask
 
             attn_weights = nn.softmax(attn_weights.astype(jnp.float32), axis=-1, ).astype(attn_weights.dtype)
             attn_output = attn_weights @ value_states

@@ -185,6 +185,9 @@ def main():
 
 
 
+    state=state.replace(params=jax.tree_util.tree_map(lambda x:x.astype(jnp.bfloat16) ,state.params ))
+
+
 
     if jax.process_index() == 0:
         # wandb.init(name=configs['name'], project=configs['project'], config=configs)
@@ -204,7 +207,7 @@ def main():
 
 
 
-        tip_text, answers = gen_answers_jax(prompts, sampler,jax.tree_util.tree_map(lambda x:x.astype(jnp.bfloat16) ,state.params ))
+        tip_text, answers = gen_answers_jax(prompts, sampler,state.params)
 
         print(f"{step=} syn for generate start")
         multihost_utils.sync_global_devices('syn for metric')

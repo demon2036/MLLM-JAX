@@ -15,6 +15,9 @@ from ..llama.llama import LlamaMLP, LlamaAttention, LlamaDecoderLayer, LlamaRMSN
     apply_rotary_pos_emb, repeat_kv
 from jax.sharding import PartitionSpec as P
 
+from ...multinomial_sample import dtype
+
+
 class Qwen2MLP(LlamaMLP):
     config: Qwen2Config
     jax_config: Any = None
@@ -217,8 +220,10 @@ class Qwen2Model(nn.Module):
             )
             attention_mask = jnp.triu(attention_mask, 1)[...]
         else:
-            attention_mask = jnp.where(attention_mask, 0, -0.7 * float(np.finfo(np.dtype("float32")).max)#-1e37
+            attention_mask = jnp.where(attention_mask, 0, -0.7 * float(np.finfo(np.dtype("float32")).max)  #-1e37
                                        )[:,None,None,...]
+            print(attention_mask.dtype)
+            attention_mask=attention_mask.astype(jnp.bfloat16)
 
         position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
 

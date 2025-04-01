@@ -193,7 +193,9 @@ def main():
                       # out_shardings=train_state_sharding,
     )
 
-
+    # state=state.replace(
+    #     params=jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),params_to_dp(state.params))
+    # )
 
 
     if jax.process_index() == 0:
@@ -207,7 +209,7 @@ def main():
         repeated_inputs=repeat(inputs, num_pre_Q)
         prompts = [x["Q"] for x in repeated_inputs]
 
-        tip_text, answers = gen_answers_jax(prompts, sampler,params_to_dp(state.params))
+        tip_text, answers = gen_answers_jax(prompts, sampler,jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),params_to_dp(state.params)))
 
         print(f"{step=} syn for generate start")
         multihost_utils.sync_global_devices('syn for metric')

@@ -33,11 +33,12 @@ import jax.numpy as jnp
 
 max_prompt_length=400
 num_pre_Q=16
-MAX_LENGTH_SAMPLE=512
+MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 grad_accum_steps = 1
 
-model_path = 'Qwen/Qwen2.5-7B'
+# model_path = 'Qwen/Qwen2.5-7B'
+model_path = 'Qwen/Qwen2.5-7B-Instruct'
 tokenizer = AutoTokenizer.from_pretrained(model_path)
 system_prompt = """You are a helpful assistant. A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the user with the answer.\
 The reasoning process and answer are enclosed within <think> </think> and<answer> </answer> tags, respectively, i.e., <think> reasoning process here </think><answer> answer here </answer>."""

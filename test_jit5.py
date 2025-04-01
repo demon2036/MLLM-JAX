@@ -206,6 +206,9 @@ def main():
     #     )
     # )
 
+    opt_state = jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="device"), train_state_sharding.opt_state)
+    train_state_sharding = train_state_sharding.replace(opt_state=opt_state)
+
 
     test_fn = jax.jit(functools.partial(training_step,train_state_sharding=train_state_sharding),
                       donate_argnums=(0,),

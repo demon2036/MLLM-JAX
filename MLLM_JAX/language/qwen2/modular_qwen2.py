@@ -15,7 +15,6 @@ from ..llama.llama import LlamaMLP, LlamaAttention, LlamaDecoderLayer, LlamaRMSN
     apply_rotary_pos_emb, repeat_kv
 from jax.sharding import PartitionSpec as P
 
-from ...multinomial_sample import dtype
 
 
 class Qwen2MLP(LlamaMLP):

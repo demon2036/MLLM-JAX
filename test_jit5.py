@@ -173,11 +173,11 @@ def main():
                                                      grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH)
 
     opt_state = jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="pinned_host"), train_state_sharding.opt_state)
-    train_state_sharding = train_state_sharding.replace(opt_state=opt_state, )
+    train_state_sharding_cpu = train_state_sharding.replace(opt_state=opt_state, )
 
-    test_fn = jax.jit(functools.partial(training_step,train_state_sharding=train_state_sharding),
+    test_fn = jax.jit(functools.partial(training_step,train_state_sharding=train_state_sharding_cpu),
                       donate_argnums=(0,),
-                      in_shardings= (train_state_sharding,None),
+                      in_shardings= (train_state_sharding_cpu,None),
                       out_shardings=(train_state_sharding,None))
 
     get_advantages_jit=jax.jit(get_advantages,static_argnums=(1,))

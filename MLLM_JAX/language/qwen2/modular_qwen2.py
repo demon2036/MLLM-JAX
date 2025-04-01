@@ -70,22 +70,6 @@ class Qwen2Attention(LlamaAttention):
         key_states = einops.rearrange(key_states, 'b n (h d)->b h n  d ', d=self.head_dim)
         value_states = einops.rearrange(value_states, 'b n (h d)->b h n  d ', d=self.head_dim)
 
-        """
-        if self.jax_config is not None:
-            print('sharding attention !')
-            query_states=jax.lax.with_sharding_constraint(query_states, NamedSharding(self.jax_config.mesh,PartitionSpec('dp','tp', 'fsdp',None)))
-            key_states = jax.lax.with_sharding_constraint(key_states, NamedSharding(self.jax_config.mesh,
-                                                                                        PartitionSpec('dp', 'tp',
-                                                                                                      'fsdp', None)))
-            # value_states = jax.lax.with_sharding_constraint(value_states, NamedSharding(self.jax_config.mesh,
-            #                                                                             PartitionSpec('dp', 'tp',
-            #                                                                                           'fsdp', None)))
-
-
-            value_states=nn.with_logical_constraint(value_states,('batch','embed',None,None),fallback=RulesFallback.RAISE_ERROR)
-
-        """
-
         dtype = x.dtype
         cos, sin = position_embeddings
         query_states=query_states.astype(jnp.float32)
@@ -117,9 +101,6 @@ class Qwen2Attention(LlamaAttention):
 
         else:
             new_cache = None
-
-
-        # print(query_states.shape,value_states.shape)
 
         value_states=repeat_kv(value_states,self.num_key_value_groups)
         key_states=repeat_kv(key_states,self.num_key_value_groups)

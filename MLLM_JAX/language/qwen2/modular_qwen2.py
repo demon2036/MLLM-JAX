@@ -205,10 +205,12 @@ class Qwen2Model(nn.Module):
             # attention_mask=jnp.where(mask,attention_mask,-1e37 )[:,None,...]
             #
 
-            attention_mask = jnp.full(
-                (attention_mask.shape[1], attention_mask.shape[1]), -1e37#-0.7 * float(np.finfo(np.dtype("float32")).max)#-1e37
-            )
-            attention_mask = jnp.triu(attention_mask, 1)[...]
+            # attention_mask = jnp.full(
+            #     (attention_mask.shape[1], attention_mask.shape[1]), -1e37#-0.7 * float(np.finfo(np.dtype("float32")).max)#-1e37
+            # )
+            # attention_mask = jnp.triu(attention_mask, 1)[...]
+
+            pass
         else:
             attention_mask = jnp.where(attention_mask, 0, -0.7 * float(np.finfo(np.dtype("float32")).max)#-1e37
                                        )[:,None,None,...]

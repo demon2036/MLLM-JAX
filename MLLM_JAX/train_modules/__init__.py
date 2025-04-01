@@ -139,6 +139,8 @@ class TrainGRPOModule(nn.Module):
 
         logits=logits[..., :-1, :]
 
+        print(logits.dtype)
+
 
 
         chosen_ids = input_ids[:, 1:]  # (B, L-1), exclude the first input ID since we don't have logits for it

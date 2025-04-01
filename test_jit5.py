@@ -205,8 +205,6 @@ def main():
         #     sampler.dtype=jnp.bfloat16
             # BATCH=4
 
-
-
         tip_text, answers = gen_answers_jax(prompts, sampler,state.params)
 
         print(f"{step=} syn for generate start")

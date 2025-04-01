@@ -67,7 +67,6 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
                                    num_pre_Q=num_pre_q,
                                    beta=beta,
                                    max_lengths=max_lengths,
-                                   mesh=mesh
                                    )
     def init_fn(params):
 
@@ -150,6 +149,22 @@ def training_step(state: TrainState, inputs: ArrayTree,train_state_sharding=None
             state.micro_step == state.micro_in_mini, update_fn, lambda x: x, state
         )
     return state, metrics
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

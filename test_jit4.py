@@ -170,7 +170,7 @@ def main():
 
     training_steps = 100
     state, sampler, train_state_sharding = get_state(mesh_fsdp, training_steps,model_path=model_path,
-                                                     grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH)
+                                                     grad_accum_steps=1,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH)
 
     get_advantages_jit=jax.jit(get_advantages,static_argnums=(1,))
 

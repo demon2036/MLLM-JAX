@@ -119,7 +119,6 @@ class TrainGRPOModule(nn.Module):
     beta:float =0.04
     temperature:float =0.9
     max_lengths:float=2048
-    mesh:Any=None
 
 
 

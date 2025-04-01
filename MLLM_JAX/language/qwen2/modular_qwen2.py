@@ -221,8 +221,6 @@ class Qwen2Model(nn.Module):
         else:
             attention_mask = jnp.where(attention_mask, 0, -0.7 * float(np.finfo(np.dtype("float32")).max)  #-1e37
                                        )[:,None,None,...]
-            print(attention_mask.dtype)
-            attention_mask=attention_mask
 
         position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
 

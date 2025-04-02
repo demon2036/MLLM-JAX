@@ -152,7 +152,7 @@ def init_fn(x):
 def main():
     BATCH = 1
 
-    reward_funcs=[reward_correct,reward_format,tag_count_reward]
+    reward_funcs=[reward_correct,reward_format,]
     dataset = load_dataset("openai/gsm8k", "main", split="train")
     dataset = dataset.shard(num_shards=jax.process_count(), index=jax.process_index())
     QAs = [{'Q': x, 'A': y.split('####')[-1].strip()} for x, y in zip(dataset['question'], dataset['answer'])]

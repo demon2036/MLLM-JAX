@@ -191,7 +191,10 @@ def main():
         repeated_inputs=repeat(inputs, num_pre_Q)
         prompts = [x["Q"] for x in repeated_inputs]
 
-        tip_text, answers = gen_answers_jax(prompts, sampler,params_to_dp(jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params)))
+        tip_text, answers = gen_answers_jax(prompts, sampler,
+                                            params_to_dp(state.params)
+                                            # params_to_dp(jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params))
+                                            )
 
         rewards_per_func=np.zeros( ( len(reward_funcs), len(answers),  ))
         for i, reward_func in enumerate(reward_funcs):

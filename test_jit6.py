@@ -35,9 +35,12 @@ max_prompt_length=400
 num_pre_Q=16
 MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-grad_accum_steps = 2
+grad_accum_steps = 1
 
-model_path = 'Qwen/Qwen2.5-7B'
+
+model_path = 'Qwen/Qwen2.5-1.5B-Instruct'
+
+# model_path = 'Qwen/Qwen2.5-7B'
 # model_path = 'Qwen/Qwen2.5-7B-Instruct'
 # model_path='deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
 tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -218,7 +221,7 @@ def main():
         for i, reward_func in enumerate(reward_funcs):
             reward_funcs_name=reward_func.__name__
             reward_datas_local=rewards_per_func[i]
-            reward_datas_mean= mean_jit(jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), reward_datas_local))
+            reward_datas_mean= process_allgather( reward_datas_local).mean()
             metrics[f"{reward_funcs_name}"]=reward_datas_mean
 
         datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), datas)

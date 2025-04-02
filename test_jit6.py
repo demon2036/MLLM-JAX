@@ -36,7 +36,7 @@ max_prompt_length=400
 num_pre_Q=16
 MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-grad_accum_steps = 4
+grad_accum_steps = 1
 
 
 model_path = 'Qwen/Qwen2.5-1.5B-Instruct'
@@ -110,12 +110,29 @@ def gen_answers_jax(prompts,sampler,params):
 
 
 
+
+
+def soft_overlong_punishment(max_length=1024,cache_length=128,completion_lengths=None):
+
+    if jax.process_index()==0:
+        print(completion_lengths)
+
+    rewards=np.where(completion_lengths<max_length-cache_length,0,  (   (max_length-cache_length)-completion_lengths )/cache_length           )
+    return rewards
+
+
+
+
 def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
     total_texts=[tip_text+answer+tokenizer.eos_token for tip_text,answer in zip(tip_texts,answers)]
     tip_text_inputs=tokenizer(tip_texts, return_tensors="np", padding=True, padding_side="right")
     total_text_inputs=tokenizer(total_texts, return_tensors="np", padding=True, padding_side="right")
 
     true_lengths_prompts = tip_text_inputs['attention_mask'].sum(axis=1)
+    true_lengths_prompts_completions = total_text_inputs['attention_mask'].sum(axis=1)
+
+    true_lengths_completions=true_lengths_prompts_completions-true_lengths_prompts
+
     attention_mask=total_text_inputs['attention_mask']
     labels=[]
     for true_length,mask in zip(true_lengths_prompts,attention_mask):
@@ -140,7 +157,8 @@ def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
         "input_ids": input_ids_pad,
         "attention_mask": pad_attention,
         "labels": pad_labels,
-        'rewards': rewards
+        'rewards': rewards  +soft_overlong_punishment(completion_lengths=true_lengths_completions)  ,
+
     }
 
     # rewards=jnp.array([item for item in rewards])
@@ -156,7 +174,7 @@ def init_fn(x):
 
 
 def main():
-    BATCH = 4
+    BATCH = 1
 
     reward_funcs=[reward_correct,reward_format,]
     dataset = load_dataset("openai/gsm8k", "main", split="train")

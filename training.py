@@ -60,7 +60,7 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
     model_ref = get_model(mesh, model_path=model_path, only_model=True)
 
-    beta=0.04
+    beta=0.00
 
     train_module = flax.linen.remat(TrainGRPOModule,policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)(model=model,
                                    pad_token_id=tokenizer.pad_token_id,
@@ -84,6 +84,7 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
         tx = optax.adamw(learning_rate)
         # tx = optax.lion(learning_rate)
         # tx = optax.sgd(learning_rate)
+        tx = optax.chain(optax.clip_by_global_norm(1.0), tx)
         if grad_accum_steps > 1:
             print(f'{grad_accum_steps=}')
             grad_accum = jax.tree_map(jnp.zeros_like, params)
@@ -245,7 +246,7 @@ def tag_count_reward(item, answer, **kwargs) -> float:
 #     return count_tags(answer)+0.25
 
 
-def get_advantages(rewards,groups,advantage_estimator='dr_grpo',alpha=0.1,mean_global=None,std_global=None):
+def get_advantages(rewards,groups,advantage_estimator='grpo',alpha=0.1,mean_global=None,std_global=None):
 
     if advantage_estimator=='grpo':
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)

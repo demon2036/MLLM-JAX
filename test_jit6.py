@@ -112,7 +112,7 @@ def gen_answers_jax(prompts,sampler,params):
 
 
 
-def soft_overlong_punishment(max_length=1024,cache_length=128,completion_lengths=None):
+def soft_overlong_punishment(max_length=4096,cache_length=1024,completion_lengths=None):
 
     if jax.process_index()==0:
         print(completion_lengths)

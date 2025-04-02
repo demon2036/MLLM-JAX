@@ -114,10 +114,10 @@ def selective_log_softmax_jax(logits: jnp.ndarray, index: jnp.ndarray) -> jnp.nd
 class TrainGRPOModule(nn.Module):
     model: Any
     pad_token_id:float
-    num_pre_Q:int =8
+    num_pre_Q:int
     ref_model: Any =None
     beta:float =0.04
-    temperature:float =0.9
+    temperature:float =1.0
     max_lengths:float=2048
 
 

@@ -245,7 +245,7 @@ def main():
 
         mean_global=process_allgather(datas['rewards']).mean()
         std_global = process_allgather(datas['rewards']).std()
-        print(f'{step=}',rewards, np.mean(rewards),mean_global)
+        print(f'{step=}',datas['rewards'], np.mean(datas['rewards']),mean_global)
 
         advantages = get_advantages_jit(datas['rewards'], num_pre_Q,mean_global=mean_global,std_global=std_global)
         datas['advantages'] = advantages

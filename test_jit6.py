@@ -1,3 +1,4 @@
+import copy
 import functools
 import os
 import jax
@@ -205,7 +206,8 @@ def main():
 
 
 
-        mean_global=mean_jit(jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), datas['rewards']))
+        mean_global=mean_jit(jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), copy.deepcopy(datas['rewards'])  ))
+        print(mean_global)
         advantages = get_advantages_jit(datas['rewards'], num_pre_Q,mean_global=mean_global)
         datas['advantages'] = advantages
 

@@ -156,7 +156,7 @@ def init_fn(x):
 
 
 def main():
-    BATCH = 1
+    BATCH = 4
 
     reward_funcs=[reward_correct,reward_format,]
     dataset = load_dataset("openai/gsm8k", "main", split="train")

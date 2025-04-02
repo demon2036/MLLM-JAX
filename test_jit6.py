@@ -228,7 +228,7 @@ def main():
                     rewards_per_func[i,j]=reward_func(inp,a)
                 except Exception as e:
                     print(e)
-                    rewards_per_func[i, j] = -10
+                    rewards_per_func[i, j] = -1
 
         rewards=rewards_per_func.sum(axis=0)
 

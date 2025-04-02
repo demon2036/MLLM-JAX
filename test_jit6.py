@@ -238,7 +238,7 @@ def main():
 
         rewards=rewards_per_func.sum(axis=0)
 
-        reward_corrects=rewards_per_func[:,0]
+        reward_corrects=rewards_per_func[0,:]
 
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,  reward_corrects,      max_length=MAX_LENGTH_SAMPLE)
 

@@ -202,7 +202,11 @@ def main():
 
         print(f'{step=}',rewards, np.mean(rewards))
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
-        advantages = get_advantages_jit(datas['rewards'], num_pre_Q)
+
+
+
+        mean_global=mean_jit(jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), datas['rewards']))
+        advantages = get_advantages_jit(datas['rewards'], num_pre_Q,mean_global=mean_global)
         datas['advantages'] = advantages
 
         rewards_per_func=jnp.array(rewards_per_func)

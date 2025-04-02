@@ -199,7 +199,7 @@ def reward_format(item, answer):
 
 
 
-def tag_count_reward(answer, **kwargs) -> list[float]:
+def tag_count_reward(answer, **kwargs) -> float:
     """Reward function that checks if we produce the desired number of think and answer tags associated with `format_reward()`.
 
     Adapted from: https://gist.github.com/willccbb/4676755236bb08cab5f4e54a0475d6fb#file-grpo_demo-py-L90
@@ -217,7 +217,7 @@ def tag_count_reward(answer, **kwargs) -> list[float]:
             count += 0.25
         return count
 
-    return [count_tags(c) for c in answer]
+    return count_tags(answer)+0.25
 
 
 def get_advantages(rewards,groups,advantage_estimator='grpo',alpha=0.1,mean_global=None,std_global=None):

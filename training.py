@@ -184,17 +184,21 @@ def reward_correct(item, answer):
 
 
 
+def reward_format(item, answer, **kwargs):
+    """Reward function that checks if the reasoning process is enclosed within <think> and </think> tags, while the final answer is enclosed within <answer> and </answer> tags."""
+    pattern = r"^<think>\n.*?\n</think>\n<answer>\n.*?\n</answer>$"
+    match = re.match(pattern, answer, re.DOTALL | re.MULTILINE)
+    return 1.0 if match else 0.0
 
 
-
-
-def reward_format(item, answer):
-    # pattern = r"^<think>(?:(?!</?think>)[\s\S]*?)</think>\s*<answer>(?:(?!</?answer>)[\s\S]*?)</answer><\|im_end\|>$"
-    # pattern = r"^<think>.*?</think>.*?<answer>.*?</answer>$"
-    pattern = r"^.*?</think>.*?<answer>.*?</answer>$"
-    # return 0.75 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -0.5
-    # return 1.25 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -1
-    return 1 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else 0
+#
+# def reward_format(item, answer):
+#     # pattern = r"^<think>(?:(?!</?think>)[\s\S]*?)</think>\s*<answer>(?:(?!</?answer>)[\s\S]*?)</answer><\|im_end\|>$"
+#     # pattern = r"^<think>.*?</think>.*?<answer>.*?</answer>$"
+#     pattern = r"^.*?</think>.*?<answer>.*?</answer>$"
+#     # return 0.75 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -0.5
+#     # return 1.25 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -1
+#     return 1 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else 0
 
 
 

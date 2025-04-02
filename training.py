@@ -207,17 +207,38 @@ def tag_count_reward(answer, **kwargs) -> float:
 
     def count_tags(text: str) -> float:
         count = 0.0
-        if text.count("<think>\n") == 1:
+        if text.count("<think>") == 1:
             count += 0.25
-        if text.count("\n</think>\n") == 1:
+        if text.count("</think>") == 1:
             count += 0.25
-        if text.count("\n<answer>\n") == 1:
+        if text.count("<answer>") == 1:
             count += 0.25
-        if text.count("\n</answer>") == 1:
+        if text.count("</answer>") == 1:
             count += 0.25
         return count
 
     return count_tags(answer)+0.25
+
+
+# def tag_count_reward(answer, **kwargs) -> float:
+#     """Reward function that checks if we produce the desired number of think and answer tags associated with `format_reward()`.
+#
+#     Adapted from: https://gist.github.com/willccbb/4676755236bb08cab5f4e54a0475d6fb#file-grpo_demo-py-L90
+#     """
+#
+#     def count_tags(text: str) -> float:
+#         count = 0.0
+#         if text.count("<think>\n") == 1:
+#             count += 0.25
+#         if text.count("\n</think>\n") == 1:
+#             count += 0.25
+#         if text.count("\n<answer>\n") == 1:
+#             count += 0.25
+#         if text.count("\n</answer>") == 1:
+#             count += 0.25
+#         return count
+#
+#     return count_tags(answer)+0.25
 
 
 def get_advantages(rewards,groups,advantage_estimator='grpo',alpha=0.1,mean_global=None,std_global=None):

@@ -152,11 +152,11 @@ class TrainGRPOModule(nn.Module):
             )[..., 0]
 
 
-        # per_token_logps = jnp.take_along_axis(  # [B, S]
-        #     jax.nn.log_softmax(logits, axis=-1), chosen_ids[..., None], axis=-1
-        # )[..., 0]/self.temperature
+        per_token_logps = jnp.take_along_axis(  # [B, S]
+            jax.nn.log_softmax(logits, axis=-1), chosen_ids[..., None], axis=-1
+        )[..., 0]/self.temperature
 
-        per_token_logps = selective_log_softmax_jax(logits,index=chosen_ids) / self.temperature
+        # per_token_logps = selective_log_softmax_jax(logits,index=chosen_ids) / self.temperature
 
 
 

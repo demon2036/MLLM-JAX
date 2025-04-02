@@ -121,11 +121,11 @@ def gen_answers_jax(prompts,sampler,params):
 #     return rewards
 
 def soft_overlong_punishment(max_length=4096,cache_length=1024,completion_lengths=None,reward_corrects=None):
-
-    if jax.process_index()==0:
-        print(completion_lengths,reward_corrects)
-
     rewards=np.where(reward_corrects==1,0,    -completion_lengths/max_length       )
+    if jax.process_index()==0:
+        print(completion_lengths,reward_corrects,rewards)
+
+
     return rewards
 
 

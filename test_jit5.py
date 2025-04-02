@@ -158,7 +158,6 @@ def main():
     dataset = load_dataset("openai/gsm8k", "main", split="train")
     dataset = dataset.shard(num_shards=jax.process_count(), index=jax.process_index())
 
-    print(jnp.min(process_allgather(np.array(len(dataset)))))
     QAs = [{'Q': x, 'A': y.split('####')[-1].strip()} for x, y in zip(dataset['question'], dataset['answer'])]
 
 
@@ -171,7 +170,6 @@ def main():
     training_steps = 400
     state, sampler, train_state_sharding = get_state(mesh_fsdp, training_steps,model_path=model_path,
                                                      grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH)
-
 
 
 
@@ -224,7 +222,7 @@ def main():
 
         rewards=rewards_per_func.sum(axis=0)
 
-        print(rewards, np.mean(rewards))
+        print(f'{step=}',rewards, np.mean(rewards))
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
         advantages = get_advantages_jit(datas['rewards'], num_pre_Q)
         datas['advantages'] = advantages

@@ -34,7 +34,7 @@ import jax.numpy as jnp
 
 max_prompt_length=400
 num_pre_Q=16
-MAX_LENGTH_SAMPLE=4096
+MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 grad_accum_steps = 1
 
@@ -112,18 +112,24 @@ def gen_answers_jax(prompts,sampler,params):
 
 
 
-def soft_overlong_punishment(max_length=4096,cache_length=1024,completion_lengths=None):
+# def soft_overlong_punishment(max_length=4096,cache_length=1024,completion_lengths=None):
+#
+#     if jax.process_index()==0:
+#         print(completion_lengths)
+#
+#     rewards=np.where(completion_lengths<max_length-cache_length,0,  (   (max_length-cache_length)-completion_lengths )/cache_length           )
+#     return rewards
+
+def soft_overlong_punishment(max_length=4096,cache_length=1024,completion_lengths=None,reward_corrects=None):
 
     if jax.process_index()==0:
-        print(completion_lengths)
+        print(completion_lengths,reward_corrects)
 
-    rewards=np.where(completion_lengths<max_length-cache_length,0,  (   (max_length-cache_length)-completion_lengths )/cache_length           )
+    rewards=np.where(reward_corrects==1,0,    -completion_lengths/max_length       )
     return rewards
 
 
-
-
-def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
+def batch_process(tip_texts,answers,rewards,tokenizer, reward_corrects,  max_length):
     total_texts=[tip_text+answer+tokenizer.eos_token for tip_text,answer in zip(tip_texts,answers)]
     tip_text_inputs=tokenizer(tip_texts, return_tensors="np", padding=True, padding_side="right")
     total_text_inputs=tokenizer(total_texts, return_tensors="np", padding=True, padding_side="right")
@@ -157,7 +163,7 @@ def batch_process(tip_texts,answers,rewards,tokenizer,max_length):
         "input_ids": input_ids_pad,
         "attention_mask": pad_attention,
         "labels": pad_labels,
-        'rewards': rewards  +soft_overlong_punishment(completion_lengths=true_lengths_completions)  ,
+        'rewards': rewards  +soft_overlong_punishment( max_length=max_length,     completion_lengths=true_lengths_completions,reward_corrects=reward_corrects)  ,
 
     }
 
@@ -232,7 +238,9 @@ def main():
 
         rewards=rewards_per_func.sum(axis=0)
 
-        datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
+        reward_corrects=rewards_per_func[:,0]
+
+        datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,  reward_corrects,      max_length=MAX_LENGTH_SAMPLE)
 
 
         mean_global=process_allgather(datas['rewards']).mean()

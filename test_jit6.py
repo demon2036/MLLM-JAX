@@ -207,8 +207,9 @@ def main():
 
 
         mean_global=process_allgather(datas['rewards']).mean()
+        std_global = process_allgather(datas['rewards']).std()
         print(mean_global)
-        advantages = get_advantages_jit(datas['rewards'], num_pre_Q,mean_global=mean_global)
+        advantages = get_advantages_jit(datas['rewards'], num_pre_Q,mean_global=mean_global,std_global=std_global)
         datas['advantages'] = advantages
 
         rewards_per_func=jnp.array(rewards_per_func)

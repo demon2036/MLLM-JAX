@@ -200,7 +200,7 @@ def reward_format(item, answer):
 
 
 
-def get_advantages(rewards,groups,advantage_estimator='john_grpo',alpha=0.1,mean_global=None):
+def get_advantages(rewards,groups,advantage_estimator='john_grpo',alpha=0.1,mean_global=None,std_global=None):
 
     if advantage_estimator=='grpo':
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
@@ -212,8 +212,15 @@ def get_advantages(rewards,groups,advantage_estimator='john_grpo',alpha=0.1,mean
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
         mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
         advantages = (rewards - mean_grouped_rewards)
-    else:
 
+    elif advantage_estimator == 'john_grpo':
+        mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
+        std_grouped_rewards = rewards.reshape(-1, groups).std(axis=1)
+        mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
+        std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
+        advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4) +alpha*(rewards - mean_global) / (std_global + 1e-4)
+
+    else:
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
         mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
         advantages = (rewards - mean_grouped_rewards) +alpha*(rewards-mean_global)

@@ -90,7 +90,7 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
 
 
         return TrainState.create(apply_fn=train_module.apply,params=params,tx=tx,
-                                 ref_params=copy.deepcopy(params) if beta==0 else None,
+                                 ref_params=copy.deepcopy(params) if beta!=0 else None,
                                  micro_step=0,
                                  micro_in_mini=grad_accum_steps,
                                  grad_accum=grad_accum if grad_accum_steps > 1 else None,

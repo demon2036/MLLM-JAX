@@ -33,9 +33,9 @@ import jax.numpy as jnp
 
 max_prompt_length=400
 num_pre_Q=16
-MAX_LENGTH_SAMPLE=1024
+MAX_LENGTH_SAMPLE=2048
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-grad_accum_steps = 2
+grad_accum_steps = 4
 
 model_path = 'Qwen/Qwen2.5-7B'
 # model_path = 'Qwen/Qwen2.5-7B-Instruct'
@@ -201,14 +201,13 @@ def main():
 
         rewards=rewards_per_func.sum(axis=0)
 
-        print(f'{step=}',rewards, np.mean(rewards))
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
-
 
 
         mean_global=process_allgather(datas['rewards']).mean()
         std_global = process_allgather(datas['rewards']).std()
-        print(mean_global)
+        print(f'{step=}',rewards, np.mean(rewards),mean_global)
+
         advantages = get_advantages_jit(datas['rewards'], num_pre_Q,mean_global=mean_global,std_global=std_global)
         datas['advantages'] = advantages
 

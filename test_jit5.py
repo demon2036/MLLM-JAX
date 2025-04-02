@@ -193,9 +193,9 @@ def main():
                       # out_shardings=train_state_sharding,
     )
 
-    # state=state.replace(
-    #     params=jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),params_to_dp(state.params))
-    # )
+    state=state.replace(
+        params=jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params)
+    )
 
 
     if jax.process_index() == 0:
@@ -209,11 +209,8 @@ def main():
         repeated_inputs=repeat(inputs, num_pre_Q)
         prompts = [x["Q"] for x in repeated_inputs]
 
-        tip_text, answers = gen_answers_jax(prompts, sampler,params_to_dp(jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params)))
+        tip_text, answers = gen_answers_jax(prompts, sampler,params_to_dp(state.params))
 
-        print(f"{step=} syn for generate start")
-        multihost_utils.sync_global_devices('syn for metric')
-        print(f"{step=} syn for generate end")
 
 
         rewards_per_func=np.zeros( ( len(reward_funcs), len(answers),  ))
@@ -228,18 +225,12 @@ def main():
         rewards=rewards_per_func.sum(axis=0)
 
         print(rewards, np.mean(rewards))
-        print(f"{step=} syn for batch_process start")
         datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,max_length=MAX_LENGTH)
-        multihost_utils.sync_global_devices('syn for batch_process')
-        print(f"{step=} syn for batch_process end")
         advantages = get_advantages_jit(datas['rewards'], num_pre_Q)
         datas['advantages'] = advantages
 
         rewards_per_func=jnp.array(rewards_per_func)
 
-        print(f"{step=} syn for metric start")
-        multihost_utils.sync_global_devices('syn for metric')
-        print(f"{step=} syn for metric end")
 
         metrics=dict()
         for i, reward_func in enumerate(reward_funcs):
@@ -248,11 +239,8 @@ def main():
             reward_datas_mean= mean_jit(jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), reward_datas_local))
             metrics[f"{reward_funcs_name}"]=reward_datas_mean
 
-        print(f"{step=} syn for data start")
-        multihost_utils.sync_global_devices('syn for data')
         datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), datas)
         # metrics['advantages']=datas['advantages'].mean()
-        print(f"{step=} syn for data end")
 
         for j in range(grad_accum_steps):
             local_data = jax.tree_util.tree_map(lambda x: slice_data(x, grad_accum_steps, j), datas, )

@@ -81,8 +81,8 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
             decay_steps=training_steps,
             end_value=1e-7,
         )
-        # tx = optax.adamw(learning_rate)
-        tx = optax.lion(learning_rate)
+        tx = optax.adamw(learning_rate)
+        # tx = optax.lion(learning_rate)
         # tx = optax.sgd(learning_rate)
         if grad_accum_steps > 1:
             print(f'{grad_accum_steps=}')
@@ -200,7 +200,7 @@ def reward_format(item, answer):
 
 
 
-def get_advantages(rewards,groups,advantage_estimator='john_grpo',alpha=0.1,mean_global=None,std_global=None):
+def get_advantages(rewards,groups,advantage_estimator='grpo',alpha=0.1,mean_global=None,std_global=None):
 
     if advantage_estimator=='grpo':
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)

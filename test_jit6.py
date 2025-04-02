@@ -16,7 +16,8 @@ import wandb
 from jax.experimental import multihost_utils
 from jax.experimental.multihost_utils import process_allgather
 
-from training import reward_correct, reward_format, get_state, training_step, repeat, slice_data, get_advantages
+from training import reward_correct, reward_format, get_state, training_step, repeat, slice_data, get_advantages, \
+    tag_count_reward
 
 import random
 from functools import partial
@@ -151,7 +152,7 @@ def init_fn(x):
 def main():
     BATCH = 1
 
-    reward_funcs=[reward_correct,reward_format]
+    reward_funcs=[reward_correct,reward_format,tag_count_reward]
     dataset = load_dataset("openai/gsm8k", "main", split="train")
     dataset = dataset.shard(num_shards=jax.process_count(), index=jax.process_index())
     QAs = [{'Q': x, 'A': y.split('####')[-1].strip()} for x, y in zip(dataset['question'], dataset['answer'])]

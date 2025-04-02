@@ -146,7 +146,7 @@ class Qwen2Attention(LlamaAttention):
 
             attn_weights = nn.softmax(attn_weights.astype(jnp.float32), axis=-1, )#.astype(attn_weights.dtype)
             attn_output = attn_weights @ value_states.astype(jnp.float32)
-            attn_output=attn_output.astype(jnp.bfloat16)
+            attn_output=attn_output.astype(dtype)
 
 
         attn_output = einops.rearrange(attn_output, 'b h n d-> b n (h d)')

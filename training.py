@@ -199,7 +199,7 @@ def reward_format(item, answer):
 
 
 
-def tag_count_reward(answer, **kwargs) -> float:
+def tag_count_reward(item, answer, **kwargs) -> float:
     """Reward function that checks if we produce the desired number of think and answer tags associated with `format_reward()`.
 
     Adapted from: https://gist.github.com/willccbb/4676755236bb08cab5f4e54a0475d6fb#file-grpo_demo-py-L90

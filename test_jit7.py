@@ -160,9 +160,9 @@ def batch_process(tip_texts,answers,rewards,tokenizer, reward_corrects,  max_len
 
 
     # pad_labels=np.where(true_lengths_completions[:,None]<=1024-128,pad_labels,0)
-    for i,true_length, in enumerate(true_lengths_prompts):
-        if reward_corrects[i]!=1:
-            pad_labels[i,true_length+512:]=0
+    # for i,true_length, in enumerate(true_lengths_prompts):
+    #     if reward_corrects[i]!=1:
+    #         pad_labels[i,true_length+512:]=0
 
 
 
@@ -225,7 +225,9 @@ def main():
 
 
     for step in range(training_steps):
-        inputs = random.sample(QAs, BATCH)
+        # inputs = random.sample(QAs, BATCH)
+        inputs =QAs[step*BATCH:(step+1)*BATCH]
+
         # datas = gen_samples(repeat(inputs, num_pre_Q), sampler, state.params)
         repeated_inputs=repeat(inputs, num_pre_Q)
         prompts = [x["Q"] for x in repeated_inputs]

@@ -278,9 +278,11 @@ def main():
 
                 if ppo_step==0:
                     per_token_logps.append(meta_data['per_token_logps'])
+                    print(meta_data['per_token_logps'].shape)
 
             if ppo_step == 0:
                 datas['old_per_token_logps']=jnp.stack(per_token_logps)
+                print(datas['old_per_token_logps'].shape)
 
 
 

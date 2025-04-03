@@ -160,6 +160,7 @@ class TrainGRPOModule(nn.Module):
             print(old_per_token_logps.shape)
         else:
             old_per_token_logps=jax.lax.stop_gradient(per_token_logps)
+            print(old_per_token_logps.shape)
 
 
 
@@ -173,6 +174,10 @@ class TrainGRPOModule(nn.Module):
 
 
         per_token_loss = jnp.exp(per_token_logps - old_per_token_logps) * advantages[..., None]
+
+
+
+
 
         if self.beta!=0:
             per_token_kl = jnp.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1

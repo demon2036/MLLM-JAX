@@ -53,7 +53,7 @@ def _top_k_sampling_batched(rng, logits, k=50, t=0.9):
   out = jax.vmap(sample_single)(rngs, logits)  # 移除多余的[:,0]索引
   return out
 
-def _temperature_sampling(rng,logits ,t=0.9):
+def _temperature_sampling(rng,logits ,t=1.0):
   return jax.random.categorical(rng, logits / t)
 
 def _greedy_sampling(rng, logits, ):

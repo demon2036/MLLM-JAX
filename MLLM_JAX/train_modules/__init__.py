@@ -155,6 +155,11 @@ class TrainGRPOModule(nn.Module):
 
         # per_token_logps = selective_log_softmax_jax(logits,index=chosen_ids) / self.temperature
 
+        if "old_per_token_logps" in inputs:
+            old_per_token_logps = inputs["old_per_token_logps"]
+            print(old_per_token_logps.shape)
+        else:
+            old_per_token_logps=jax.lax.stop_gradient(per_token_logps)
 
 
 
@@ -167,7 +172,7 @@ class TrainGRPOModule(nn.Module):
             advantages = (rewards - mean_grouped_rewards)
 
 
-        per_token_loss = jnp.exp(per_token_logps - jax.lax.stop_gradient(per_token_logps)) * advantages[..., None]
+        per_token_loss = jnp.exp(per_token_logps - old_per_token_logps) * advantages[..., None]
 
         if self.beta!=0:
             per_token_kl = jnp.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1

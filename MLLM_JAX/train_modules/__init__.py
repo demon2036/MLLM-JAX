@@ -134,9 +134,6 @@ class TrainGRPOModule(nn.Module):
                                        attention_mask=attention_mask)
 
 
-
-
-
         chosen_ids = input_ids[:, 1:]  # (B, L-1), exclude the first input ID since we don't have logits for it
         # mask_loss = labels[:, 1:] != self.pad_token_id
         mask_loss = labels[:, 1:]

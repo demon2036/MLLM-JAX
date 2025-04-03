@@ -159,11 +159,15 @@ def batch_process(tip_texts,answers,rewards,tokenizer, reward_corrects,  max_len
     pad_labels[:,:labels.shape[1]]=labels
 
 
+    pad_attention=np.where(true_lengths_completions<=1024-128,pad_attention,0)
+
+
+
     return {
         "input_ids": input_ids_pad,
         "attention_mask": pad_attention,
         "labels": pad_labels,
-        'rewards': rewards  +soft_overlong_punishment( max_length=max_length,     completion_lengths=true_lengths_completions,reward_corrects=reward_corrects)  ,
+        'rewards': rewards  #+soft_overlong_punishment( max_length=max_length,     completion_lengths=true_lengths_completions,reward_corrects=reward_corrects)  ,
 
     }
 

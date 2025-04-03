@@ -159,7 +159,7 @@ def batch_process(tip_texts,answers,rewards,tokenizer, reward_corrects,  max_len
     pad_labels[:,:labels.shape[1]]=labels
 
 
-    pad_attention=np.where(true_lengths_completions<=1024-128,pad_attention,0)
+    pad_labels=np.where(true_lengths_completions<=1024-128,pad_attention,0)
 
 
 

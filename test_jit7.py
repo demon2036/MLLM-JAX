@@ -39,9 +39,9 @@ MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 grad_accum_steps = 1
 
 
-# model_path = 'Qwen/Qwen2.5-1.5B-Instruct'
+model_path = 'Qwen/Qwen2.5-1.5B-Instruct'
 
-model_path = 'Qwen/Qwen2.5-3B'
+# model_path = 'Qwen/Qwen2.5-3B'
 # model_path = 'Qwen/Qwen2.5-7B-Instruct'
 # model_path='deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
 tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -129,94 +129,52 @@ def soft_overlong_punishment(max_length=4096,cache_length=1024,completion_length
     return rewards
 
 
-# def batch_process(tip_texts,answers,rewards,tokenizer, reward_corrects,  max_length):
-#     total_texts=[tip_text+answer+tokenizer.eos_token for tip_text,answer in zip(tip_texts,answers)]
-#     tip_text_inputs=tokenizer(tip_texts, return_tensors="np", padding=True, padding_side="right")
-#     total_text_inputs=tokenizer(total_texts, return_tensors="np", padding=True, padding_side="right")
-#
-#     true_lengths_prompts = tip_text_inputs['attention_mask'].sum(axis=1)
-#     true_lengths_prompts_completions = total_text_inputs['attention_mask'].sum(axis=1)
-#
-#     true_lengths_completions=true_lengths_prompts_completions-true_lengths_prompts
-#
-#     attention_mask=total_text_inputs['attention_mask']
-#     labels=[]
-#     for true_length,mask in zip(true_lengths_prompts,attention_mask):
-#         temp=numpy.copy(mask)
-#         temp[:true_length]=0
-#         labels.append(temp)
-#
-#     labels=np.array(labels,dtype=np.int32)
-#     input_ids=total_text_inputs['input_ids']
-#
-#     input_ids_pad=np.full((input_ids.shape[0],MAX_LENGTH),fill_value=tokenizer.eos_token_id)
-#     input_ids_pad[:,:input_ids.shape[1]]=input_ids
-#
-#     pad_attention=np.full((attention_mask.shape[0],MAX_LENGTH),fill_value=0)
-#     pad_attention[:,:attention_mask.shape[1]]=attention_mask
-#
-#     pad_labels=np.full((labels.shape[0],MAX_LENGTH),fill_value=0)
-#     pad_labels[:,:labels.shape[1]]=labels
-#
-#
-#     # pad_labels=np.where(true_lengths_completions[:,None]<=1024-128,pad_labels,0)
-#     # for i,true_length, in enumerate(true_lengths_prompts):
-#     #     if reward_corrects[i]!=1:
-#     #         pad_labels[i,true_length+512:]=0
-#
-#
-#
-#
-#     return {
-#         "input_ids": input_ids_pad,
-#         "attention_mask": pad_attention,
-#         "labels": pad_labels,
-#         'rewards': rewards  #+soft_overlong_punishment( max_length=max_length,     completion_lengths=true_lengths_completions,reward_corrects=reward_corrects)
-#         ,
-#
-#     }
-
-def process_func_padding(prompt, answer, tokenizer):
-    # Llama分词器会将一个中文字切分为多个token，因此需要放开一些最大长度，保证数据的完整性
-    input_ids, attention_mask, labels = [], [], []
-    # instruction_text = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
-    # instruction_text += f"<|im_start|>user\n{prompt}<|im_end|>\n"
-
-    instruction_text = prompt
-    response_text = f"{answer}<|im_end|>\n"
-
-    instruction = tokenizer(instruction_text, add_special_tokens=False, )  # add_special_tokens 不在开头加 special_tokens
-    response = tokenizer(response_text, add_special_tokens=False)
-    input_ids = instruction["input_ids"] + response["input_ids"] + [tokenizer.pad_token_id] * (
-                MAX_LENGTH - len(instruction["input_ids"] + response["input_ids"]))
-    attention_mask = instruction["attention_mask"] + response["attention_mask"] + [1] * (
-                MAX_LENGTH - len(instruction["input_ids"] + response["input_ids"]))  # 因为eos token咱们也是要关注的所以 补充为1
-    # labels = [-100] * len(instruction["input_ids"]) + response["input_ids"] + [tokenizer.eos_token_id]
-
-    labels = [tokenizer.pad_token_id] * len(instruction["input_ids"]) + response[
-        "input_ids"] + [tokenizer.pad_token_id] * (
-                         MAX_LENGTH - len(instruction["input_ids"] + response["input_ids"]))
-
-    if len(input_ids) > MAX_LENGTH:  # 做一个截断
-        input_ids = input_ids[:MAX_LENGTH]
-        attention_mask = attention_mask[:MAX_LENGTH]
-        labels = labels[:MAX_LENGTH]
-    return {
-        "input_ids": input_ids,
-        "attention_mask": attention_mask,
-        "labels": labels,
-    }
-
 def batch_process(tip_texts,answers,rewards,tokenizer, reward_corrects,  max_length):
-    batch_results = [process_func_padding(prompt, answer, tokenizer)
-                     for prompt, answer in zip(tip_texts, answers)]
+    total_texts=[tip_text+answer+tokenizer.eos_token for tip_text,answer in zip(tip_texts,answers)]
+    tip_text_inputs=tokenizer(tip_texts, return_tensors="np", padding=True, padding_side="right")
+    total_text_inputs=tokenizer(total_texts, return_tensors="np", padding=True, padding_side="right")
 
-    input_ids = jnp.array([item["input_ids"] for item in batch_results])
-    attention_mask = jnp.array([item["attention_mask"] for item in batch_results])
-    labels = jnp.array([item["labels"] for item in batch_results])
-    rewards = jnp.array([item for item in rewards])
-    return {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels, 'rewards': rewards}
+    true_lengths_prompts = tip_text_inputs['attention_mask'].sum(axis=1)
+    true_lengths_prompts_completions = total_text_inputs['attention_mask'].sum(axis=1)
 
+    true_lengths_completions=true_lengths_prompts_completions-true_lengths_prompts
+
+    attention_mask=total_text_inputs['attention_mask']
+    labels=[]
+    for true_length,mask in zip(true_lengths_prompts,attention_mask):
+        temp=numpy.copy(mask)
+        temp[:true_length]=0
+        labels.append(temp)
+
+    labels=np.array(labels,dtype=np.int32)
+    input_ids=total_text_inputs['input_ids']
+
+    input_ids_pad=np.full((input_ids.shape[0],MAX_LENGTH),fill_value=tokenizer.eos_token_id)
+    input_ids_pad[:,:input_ids.shape[1]]=input_ids
+
+    pad_attention=np.full((attention_mask.shape[0],MAX_LENGTH),fill_value=0)
+    pad_attention[:,:attention_mask.shape[1]]=attention_mask
+
+    pad_labels=np.full((labels.shape[0],MAX_LENGTH),fill_value=0)
+    pad_labels[:,:labels.shape[1]]=labels
+
+
+    # pad_labels=np.where(true_lengths_completions[:,None]<=1024-128,pad_labels,0)
+    # for i,true_length, in enumerate(true_lengths_prompts):
+    #     if reward_corrects[i]!=1:
+    #         pad_labels[i,true_length+512:]=0
+
+
+
+
+    return {
+        "input_ids": input_ids_pad,
+        "attention_mask": pad_attention,
+        "labels": pad_labels,
+        'rewards': rewards  #+soft_overlong_punishment( max_length=max_length,     completion_lengths=true_lengths_completions,reward_corrects=reward_corrects)
+        ,
+
+    }
 
 
 

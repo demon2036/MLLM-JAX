@@ -60,7 +60,7 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
     model_ref = get_model(mesh, model_path=model_path, only_model=True)
 
-    beta=0.00
+    beta=0.04
 
     # train_module = flax.linen.remat(TrainGRPOModule,policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)(model=model,
     #                                pad_token_id=tokenizer.pad_token_id,

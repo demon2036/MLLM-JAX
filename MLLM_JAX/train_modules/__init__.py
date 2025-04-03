@@ -151,6 +151,7 @@ class TrainGRPOModule(nn.Module):
             )[..., 0]
 
 
+
         per_token_logps = jnp.take_along_axis(  # [B, S]
             jax.nn.log_softmax( logits[..., :-1, :], axis=-1), chosen_ids[..., None], axis=-1
         )[..., 0]/self.temperature
@@ -169,7 +170,7 @@ class TrainGRPOModule(nn.Module):
         coef_2 = jnp.clip(coef_1, 1 - self.epsilon_low, 1 + self.epsilon_high)
         per_token_loss1 = coef_1 * advantages[..., None]
         per_token_loss2 = coef_2 * advantages[..., None]
-        per_token_loss = jnp.min(per_token_loss1, per_token_loss2)
+        per_token_loss = jnp.minimum(per_token_loss1, per_token_loss2)
 
         # if advantages is None:
         #     mean_grouped_rewards = rewards.reshape(-1, self.num_pre_Q).mean(axis=1)

@@ -197,7 +197,8 @@ def reward_correct(item, answer):
 
 def reward_format(item, answer, **kwargs):
     """Reward function that checks if the reasoning process is enclosed within <think> and </think> tags, while the final answer is enclosed within <answer> and </answer> tags."""
-    pattern = r"^<think>\n.*?\n</think>\n<answer>\n.*?\n</answer>$"
+    # pattern = r"^<think>\n.*?\n</think>\n<answer>\n.*?\n</answer>$"
+    pattern = r"^<think>.*?</think>\n<answer>.*?</answer>$"
     match = re.match(pattern, answer, re.DOTALL | re.MULTILINE)
     return 1.0 if match else 0.0
 

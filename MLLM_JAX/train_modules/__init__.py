@@ -197,6 +197,7 @@ class TrainGRPOModule(nn.Module):
 
         # loss = ((per_token_loss * mask_loss).sum(axis=1) / mask_loss.sum(axis=1)).mean()
 
-        loss = ((per_token_loss * mask_loss).sum(axis=1) / self.max_lengths ).mean()
+        # loss = ((per_token_loss * mask_loss).sum(axis=1) / self.max_lengths ).mean()
+        loss = ((per_token_loss * mask_loss).sum(axis=1) / self.max_lengths).mean()
 
         return {"loss": loss,'per_token_logps':per_token_logps }

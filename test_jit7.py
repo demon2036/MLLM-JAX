@@ -162,7 +162,7 @@ def batch_process(tip_texts,answers,rewards,tokenizer, reward_corrects,  max_len
     # pad_labels=np.where(true_lengths_completions[:,None]<=1024-128,pad_labels,0)
     for i,true_length, in enumerate(true_lengths_prompts):
         if reward_corrects[i]!=1:
-            pad_labels[i,true_length+256:]=0
+            pad_labels[i,true_length+512:]=0
 
 
 

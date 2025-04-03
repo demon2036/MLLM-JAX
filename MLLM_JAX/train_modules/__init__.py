@@ -157,10 +157,10 @@ class TrainGRPOModule(nn.Module):
 
         if "old_per_token_logps" in inputs:
             old_per_token_logps = inputs["old_per_token_logps"]
-            print(old_per_token_logps.shape)
+            print(f'from second time {old_per_token_logps.shape=}')
         else:
             old_per_token_logps=jax.lax.stop_gradient(per_token_logps)
-            print(old_per_token_logps.shape)
+            print(f'from first time {old_per_token_logps.shape=}')
 
 
 

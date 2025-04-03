@@ -124,9 +124,7 @@ def training_step(state: TrainState, inputs: ArrayTree) -> tuple[TrainState, Arr
 
     def loss_fn(params: ArrayTree) -> ArrayTree:
         metrics=state.apply_fn({'params': {'model':params,'ref_model':state.ref_params }, },inputs)
-
         per_token_logps=metrics.pop('per_token_logps',None)
-
         metrics = jax.tree_map(jnp.mean, metrics)
         return metrics["loss"], metrics |{'per_token_logps':per_token_logps}
 

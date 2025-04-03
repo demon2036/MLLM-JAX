@@ -10,7 +10,6 @@ from MLLM_JAX.utils import get_jax_mesh2
 jax.config.update('jax_platform_name', 'cpu')
 jax.config.update('jax_num_cpu_devices', 4)
 
-
 print(-0.7 * float(np.finfo(np.dtype("float32")).max))
 print(torch.finfo(torch.bfloat16).min)
 

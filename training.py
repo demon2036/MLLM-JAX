@@ -155,7 +155,7 @@ def training_step(state: TrainState, inputs: ArrayTree) -> tuple[TrainState, Arr
         state = jax.lax.cond(
             state.micro_step == state.micro_in_mini, update_fn, lambda x: x, state
         )
-    return state#, metrics
+    return state, metrics
 
 
 

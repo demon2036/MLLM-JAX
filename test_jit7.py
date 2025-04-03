@@ -267,10 +267,21 @@ def main():
         datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), datas)
         # metrics['advantages']=datas['advantages'].mean()
 
-        for j in range(grad_accum_steps):
-            local_data = jax.tree_util.tree_map(lambda x: slice_data(x, grad_accum_steps, j), datas, )
-            # batch = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
-            state= test_fn(state, local_data)
+        per_token_logps=[]
+
+        for ppo_step in range(2):
+
+            for j in range(grad_accum_steps):
+                local_data = jax.tree_util.tree_map(lambda x: slice_data(x, grad_accum_steps, j), datas, )
+                # batch = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
+                state,meta_data= test_fn(state, local_data)
+
+                if ppo_step==0:
+                    per_token_logps.append(meta_data['per_token_logps'])
+
+
+            datas['per_token_logps']=jnp.stack(per_token_logps)
+
 
 
         if jax.process_index()==0:

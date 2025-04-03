@@ -130,7 +130,7 @@ def soft_overlong_punishment(max_length=4096,cache_length=1024,completion_length
 
 
 def batch_process(tip_texts,answers,rewards,tokenizer, reward_corrects,  max_length):
-    total_texts=[tip_text+answer+tokenizer.eos_token for tip_text,answer in zip(tip_texts,answers)]
+    total_texts=[tip_text+answer+tokenizer.eos_token+tokenizer.eos_token for tip_text,answer in zip(tip_texts,answers)]
     tip_text_inputs=tokenizer(tip_texts, return_tensors="np", padding=True, padding_side="right")
     total_text_inputs=tokenizer(total_texts, return_tensors="np", padding=True, padding_side="right")
 

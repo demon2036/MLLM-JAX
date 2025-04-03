@@ -163,6 +163,9 @@ class TrainGRPOModule(nn.Module):
             print(f'from first time {old_per_token_logps.shape=}')
 
 
+        coef_1 = jnp.exp(per_token_logps - old_per_token_logps)
+        coef_2 = jnp.clip(coef_1, 1 - self.epsilon_low, 1 + self.epsilon_high)
+        per_token_loss = jnp.min(coef_1* advantages[..., None], coef_2* advantages[..., None])
 
         # if advantages is None:
         #     mean_grouped_rewards = rewards.reshape(-1, self.num_pre_Q).mean(axis=1)
@@ -173,7 +176,7 @@ class TrainGRPOModule(nn.Module):
         #     advantages = (rewards - mean_grouped_rewards)
 
 
-        per_token_loss = jnp.exp(per_token_logps - old_per_token_logps) * advantages[..., None]
+        # per_token_loss = jnp.exp(per_token_logps - old_per_token_logps) * advantages[..., None]
 
 
 

@@ -171,7 +171,7 @@ def batch_process(tip_texts,answers,rewards,tokenizer, reward_corrects,  max_len
         "input_ids": input_ids_pad,
         "attention_mask": pad_attention,
         "labels": pad_labels,
-        'rewards': rewards  #+soft_overlong_punishment( max_length=max_length,     completion_lengths=true_lengths_completions,reward_corrects=reward_corrects)
+        'rewards': rewards  +soft_overlong_punishment( max_length=max_length,     completion_lengths=true_lengths_completions,reward_corrects=reward_corrects)
         ,
 
     }
@@ -223,8 +223,8 @@ def main():
 
 
     for step in range(training_steps):
-        # inputs = random.sample(QAs, BATCH)
-        inputs =QAs[step*BATCH:(step+1)*BATCH]
+        inputs = random.sample(QAs, BATCH)
+        # inputs =QAs[step*BATCH:(step+1)*BATCH]
 
         # datas = gen_samples(repeat(inputs, num_pre_Q), sampler, state.params)
         repeated_inputs=repeat(inputs, num_pre_Q)

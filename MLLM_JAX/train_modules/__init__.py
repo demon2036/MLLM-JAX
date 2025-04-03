@@ -163,13 +163,13 @@ class TrainGRPOModule(nn.Module):
 
 
 
-        if advantages is None:
-            mean_grouped_rewards = rewards.reshape(-1, self.num_pre_Q).mean(axis=1)
-            std_grouped_rewards = rewards.reshape(-1, self.num_pre_Q).std(axis=1)
-            mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, self.num_pre_Q, axis=0)
-            std_grouped_rewards = jnp.repeat(std_grouped_rewards, self.num_pre_Q, axis=0)
-            # advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
-            advantages = (rewards - mean_grouped_rewards)
+        # if advantages is None:
+        #     mean_grouped_rewards = rewards.reshape(-1, self.num_pre_Q).mean(axis=1)
+        #     std_grouped_rewards = rewards.reshape(-1, self.num_pre_Q).std(axis=1)
+        #     mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, self.num_pre_Q, axis=0)
+        #     std_grouped_rewards = jnp.repeat(std_grouped_rewards, self.num_pre_Q, axis=0)
+        #     # advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
+        #     advantages = (rewards - mean_grouped_rewards)
 
 
         per_token_loss = jnp.exp(per_token_logps - old_per_token_logps) * advantages[..., None]

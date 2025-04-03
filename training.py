@@ -255,7 +255,7 @@ def tag_count_reward(item, answer, **kwargs) -> float:
 #     return count_tags(answer)+0.25
 
 
-def get_advantages(rewards,groups,advantage_estimator='john_grpo',alpha=1,mean_global=None,std_global=None):
+def get_advantages(rewards,groups,advantage_estimator='dr_grpo',alpha=1,mean_global=None,std_global=None):
 
     if advantage_estimator=='grpo':
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
@@ -274,7 +274,6 @@ def get_advantages(rewards,groups,advantage_estimator='john_grpo',alpha=1,mean_g
         mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
         std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
         advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4) +alpha*(rewards - mean_global) / (std_global + 1e-4)
-
     else:
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
         mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)

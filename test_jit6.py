@@ -153,7 +153,7 @@ def batch_process(tip_texts,answers,rewards,tokenizer, reward_corrects,  max_len
     input_ids_pad[:,:input_ids.shape[1]]=input_ids
 
     pad_attention=np.full((attention_mask.shape[0],MAX_LENGTH),fill_value=0)
-    attention_mask[:,:attention_mask.shape[1]]=attention_mask
+    pad_attention[:,:attention_mask.shape[1]]=attention_mask
 
     pad_labels=np.full((labels.shape[0],MAX_LENGTH),fill_value=0)
     pad_labels[:,:labels.shape[1]]=labels

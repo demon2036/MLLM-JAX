@@ -35,7 +35,7 @@ import jax.numpy as jnp
 max_prompt_length=400
 num_pre_Q=16
 MAX_LENGTH_SAMPLE=1024
-MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
+MAX_LENGTH=MAX_LENGTH_SAMPLE+512+128 #-128
 grad_accum_steps = 1
 
 
@@ -148,6 +148,16 @@ def batch_process(tip_texts,answers,rewards,tokenizer, reward_corrects,  max_len
 
     labels=np.array(labels,dtype=np.int32)
     input_ids=total_text_inputs['input_ids']
+
+
+
+
+
+
+
+
+
+
 
     input_ids_pad=np.full((input_ids.shape[0],MAX_LENGTH),fill_value=tokenizer.eos_token_id)
     input_ids_pad[:,:input_ids.shape[1]]=input_ids

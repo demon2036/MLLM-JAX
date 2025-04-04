@@ -199,6 +199,7 @@ def main():
     BATCH = 4
 
     reward_funcs=[reward_correct,reward_format,tag_count_reward]
+    reward_funcs_weights = [1.0, 0.5, 0.5]
     dataset = load_dataset("openai/gsm8k", "main", split="train")
     dataset = dataset.shard(num_shards=jax.process_count(), index=jax.process_index())
     QAs = [{'Q': x, 'A': y.split('####')[-1].strip()} for x, y in zip(dataset['question'], dataset['answer'])]
@@ -246,10 +247,10 @@ def main():
                                             )
 
         rewards_per_func=np.zeros( ( len(reward_funcs), len(answers),  ))
-        for i, reward_func in enumerate(reward_funcs):
+        for i, (reward_funcs_weights,reward_func) in enumerate(zip(reward_funcs_weights,reward_funcs)):
             for j, (inp, a) in enumerate(zip(repeated_inputs, answers)):
                 try:
-                    rewards_per_func[i,j]=reward_func(inp,a)
+                    rewards_per_func[i,j]=reward_funcs_weights* reward_func(inp,a)
                 except Exception as e:
                     print(e)
                     rewards_per_func[i, j] = -1

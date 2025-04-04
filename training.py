@@ -233,7 +233,7 @@ def tag_count_reward(item, answer, **kwargs) -> float:
             count += 0.25
         return count
 
-    return count_tags(answer)+0.25
+    return count_tags(answer)
 
 
 # def tag_count_reward(answer, **kwargs) -> float:

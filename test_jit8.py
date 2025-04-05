@@ -207,7 +207,26 @@ def main():
         reward_corrects=rewards_per_func[0,:]
         datas['rewards']=rewards
 
-        # datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,  reward_corrects,      max_length=MAX_LENGTH_SAMPLE)
+
+        reward_corrects_global=process_allgather(reward_corrects)
+        completion_ids_global=process_allgather(datas['labels'])
+
+        correct_mask=reward_corrects_global==1.0
+
+        completion_ids_global_correct=completion_ids_global[correct_mask]
+        completion_ids_global_incorrect=completion_ids_global[~correct_mask]
+        metrics = dict()
+
+
+        if jax.process_index()==0:
+            metrics['completion_ids_correct_mean']=completion_ids_global_correct.mean()
+            metrics['completion_ids_correct_max'] = completion_ids_global_correct.max()
+            metrics['completion_ids_global_incorrect_mean'] = completion_ids_global_incorrect.mean()
+            metrics['completion_ids_global_incorrect_max'] = completion_ids_global_incorrect.max()
+
+
+
+
 
 
         mean_global=process_allgather(datas['rewards']).mean()
@@ -220,7 +239,7 @@ def main():
         rewards_per_func=jnp.array(rewards_per_func)
 
 
-        metrics=dict()
+
         for i, reward_func in enumerate(reward_funcs):
             reward_funcs_name=reward_func.__name__
             reward_datas_local=rewards_per_func[i]

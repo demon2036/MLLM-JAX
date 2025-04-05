@@ -161,23 +161,6 @@ def training_step(state: TrainState, inputs: ArrayTree) -> tuple[TrainState, Arr
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def repeat(lst:list,repeats:int):
     return [x    for x in lst  for _ in range(repeats) ]
 
@@ -204,17 +187,6 @@ def reward_format(item, answer, **kwargs):
     return 1.0 if match else 0.0
 
 
-#
-# def reward_format(item, answer):
-#     # pattern = r"^<think>(?:(?!</?think>)[\s\S]*?)</think>\s*<answer>(?:(?!</?answer>)[\s\S]*?)</answer><\|im_end\|>$"
-#     # pattern = r"^<think>.*?</think>.*?<answer>.*?</answer>$"
-#     pattern = r"^.*?</think>.*?<answer>.*?</answer>$"
-#     # return 0.75 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -0.5
-#     # return 1.25 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else -1
-#     return 1 if re.match(pattern, answer, re.DOTALL | re.VERBOSE) else 0
-
-
-
 
 def tag_count_reward(item, answer, **kwargs) -> float:
     """Reward function that checks if we produce the desired number of think and answer tags associated with `format_reward()`.
@@ -237,25 +209,7 @@ def tag_count_reward(item, answer, **kwargs) -> float:
     return count_tags(answer)
 
 
-# def tag_count_reward(answer, **kwargs) -> float:
-#     """Reward function that checks if we produce the desired number of think and answer tags associated with `format_reward()`.
-#
-#     Adapted from: https://gist.github.com/willccbb/4676755236bb08cab5f4e54a0475d6fb#file-grpo_demo-py-L90
-#     """
-#
-#     def count_tags(text: str) -> float:
-#         count = 0.0
-#         if text.count("<think>\n") == 1:
-#             count += 0.25
-#         if text.count("\n</think>\n") == 1:
-#             count += 0.25
-#         if text.count("\n<answer>\n") == 1:
-#             count += 0.25
-#         if text.count("\n</answer>") == 1:
-#             count += 0.25
-#         return count
-#
-#     return count_tags(answer)+0.25
+
 
 
 def get_advantages(rewards,groups,advantage_estimator='john_grpo',alpha=0.1,mean_global=None,std_global=None):

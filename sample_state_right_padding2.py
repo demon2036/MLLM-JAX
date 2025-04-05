@@ -10,7 +10,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import torch
-from jax import NamedSharding
 from jax.experimental.shard_map import shard_map
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
@@ -19,39 +18,18 @@ from MLLM_JAX.language.llama.llama import convert_torch_to_flax_llama, LlamaJaxC
 from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache, pad_cache_right
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
 from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama, get_jax_mesh2, _form_global_array, \
-    collect_process_data, collect_process_data2, tree_path_to_string
+    collect_process_data, tree_path_to_string
 from sanple_utils import _greedy_sampling, _temperature_sampling, _nucleus_sampling,  \
     _top_k_sampling_batched
 from jax.sharding import PartitionSpec as P
 from jax.experimental.multihost_utils import process_allgather
 
-content = """这里的问题在于无法jit,如何修正
-    def apply_top_p(probs, top_p):
-        # 按概率降序排列
-        sorted_probs = jnp.sort(probs)[::-1]
-        cumulative_probs = jnp.cumsum(sorted_probs)
-        # 找到累积概率超过top_p的最小阈值
-        cutoff_mask = cumulative_probs < top_p
-        # 保留至少一个token（避免全mask）
-        cutoff = jnp.max(jnp.where(cutoff_mask, jnp.arange(len(probs)), -1)) + 1
-        cutoff = jnp.maximum(cutoff, 1)  # 保证至少选1个
-        # 获取保留的probs对应的原始索引
-        sorted_indices = jnp.argsort(probs)[::-1][:cutoff]
-        kept_probs = probs[sorted_indices]
-        # 重新归一化概率
-        kept_probs = kept_probs / jnp.sum(kept_probs)
-        return sorted_indices, kept_probs
 
-    def sample_fn(logits_batch, top_p=0.95):
-    probs = jax.nn.softmax(logits_batch, axis=-1)
-    sorted_indices, kept_probs = apply_top_p(probs, top_p)
-    # 从保留的token中采样
-    return jax.random.choice(
-        key2, sorted_indices, p=kept_probs
-    )"""
 
-# dtype = jnp.bfloat16
-dtype = jnp.bfloat16
+content = """1+1=2 1+2=?
+"""
+
+
 
 
 def get_params(model_path):
@@ -72,7 +50,6 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
     # model_path = 'Qwen/Qwen2-0.5B-Instruct'
-    print(model_path)
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     if jax.process_index()==0:
         print(config)
@@ -90,6 +67,7 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
 
     def init_fn(params):
         return params
+        # return jax.tree_util.tree_map(lambda x: jnp.array(x, dtype=jnp.bfloat16, ), params,)
 
     state_shapes = jax.eval_shape(init_fn, params, )
 
@@ -101,22 +79,20 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
     params = jax.jit(init_fn,
                      # donate_argnums=(0,),
                      out_shardings=train_state_sharding)(params)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-
 
 
     def test(p,x):
         name_p=tree_path_to_string(p,sep='.')
-        if 'scale' in name_p:
-            print(name_p, x.shape)
-            return        x
+        if   'embedding' in name_p  or 'lm_head' in name_p:
+            return jnp.asarray(x, dtype=jnp.bfloat16)
         else:
-            return jnp.asarray(x,dtype=jnp.bfloat16)
+            return x
 
 
-    jax.tree_util.tree_map_with_path(test,params)
-    while True:
-        params
+
+    # params = jax.tree_util.tree_map_with_path(test, params)
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     return model, params, tokenizer
 
@@ -133,16 +109,14 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
 #     # {"role": "assistant", "content": "A large language model is a type of"},
 # ]
 
-system_prompt = """You are a helpful assistant. A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the user with the answer.\
-The reasoning process and answer are enclosed within <think> </think> and<answer> </answer> tags, respectively, i.e., <think> reasoning process here </think><answer> answer here </answer>."""
 
 messages = [
+
+
     [
         {"role": "system", "content": "You are a helpful assistant."},
-        # {"role": "system", "content": system_prompt},
         {"role": "user", "content": "Who are you?"},
-        # {"role": "user", "content": system_prompt+"Who are you?"},
-    ] for _ in range(4)
+    ] for _ in range(12)
 
 ]
 # messages.append(
@@ -191,6 +165,7 @@ class Sampler:
     def __init__(self, model, tokenizer,mesh=None,*args,**kwargs):
         self.model = model
         self.tokenizer = tokenizer
+        self.dtype = jnp.bfloat16
 
         self.mesh=mesh
 
@@ -206,14 +181,14 @@ class Sampler:
 
 
             def sample_inner(rng,logits):
-                return _top_k_sampling_batched(rng[0],logits)
+                return _top_k_sampling_batched(rng[0],logits,t=1.0)
 
             sample_fn=shard_map(sample_inner,mesh=mesh,in_specs=(P(['dp', 'fsdp']),P(['dp', 'fsdp'],'tp'))
                                 ,out_specs=P(['dp', 'fsdp']),check_rep=False)
 
             return sample_fn(rngs,logits)
 
-        self.sample_fn=jax.jit(_greedy_sampling)
+        self.sample_fn=jax.jit(warp_sample_fn)
 
         # self.sample_fn=shard_map(_top_k_sampling_batched,mesh=mesh,in_specs=(None,P(['dp', 'fsdp'],'tp'))
         #                     ,out_specs=P(['dp', 'fsdp']),check_rep=False)
@@ -249,13 +224,9 @@ class Sampler:
         key, key2 = jax.random.split(sample_state.key)
         next_token_predict = self.sample_fn(key2, logits[:, -1])
 
-
         next_token_predict=jnp.where(sample_state.dones,self.tokenizer.eos_token_id,next_token_predict)
-
-
-        slice_tokens=jax.lax.dynamic_slice(sample_state.token_buffer,(0,i-5),(sample_state.token_buffer.shape[0],5))
-
-        dones = sample_state.dones | (next_token_predict == self.tokenizer.eos_token_id) | (jnp.sum(slice_tokens==sample_state.token_buffer[:,i][:,None],axis=1)==5)
+        #slice_tokens=jax.lax.dynamic_slice(sample_state.token_buffer,(0,i-5),(sample_state.token_buffer.shape[0],5))
+        dones = sample_state.dones | (next_token_predict == self.tokenizer.eos_token_id) #| (jnp.sum(slice_tokens==sample_state.token_buffer[:,i][:,None],axis=1)==5)
 
         sample_state.dones=dones
 
@@ -278,13 +249,12 @@ class Sampler:
         input_ids = inputs['input_ids']
 
         # position_ids = inputs['attention_mask'].cumsum(-1) - 1
-        # position_ids = jnp.where(inputs['attention_mask'] == 0, 0, position_ids)
+        # position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)
 
 
         global_length=jnp.max(process_allgather(input_ids.shape[1]))
         # global_length=512
         prefill_length = self.find_ceil(global_length)
-        # prefill_length=24
         # prefill_length = input_ids.shape[1]
 
         attention_mask = inputs['attention_mask']
@@ -293,38 +263,30 @@ class Sampler:
 
         pad_attention = jnp.pad(attention_mask, ((0, 0), (0,prefill_length - input_ids.shape[1])))
         # pad_position_ids = jnp.pad(position_ids, ((0, 0), (0,prefill_length - input_ids.shape[1])))
-
-        # position_ids = jnp.arange(0, input_ids_pad.shape[1])[None, ...]
-        # pad_position_ids = position_ids
-        pad_position_ids = jnp.arange(0, prefill_length)[None, ...]
-
+        pad_position_ids=jnp.arange(0,prefill_length)[None,...]
 
         return input_ids_pad, pad_attention, pad_position_ids, prefill_length
-
-
 
     def prepare_from_prefill_to_decode(self, cache, input_ids_pad, pad_attention, position_ids, max_length=8192):
 
         b, prefill_length = input_ids_pad.shape
-        # cache,input_ids_pad,pad_attention,position_ids=jax.tree_util.tree_map(collect_process_data,(cache,input_ids_pad,pad_attention,position_ids))
-        position_ids = jnp.max(position_ids*pad_attention, axis=1).reshape((-1, 1)) + 1
-        cache = pad_cache_right(cache, prefill_length, max_length,)
+        cache,input_ids_pad,pad_attention,position_ids=jax.tree_util.tree_map(collect_process_data,(cache,input_ids_pad,pad_attention,position_ids))
 
-        input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length )),
+        position_ids = jnp.max(position_ids*pad_attention, axis=1).reshape((-1, 1)) + 1
+
+        cache = pad_cache_right(cache, prefill_length, max_length, )
+
+        input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length)),
                                 constant_values=self.tokenizer.eos_token_id)
 
         pad_attention = jnp.pad(pad_attention, ((0, 0), (0, max_length)),
                                 constant_values=0)
 
         pad_attention = pad_attention.at[:, prefill_length].set(1)
-        # position_ids = jnp.max(position_ids,axis=1).reshape((-1,1)) + 1
 
-        print(f'{position_ids=}')
 
-        # position_ids = jnp.arange(prefill_length, prefill_length + 1)[None, ...]
 
-        return cache, input_ids_pad, pad_attention, position_ids
-        # return jax.tree_util.tree_map_with_path(self.global_collect_method,(cache, input_ids_pad, pad_attention, position_ids))
+        return jax.tree_util.tree_map_with_path(self.global_collect_method,(cache, input_ids_pad, pad_attention, position_ids))
 
         # return cache, input_ids_pad, pad_attention, position_ids
 
@@ -338,94 +300,55 @@ class Sampler:
 
 
 
+    def generate(self,input_ids_pad, pad_attention, position_ids, prefill_length, max_length=8192,params=None):
+        # input_ids_pad, pad_attention, position_ids, prefill_length = self.preprocess_prompt_prefill(prompt,
+        #                                                                                             prefill_length)
 
-    def generate_prefill_auto_regressive(self, prompt, prefill_length=20, max_length=8192,params=None):
-
-        input_ids_pad, pad_attention, position_ids, prefill_length = self.preprocess_prompt_prefill(prompt,
-                                                                                                    prefill_length)
-
-        if jax.process_index()==0:
+        if jax.process_index() == 0:
             print(f'{prefill_length=}')
-        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,shard_method=self.global_collect_method)
+        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=self.dtype,
+                           shard_method=self.global_collect_method)
 
-        # input_ids_pad, pad_attention, position_ids,cache=self.jit_init_data((input_ids_pad, pad_attention, position_ids,cache))
-
-        # input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method,
-        #                                                                           (input_ids_pad, pad_attention, position_ids))
+        input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method,
+                                                                                      (input_ids_pad, pad_attention,
+                                                                                       position_ids))
 
         logits, cache = self.jit_infer_prefill({'params': params}, input_ids=input_ids_pad,
                                                position_ids=position_ids,
                                                attention_mask=pad_attention, cache=cache)
-
-
         cache, input_ids_pad, pad_attention, position_ids = self.prepare_from_prefill_to_decode(cache, input_ids_pad,
                                                                                                 pad_attention,
                                                                                                 position_ids,
                                                                                                 max_length=max_length)
 
-
-        next_token_logits=jnp.take_along_axis(logits,position_ids[...,None]-1,axis=1)[:,-1]
+        next_token_logits = jnp.take_along_axis(logits, position_ids[..., None] - 1, axis=1)[:, -1]
         # next_token_predict = jnp.argmax(, axis=-1)[:,0]
-        next_token_predict=self.sample_fn(self.key,next_token_logits)
+        next_token_predict = self.sample_fn(self.key, next_token_logits)
 
         # next_token_predict = jnp.argmax(logits[:, position_ids-1], axis=1)
         input_ids_pad = input_ids_pad.at[:, prefill_length].set(next_token_predict)
         sample_state = create_sample_state(input_ids_pad=input_ids_pad, position_ids=position_ids, cache=cache,
                                            pad_attention=pad_attention, true_length=prefill_length,
-                                           decoding_step=prefill_length,key=self.key)
+                                           decoding_step=prefill_length, key=self.key)
 
         for i in tqdm(range(max_length)):
             sample_state = self.jit_infer_step(sample_state, params)
             if jnp.all(sample_state.dones):
                 break
 
+        local_sample_step = collect_process_data(sample_state.sample_steps)
+        local_token_buffer = collect_process_data(sample_state.token_buffer)
+
+        self.key = sample_state.key
+        return local_token_buffer,local_sample_step
 
 
-        local_sample_step=sample_state.sample_steps
-        local_token_buffer=sample_state.token_buffer
 
 
-        texts=[]
-        for i,step in enumerate(local_sample_step):
-            output = \
-                self.tokenizer.batch_decode(local_token_buffer[i, prefill_length:prefill_length + step + 1].reshape(1, -1),
-                                        skip_special_tokens=False,
-                                        )
-
-            texts.extend(output)
-
-        print(texts)
-
-        self.key=sample_state.key
-        return texts
 
 
-# def test_qwen2_fast_jit_sample2():
-#     max_cache_length = 32
-#     mesh = get_jax_mesh2("1,1,-1")
-#     model, params, tokenizer = get_model(mesh, )
-#     exit_token_ids = tokenizer.eos_token_id
-#     print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')
-#     prompt = tokenizer.apply_chat_template(messages, tokenize=False,
-#                                            add_generation_prompt=True)
-#
-#     sampler = Sampler(model, tokenizer,mesh=mesh,)
-#     print('hi hi')
-#     sampler.generate_prefill_auto_regressive(prompt, max_length=max_cache_length,params=params)
 
 
-def test_qwen2_fast_jit_sample2():
-    max_cache_length = 256
-    mesh = get_jax_mesh2("1,1,-1")
-    model, params, tokenizer = get_model(mesh,model_path='Qwen/Qwen2.5-7B-Instruct' )
-    exit_token_ids = tokenizer.eos_token_id
-    print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False,
-                                           add_generation_prompt=True)
-
-    sampler = Sampler(model, tokenizer,mesh=mesh,)
-    print('hi hi')
-    sampler.generate_prefill_auto_regressive(prompt, max_length=max_cache_length,params=params)
 
 
 

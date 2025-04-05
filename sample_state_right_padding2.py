@@ -338,9 +338,14 @@ class Sampler:
 
         local_sample_step = collect_process_data(sample_state.sample_steps)
         local_token_buffer = collect_process_data(sample_state.token_buffer)
+        local_attention_mask = collect_process_data(sample_state.attention_mask)
 
         self.key = sample_state.key
-        return local_token_buffer,local_sample_step
+        return {
+            'local_token_buffer':local_token_buffer,
+            'local_sample_step':local_sample_step,
+            'local_attention_mask':local_attention_mask
+        }
 
 
 

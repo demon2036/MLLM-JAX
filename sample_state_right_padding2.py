@@ -222,6 +222,7 @@ class Sampler:
                                          attention_mask=mask, cache=cache)
 
         key, key2 = jax.random.split(sample_state.key)
+        sample_state.sample_steps += 1 - sample_state.dones
         next_token_predict = self.sample_fn(key2, logits[:, -1])
 
         next_token_predict=jnp.where(sample_state.dones,self.tokenizer.eos_token_id,next_token_predict)
@@ -230,7 +231,7 @@ class Sampler:
 
         sample_state.dones=dones
 
-        sample_state.sample_steps += 1 - sample_state.dones
+
         sample_state.key = key
         sample_state.attention_mask = sample_state.attention_mask.at[:, i + 1].set(1)
         sample_state.positions += 1

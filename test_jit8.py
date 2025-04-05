@@ -108,18 +108,18 @@ def gen_answers_jax(prompts,sampler,params):
 
     for i, (true_length_prompt,step) in enumerate(zip(true_length_prompts,outputs['local_sample_step'])):
         output = \
-            sampler.tokenizer.batch_decode(outputs['local_token_buffer'][i, prefill_length:prefill_length + step + 2].reshape(1, -1),
+            sampler.tokenizer.batch_decode(outputs['local_token_buffer'][i, prefill_length:prefill_length + step + 1].reshape(1, -1),
                                         skip_special_tokens=False,
                                         )
 
 
         answers.extend(output)
         train_input_ids[i,:true_length_prompt]=outputs['local_token_buffer'][i,:true_length_prompt]
-        train_input_ids[i,true_length_prompt:true_length_prompt+step+2]=outputs['local_token_buffer'][i, prefill_length:prefill_length + step + 2]
+        train_input_ids[i,true_length_prompt:true_length_prompt+step+1]=outputs['local_token_buffer'][i, prefill_length:prefill_length + step + 1]
         train_attention_mask[i,:true_length_prompt]=outputs['local_attention_mask'][i,:true_length_prompt]
-        train_attention_mask[i,true_length_prompt:true_length_prompt+step+2]=outputs['local_attention_mask'][i, prefill_length:prefill_length + step + 2]
-        train_completions_mask[i, true_length_prompt:true_length_prompt + step + 2] = outputs['local_attention_mask'][i,
-                                                                                    prefill_length:prefill_length + step + 2]
+        train_attention_mask[i,true_length_prompt:true_length_prompt+step+1]=outputs['local_attention_mask'][i, prefill_length:prefill_length + step + 1]
+        train_completions_mask[i, true_length_prompt:true_length_prompt + step + 1] = outputs['local_attention_mask'][i,
+                                                                                    prefill_length:prefill_length + step + 1]
 
 
     print(answers[-2:])

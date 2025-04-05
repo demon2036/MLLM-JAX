@@ -109,7 +109,7 @@ def gen_answers_jax(prompts,sampler,params):
     for i, (true_length_prompt,step) in enumerate(zip(true_length_prompts,outputs['local_sample_step'])):
         output = \
             sampler.tokenizer.batch_decode(outputs['local_token_buffer'][i, prefill_length:prefill_length + step + 1].reshape(1, -1),
-                                        skip_special_tokens=False,
+                                        skip_special_tokens=True,
                                         )
 
 
@@ -186,8 +186,7 @@ def main():
 
     if jax.process_index() == 0:
         # wandb.init(name=configs['name'], project=configs['project'], config=configs)
-        # wandb.init(name='test', project='grop-gsm8k',)
-        pass
+        wandb.init(name='test', project='grop-gsm8k',)
 
     for step in range(training_steps):
         inputs = random.sample(QAs, BATCH)
@@ -256,8 +255,8 @@ def main():
 
 
 
-        # if jax.process_index()==0:
-        #     wandb.log(metrics,step)
+        if jax.process_index()==0:
+            wandb.log(metrics,step)
 
 
 if __name__=="__main__":

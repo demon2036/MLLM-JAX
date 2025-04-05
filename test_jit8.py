@@ -96,11 +96,6 @@ def gen_answers_jax(prompts,sampler,params):
     pad_attention = jnp.pad(attention_mask, ((0, 0), (0, prefill_length - input_ids.shape[1])))
     pad_position_ids = jnp.pad(position_ids, ((0, 0), (0, prefill_length - input_ids.shape[1])))
 
-    # {
-    #     'local_token_buffer': local_token_buffer,
-    #     'local_sample_step': local_sample_step,
-    #     'local_attention_mask': local_attention_mask
-    # }
 
     outputs=sampler.generate(input_ids_pad, pad_attention, pad_position_ids, prefill_length, max_length=MAX_LENGTH_SAMPLE,params=params)
 
@@ -114,12 +109,11 @@ def gen_answers_jax(prompts,sampler,params):
     for i, (true_length_prompt,step) in enumerate(zip(true_length_prompts,outputs['local_sample_step'])):
         output = \
             sampler.tokenizer.batch_decode(outputs['local_token_buffer'][i, prefill_length:prefill_length + step + 2].reshape(1, -1),
-                                        skip_special_tokens=True,
+                                        skip_special_tokens=False,
                                         )
 
 
         answers.extend(output)
-
         train_input_ids[i,:true_length_prompt]=outputs['local_token_buffer'][i,:true_length_prompt]
         train_input_ids[i,true_length_prompt:true_length_prompt+step+2]=outputs['local_token_buffer'][i, prefill_length:prefill_length + step + 2]
         train_attention_mask[i,:true_length_prompt]=outputs['local_attention_mask'][i,:true_length_prompt]

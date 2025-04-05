@@ -331,7 +331,7 @@ class Sampler:
                                            pad_attention=pad_attention, true_length=prefill_length,
                                            decoding_step=prefill_length, key=self.key)
 
-        for i in tqdm(range(max_length)):
+        for i in tqdm(range(max_length-1)):
             sample_state = self.jit_infer_step(sample_state, params)
             if jnp.all(sample_state.dones):
                 break

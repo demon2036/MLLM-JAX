@@ -120,7 +120,7 @@ class TrainGRPOModule(nn.Module):
     temperature:float =1.0
     max_lengths:float=2048
     epsilon_low:float=0.2
-    epsilon_high:float=0.28
+    epsilon_high:float=0.2
 
 
 

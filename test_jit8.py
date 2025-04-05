@@ -108,7 +108,7 @@ def gen_answers_jax(prompts,sampler,params):
 
     for i, (true_length_prompt,step) in enumerate(zip(true_length_prompts,outputs['local_sample_step'])):
         output = \
-            sampler.tokenizer.batch_decode(outputs['local_token_buffer'][i, prefill_length:prefill_length + step + 1].reshape(1, -1),
+            sampler.tokenizer.batch_decode(outputs['local_token_buffer'][i, prefill_length:prefill_length + step ].reshape(1, -1),
                                         skip_special_tokens=False,
                                         )
 

@@ -227,7 +227,7 @@ def main():
         mean_correct_length_std = completion_ids_global_correct.sum(axis=1).std()
 
         datas['rewards']=datas['rewards']+np.where(
-            -3*mean_correct_length_std<completion_ids_global_incorrect.sum(axis=1,keep_dim=True)-mean_correct_length_global<3*mean_correct_length_std,
+            -3*mean_correct_length_std<datas['labels'].sum(axis=1)-mean_correct_length_global<3*mean_correct_length_std,
             1,-1
         )
 

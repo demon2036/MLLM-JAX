@@ -218,7 +218,7 @@ def main():
         metrics = dict()
 
 
-        if jax.process_index()==0:
+        if jax.process_index()==0:  
             metrics['completion_ids_correct_mean']=completion_ids_global_correct.sum(axis=1).mean()
             metrics['completion_ids_correct_max'] = completion_ids_global_correct.sum(axis=1).max()
             metrics['completion_ids_global_incorrect_mean'] = completion_ids_global_incorrect.sum(axis=1).mean()

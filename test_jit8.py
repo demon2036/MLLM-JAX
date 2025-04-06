@@ -35,7 +35,7 @@ import jax.numpy as jnp
 max_prompt_length=400
 num_pre_Q=64
 MAX_LENGTH_SAMPLE=2048
-MAX_LENGTH=MAX_LENGTH_SAMPLE+512+128 #-128
+MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 grad_accum_steps = 4
 
 
@@ -236,7 +236,6 @@ def main():
         # )
 
         complete_length=datas['labels'].sum(axis=1)
-
         mean_grouped_complete_length = complete_length.reshape(-1, num_pre_Q).mean(axis=1)
         std_grouped_complete_length = complete_length.reshape(-1, num_pre_Q).std(axis=1)
         mean_grouped_complete_length = jnp.repeat(mean_grouped_complete_length, num_pre_Q, axis=0)
@@ -257,7 +256,7 @@ def main():
 
 
 
-        datas['labels']=np.where(datas['labels'].sum(axis=1,keepdims=True)<=1024-128,datas['labels'],0)
+        datas['labels']=np.where(datas['labels'].sum(axis=1,keepdims=True)<=MAX_LENGTH_SAMPLE-128,datas['labels'],0)
 
 
         mean_global=process_allgather(datas['rewards']).mean()

@@ -132,7 +132,13 @@ def gen_answers_jax(prompts,sampler,params,max_length_sample):
         }
 )
 
+def soft_overlong_punishment(max_length=1024,cache_length=256,completion_lengths=None):
 
+    if jax.process_index()==0:
+        print(completion_lengths)
+
+    rewards=np.where(completion_lengths<max_length-cache_length,0,  (   (max_length-cache_length)-completion_lengths )/cache_length           )
+    return rewards
 
 
 
@@ -234,17 +240,19 @@ def main():
         #     normal_length<3,
         #     1,-1
         # )
-
         complete_length=datas['labels'].sum(axis=1)
+
+        datas['rewards']=datas['rewards']+soft_overlong_punishment(completion_lengths=complete_length)
+
         mean_grouped_complete_length = complete_length.reshape(-1, num_pre_Q).mean(axis=1)
         std_grouped_complete_length = complete_length.reshape(-1, num_pre_Q).std(axis=1)
         mean_grouped_complete_length = jnp.repeat(mean_grouped_complete_length, num_pre_Q, axis=0)
         std_grouped_complete_length = jnp.repeat(std_grouped_complete_length, num_pre_Q, axis=0)
 
-        normal_length=(complete_length-mean_grouped_complete_length)/std_grouped_complete_length
-        datas['rewards']=datas['rewards']+np.where(normal_length,
-            1,-1
-        )
+        # normal_length=(complete_length-mean_grouped_complete_length)/std_grouped_complete_length
+        # datas['rewards']=datas['rewards']+np.where(normal_length,
+        #     1,-1
+        # )
 
 
         if jax.process_index()==0:

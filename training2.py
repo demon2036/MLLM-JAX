@@ -87,7 +87,7 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
         learning_rate = optax.warmup_cosine_decay_schedule(
             init_value=0,
             peak_value=1e-6,
-            warmup_steps=int(training_steps*0.1),
+            warmup_steps=int(training_steps*0.05),
             decay_steps=training_steps,
             end_value=0,
         )

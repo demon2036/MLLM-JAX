@@ -241,8 +241,16 @@ def main():
         std_global = process_allgather(datas['rewards']).std()
         print(f'{step=}',datas['rewards'], np.mean(datas['rewards']),mean_global ,answers[-2:]   )
 
+        metrics['mean_global']=mean_global
+        metrics['std_global']=std_global
+
+
         advantages = get_advantages_jit(datas['rewards'], num_pre_Q,mean_global=mean_global,std_global=std_global)
         datas['advantages'] = advantages
+
+
+        metrics['advantages_max']=advantages.max()
+        metrics['advantages_min']=advantages.min()
 
         rewards_per_func=jnp.array(rewards_per_func)
 

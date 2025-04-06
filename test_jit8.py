@@ -235,6 +235,18 @@ def main():
         #     1,-1
         # )
 
+        complete_length=datas['labels'].sum(axis=1)
+
+        mean_grouped_complete_length = complete_length.reshape(-1, num_pre_Q).mean(axis=1)
+        std_grouped_complete_length = complete_length.reshape(-1, num_pre_Q).std(axis=1)
+        mean_grouped_complete_length = jnp.repeat(mean_grouped_complete_length, num_pre_Q, axis=0)
+        std_grouped_complete_length = jnp.repeat(std_grouped_complete_length, num_pre_Q, axis=0)
+
+        normal_length=(complete_length-mean_grouped_complete_length)/std_grouped_complete_length
+        datas['rewards']=datas['rewards']+np.where(normal_length,
+            1,-1
+        )
+
 
         if jax.process_index()==0:
             metrics['completion_ids_correct_mean']=completion_ids_global_correct.sum(axis=1).mean()

@@ -181,7 +181,7 @@ def main():
         wandb.init(name='test', project='grop-gsm8k',)
 
 
-    ema_decay=0.9
+    ema_decay=0.95
     mean_correct_length=MAX_LENGTH_SAMPLE
 
     for step in range(training_steps):

@@ -194,7 +194,7 @@ def main():
 
         tip_text, answers,datas = gen_answers_jax(prompts, sampler,
                                             params_to_dp(state.params),
-                                                  max_length_sample=min(mean_correct_length+128,MAX_LENGTH_SAMPLE)
+                                                  max_length_sample=min(int(mean_correct_length)+128,MAX_LENGTH_SAMPLE)
                                             # params_to_dp(jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params))
                                             )
 

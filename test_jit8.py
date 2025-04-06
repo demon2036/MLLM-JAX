@@ -223,11 +223,14 @@ def main():
         metrics = dict()
 
         mean_correct_length=ema_decay*mean_correct_length+(1-ema_decay)*completion_ids_global_correct.sum(axis=1).max()
-        mean_correct_length_global=completion_ids_global_correct.sum(axis=1).mean()
-        mean_correct_length_std = completion_ids_global_correct.sum(axis=1).std()
+        mean_length_global=completion_ids_global.sum(axis=1).mean()
+        mean_length_std = completion_ids_global.sum(axis=1).std()
 
+
+
+        normal_length=(datas['labels'].sum(axis=1)-mean_length_global)/mean_length_std
         datas['rewards']=datas['rewards']+np.where(
-            -3*mean_correct_length_std<datas['labels'].sum(axis=1)-mean_correct_length_global<3*mean_correct_length_std,
+            -3<normal_length<3,
             1,-1
         )
 

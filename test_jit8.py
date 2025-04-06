@@ -34,7 +34,7 @@ import jax.numpy as jnp
 
 max_prompt_length=400
 num_pre_Q=16
-MAX_LENGTH_SAMPLE=4096
+MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512+128 #-128
 grad_accum_steps = 4
 
@@ -223,9 +223,16 @@ def main():
         metrics = dict()
 
         mean_correct_length=ema_decay*mean_correct_length+(1-ema_decay)*completion_ids_global_correct.sum(axis=1).max()
+        mean_correct_length_global=completion_ids_global_correct.sum(axis=1).mean()
+        mean_correct_length_std = completion_ids_global_correct.sum(axis=1).std()
+
+        datas['rewards']=datas['rewards']+np.where(
+            -3*mean_correct_length_std<completion_ids_global_incorrect.sum(axis=1,keep_dim=True)-mean_correct_length_global<3*mean_correct_length_std,
+            1,-1
+        )
 
 
-        if jax.process_index()==0:  
+        if jax.process_index()==0:
             metrics['completion_ids_correct_mean']=completion_ids_global_correct.sum(axis=1).mean()
             metrics['completion_ids_correct_max'] = completion_ids_global_correct.sum(axis=1).max()
             metrics['completion_ids_global_incorrect_mean'] = completion_ids_global_incorrect.sum(axis=1).mean()

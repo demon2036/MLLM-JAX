@@ -242,7 +242,7 @@ def get_advantages(rewards,groups,advantage_estimator='john_grpo_replace',alpha=
 
         advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
         advantages_global = (rewards - mean_global) / (std_global + 1e-4)
-        advantages=np.where(std_grouped_rewards<std_global,advantages_global,advantages)
+        advantages=jnp.where(std_grouped_rewards<std_global,advantages_global,advantages)
 
 
 

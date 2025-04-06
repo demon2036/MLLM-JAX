@@ -33,7 +33,7 @@ import jax.numpy as jnp
 
 
 max_prompt_length=400
-num_pre_Q=16
+num_pre_Q=64
 MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512+128 #-128
 grad_accum_steps = 4
@@ -185,8 +185,8 @@ def main():
     mean_correct_length=MAX_LENGTH_SAMPLE
 
     for step in range(training_steps):
-        inputs = random.sample(QAs, BATCH)
-        # inputs =QAs[step*BATCH:(step+1)*BATCH]
+        # inputs = random.sample(QAs, BATCH)
+        inputs =QAs[step*BATCH:(step+1)*BATCH]
 
         # datas = gen_samples(repeat(inputs, num_pre_Q), sampler, state.params)
         repeated_inputs=repeat(inputs, num_pre_Q)

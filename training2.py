@@ -63,22 +63,22 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
 
     beta=0
 
-    train_module = flax.linen.remat(TrainGRPOModule,policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)(model=model,
-                                   pad_token_id=tokenizer.pad_token_id,
-                                   ref_model=model_ref,
-                                   num_pre_Q=num_pre_q,
-                                   beta=beta,
-                                   max_lengths=max_lengths,
-                                   )
+    # train_module = flax.linen.remat(TrainGRPOModule,policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)(model=model,
+    #                                pad_token_id=tokenizer.pad_token_id,
+    #                                ref_model=model_ref,
+    #                                num_pre_Q=num_pre_q,
+    #                                beta=beta,
+    #                                max_lengths=max_lengths,
+    #                                )
 
-    # train_module = TrainGRPOModule(
-    #     model=model,
-    #     pad_token_id=tokenizer.pad_token_id,
-    #     ref_model=model_ref,
-    #     num_pre_Q=num_pre_q,
-    #     beta=beta,
-    #     max_lengths=max_lengths,
-    #     )
+    train_module = TrainGRPOModule(
+        model=model,
+        pad_token_id=tokenizer.pad_token_id,
+        ref_model=model_ref,
+        num_pre_Q=num_pre_q,
+        beta=beta,
+        max_lengths=max_lengths,
+        )
 
 
 
@@ -231,7 +231,11 @@ def get_advantages(rewards,groups,advantage_estimator='grpo',alpha=0.1,mean_glob
         mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
         std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
         advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
-        advantages=jnp.clip(advantages,-1.5,1.5)
+
+        max_grouped_rewards=rewards.reshape(-1, groups).max(axis=1)
+        max_grouped_rewards = jnp.repeat(max_grouped_rewards, groups, axis=0)
+
+        advantages=jnp.clip(advantages,-4*max_grouped_rewards,None)
 
 
     elif advantage_estimator == 'john_grpo_replace':

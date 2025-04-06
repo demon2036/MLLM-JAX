@@ -117,7 +117,7 @@ class TrainGRPOModule(nn.Module):
     num_pre_Q:int
     ref_model: Any =None
     beta:float =0.04
-    temperature:float =1.0
+    temperature:float =0.7
     max_lengths:float=2048
     epsilon_low:float=0.2
     epsilon_high:float=0.2

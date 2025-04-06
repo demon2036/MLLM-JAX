@@ -230,7 +230,7 @@ def main():
 
         normal_length=(datas['labels'].sum(axis=1)-mean_length_global)/mean_length_std
         datas['rewards']=datas['rewards']+np.where(
-            -3<normal_length<3,
+            normal_length<3,
             1,-1
         )
 

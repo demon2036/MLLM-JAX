@@ -194,7 +194,8 @@ def main():
 
         tip_text, answers,datas = gen_answers_jax(prompts, sampler,
                                             params_to_dp(state.params),
-                                                  max_length_sample=min(int(mean_correct_length)+256,MAX_LENGTH_SAMPLE)
+                                # max_length_sample=min(int(mean_correct_length)+256,MAX_LENGTH_SAMPLE),
+                                                  max_length_sample=MAX_LENGTH_SAMPLE
                                             # params_to_dp(jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params))
                                             )
 
@@ -244,7 +245,7 @@ def main():
 
 
 
-        # datas['labels']=np.where(datas['labels'].sum(axis=1,keepdims=True)<=1024-128,datas['labels'],0)
+        datas['labels']=np.where(datas['labels'].sum(axis=1,keepdims=True)<=1024-128,datas['labels'],0)
 
 
         mean_global=process_allgather(datas['rewards']).mean()

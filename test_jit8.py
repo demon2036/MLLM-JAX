@@ -34,7 +34,7 @@ import jax.numpy as jnp
 
 max_prompt_length=400
 num_pre_Q=16
-MAX_LENGTH_SAMPLE=1024
+MAX_LENGTH_SAMPLE=4096
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512+128 #-128
 grad_accum_steps = 4
 
@@ -181,7 +181,7 @@ def main():
         wandb.init(name='test', project='grop-gsm8k',)
 
 
-    ema_decay=0.95
+    ema_decay=0.9
     mean_correct_length=MAX_LENGTH_SAMPLE
 
     for step in range(training_steps):
@@ -194,7 +194,7 @@ def main():
 
         tip_text, answers,datas = gen_answers_jax(prompts, sampler,
                                             params_to_dp(state.params),
-                                                  max_length_sample=min(int(mean_correct_length)+128,MAX_LENGTH_SAMPLE)
+                                                  max_length_sample=min(int(mean_correct_length)+256,MAX_LENGTH_SAMPLE)
                                             # params_to_dp(jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params))
                                             )
 

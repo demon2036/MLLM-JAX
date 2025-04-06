@@ -234,7 +234,7 @@ def main():
 
 
 
-        datas['labels']=np.where(datas['labels'].sum(axis=1,keepdims=True)<=1024-128,datas['labels'],0)
+        # datas['labels']=np.where(datas['labels'].sum(axis=1,keepdims=True)<=1024-128,datas['labels'],0)
 
 
         mean_global=process_allgather(datas['rewards']).mean()

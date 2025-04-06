@@ -234,6 +234,9 @@ def main():
 
 
 
+        datas['labels']=np.where(datas['labels'].sum(axis=1,keepdims=True)<=1024-128,datas['labels'],0)
+
+
         mean_global=process_allgather(datas['rewards']).mean()
         std_global = process_allgather(datas['rewards']).std()
         print(f'{step=}',datas['rewards'], np.mean(datas['rewards']),mean_global ,answers[-2:]   )

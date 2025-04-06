@@ -65,7 +65,7 @@ def apply_r1_template(question: str):
 
 
 
-def gen_answers_jax(prompts,sampler,params):
+def gen_answers_jax(prompts,sampler,params,max_length_sample):
     prompt = []
     for x in prompts:
         prompt.append(tokenizer.apply_chat_template([
@@ -97,7 +97,7 @@ def gen_answers_jax(prompts,sampler,params):
     pad_position_ids = jnp.pad(position_ids, ((0, 0), (0, prefill_length - input_ids.shape[1])))
 
 
-    outputs=sampler.generate(input_ids_pad, pad_attention, pad_position_ids, prefill_length, max_length=MAX_LENGTH_SAMPLE,params=params)
+    outputs=sampler.generate(input_ids_pad, pad_attention, pad_position_ids, prefill_length, max_length=max_length_sample,params=params)
 
 
 
@@ -180,6 +180,10 @@ def main():
         # wandb.init(name=configs['name'], project=configs['project'], config=configs)
         wandb.init(name='test', project='grop-gsm8k',)
 
+
+    ema_decay=0.9
+    mean_correct_length=MAX_LENGTH_SAMPLE
+
     for step in range(training_steps):
         inputs = random.sample(QAs, BATCH)
         # inputs =QAs[step*BATCH:(step+1)*BATCH]
@@ -189,7 +193,8 @@ def main():
         prompts = [x["Q"] for x in repeated_inputs]
 
         tip_text, answers,datas = gen_answers_jax(prompts, sampler,
-                                            params_to_dp(state.params)
+                                            params_to_dp(state.params),
+                                                  max_length_sample=min(mean_correct_length+128,MAX_LENGTH_SAMPLE)
                                             # params_to_dp(jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params))
                                             )
 
@@ -217,15 +222,15 @@ def main():
         completion_ids_global_incorrect=completion_ids_global[~correct_mask]
         metrics = dict()
 
+        mean_correct_length=ema_decay*mean_correct_length+(1-ema_decay)*completion_ids_global_correct.sum(axis=1).max()
+
 
         if jax.process_index()==0:  
             metrics['completion_ids_correct_mean']=completion_ids_global_correct.sum(axis=1).mean()
             metrics['completion_ids_correct_max'] = completion_ids_global_correct.sum(axis=1).max()
             metrics['completion_ids_global_incorrect_mean'] = completion_ids_global_incorrect.sum(axis=1).mean()
             metrics['completion_ids_global_incorrect_max'] = completion_ids_global_incorrect.sum(axis=1).max()
-
-
-
+            metrics['mean_correct_length_ema']=mean_correct_length
 
 
 

@@ -320,7 +320,7 @@ class Sampler:
         cache, input_ids_pad, pad_attention, position_ids = self.prepare_from_prefill_to_decode(cache, input_ids_pad,
                                                                                                 pad_attention,
                                                                                                 position_ids,
-                                                                                                max_length=max_length)
+                                                                                                max_length=self.find_ceil(max_length))
 
         next_token_logits = jnp.take_along_axis(logits, position_ids[..., None] - 1, axis=1)[:, -1]
         # next_token_predict = jnp.argmax(, axis=-1)[:,0]

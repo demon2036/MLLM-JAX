@@ -66,11 +66,14 @@ def apply_r1_template(question: str):
 
 
 def gen_answers_jax(prompts,sampler,params,max_length_sample):
+
+    constraint_prompt=f'you can not generate more than {max_length_sample-128} token.'
+
     prompt = []
     for x in prompts:
         prompt.append(tokenizer.apply_chat_template([
              {"role": "system", "content": system_prompt},
-             {"role": "user", "content": x}
+             {"role": "user", "content": x+constraint_prompt}
         ],
             tokenize=False, add_generation_prompt=True))
 
@@ -200,8 +203,9 @@ def main():
 
         tip_text, answers,datas = gen_answers_jax(prompts, sampler,
                                             params_to_dp(state.params),
-                                # max_length_sample=min(int(mean_correct_length)+256,MAX_LENGTH_SAMPLE),
-                                                  max_length_sample=MAX_LENGTH_SAMPLE
+                                max_length_sample=min(int(mean_correct_length)+128,MAX_LENGTH_SAMPLE),
+
+                                                  # max_length_sample=MAX_LENGTH_SAMPLE
                                             # params_to_dp(jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params))
                                             )
 
@@ -250,9 +254,9 @@ def main():
         std_grouped_complete_length = jnp.repeat(std_grouped_complete_length, num_pre_Q, axis=0)
 
         # normal_length=(complete_length-mean_grouped_complete_length)/std_grouped_complete_length
-        # datas['rewards']=datas['rewards']+np.where(normal_length,
-        #     1,-1
-        # )
+        datas['rewards']=datas['rewards']+np.where(complete_length<=mean_correct_length,
+            1,-1
+        )
 
 
         if jax.process_index()==0:

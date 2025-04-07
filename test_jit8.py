@@ -1,6 +1,8 @@
 import copy
 import functools
 import os
+
+import flax.linen
 import jax
 
 # os.environ['JAX_TRACEBACK_FILTERING']='off'
@@ -39,9 +41,9 @@ MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 grad_accum_steps = 8
 
 
-model_path = 'Qwen/Qwen2.5-1.5B-Instruct'
+# model_path = 'Qwen/Qwen2.5-1.5B-Instruct'
 
-# model_path = 'Qwen/Qwen2.5-3B'
+model_path = 'Qwen/Qwen2.5-3B'
 # model_path = 'Qwen/Qwen2.5-7B-Instruct'
 # model_path='deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
 tokenizer = AutoTokenizer.from_pretrained(model_path)

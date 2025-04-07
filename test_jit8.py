@@ -36,7 +36,7 @@ max_prompt_length=400
 num_pre_Q=16
 MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-grad_accum_steps = 1
+grad_accum_steps = 8
 
 
 model_path = 'Qwen/Qwen2.5-1.5B-Instruct'
@@ -153,7 +153,7 @@ def init_fn(x):
 
 
 def main():
-    BATCH = 1
+    BATCH = 8
 
     reward_funcs=[reward_correct,reward_format,tag_count_reward]
     reward_funcs_weights = [1.0, 0.5, 0.5]

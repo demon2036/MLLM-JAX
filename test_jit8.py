@@ -248,7 +248,7 @@ def main():
         # )
         complete_length=datas['labels'].sum(axis=1)
 
-        datas['rewards']=datas['rewards']+soft_overlong_punishment(completion_lengths=complete_length)
+        datas['rewards']=datas['rewards']#+soft_overlong_punishment(completion_lengths=complete_length)
 
         mean_grouped_complete_length = complete_length.reshape(-1, num_pre_Q).mean(axis=1)
         std_grouped_complete_length = complete_length.reshape(-1, num_pre_Q).std(axis=1)

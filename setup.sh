@@ -44,7 +44,9 @@ pip install einops gcsfs tensorflow tpu-info
 #pip install -U flax
 
 
-pip3 install -q "overrides" "ml_collections" "einops~=0.7" "sentencepiece" transformers datasets kaggle kagglehub
+pip3 install -q "overrides" "ml_collections" "einops~=0.7" "sentencepiece" transformers==4.50.0 datasets kaggle kagglehub
+
+
 
 pip install cloud_tpu_client fastapi uvicorn math_verify huggingface_hub[hf_transfer]
 

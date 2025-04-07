@@ -194,8 +194,8 @@ def main():
     mean_correct_length=MAX_LENGTH_SAMPLE
 
     for step in range(training_steps):
-        # inputs = random.sample(QAs, BATCH)
-        inputs =QAs[step*BATCH:(step+1)*BATCH]
+        inputs = random.sample(QAs, BATCH)
+        # inputs =QAs[step*BATCH:(step+1)*BATCH]
 
         # datas = gen_samples(repeat(inputs, num_pre_Q), sampler, state.params)
         repeated_inputs=repeat(inputs, num_pre_Q)

@@ -250,7 +250,7 @@ def get_advantages(rewards,groups,advantage_estimator='grpo_clip2',alpha=0.1,mea
         min_grouped_advantages=advantages.reshape(-1, groups).min(axis=1)
         min_grouped_advantages = jnp.repeat(min_grouped_advantages, groups, axis=0)
 
-        advantages=jnp.where(advantages>0,  -advantages* min_grouped_advantages/max_grouped_advantages    ,advantages            )
+        advantages=jnp.where(advantages>0,  -advantages* min_grouped_advantages/(max_grouped_advantages+1e-4)    ,advantages            )
 
         advantages=jnp.clip(advantages,-4*max_grouped_advantages,None)
 

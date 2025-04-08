@@ -38,8 +38,8 @@ max_prompt_length=400
 num_pre_Q=16
 MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
-grad_accum_steps = 8
-
+grad_accum_steps = 2
+BATCH = 2
 
 # model_path = 'Qwen/Qwen2.5-1.5B-Instruct'
 
@@ -155,7 +155,6 @@ def init_fn(x):
 
 
 def main():
-    BATCH = 8
 
     reward_funcs=[reward_correct,reward_format,tag_count_reward]
     reward_funcs_weights = [1.0, 0.5, 0.5]
@@ -204,11 +203,12 @@ def main():
         prompts = [x["Q"] for x in repeated_inputs]
 
         tip_text, answers,datas = gen_answers_jax(prompts, sampler,
-                                            params_to_dp(state.params),
+                                                  params_to_dp(jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params)),
+
+                                                  # params_to_dp(state.params),
                                 # max_length_sample=min(int(mean_correct_length)+128,MAX_LENGTH_SAMPLE),
 
                                                   max_length_sample=MAX_LENGTH_SAMPLE
-                                            # params_to_dp(jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params))
                                             )
 
         rewards_per_func=np.zeros( ( len(reward_funcs), len(answers),  ))

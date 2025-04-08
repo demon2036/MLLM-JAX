@@ -212,7 +212,7 @@ def tag_count_reward(item, answer, **kwargs) -> float:
 
 
 
-def get_advantages(rewards,groups,advantage_estimator='grpo_clip',alpha=0.1,mean_global=None,std_global=None):
+def get_advantages(rewards,groups,advantage_estimator='grpo_clip2',alpha=0.1,mean_global=None,std_global=None):
 
     if advantage_estimator=='grpo':
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
@@ -234,6 +234,23 @@ def get_advantages(rewards,groups,advantage_estimator='grpo_clip',alpha=0.1,mean
 
         max_grouped_advantages=advantages.reshape(-1, groups).max(axis=1)
         max_grouped_advantages = jnp.repeat(max_grouped_advantages, groups, axis=0)
+        advantages=jnp.clip(advantages,-4*max_grouped_advantages,None)
+
+    elif advantage_estimator=='grpo_clip2':
+        mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
+        std_grouped_rewards = rewards.reshape(-1, groups).std(axis=1)
+        mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
+        std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
+        advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
+
+        max_grouped_advantages=advantages.reshape(-1, groups).max(axis=1)
+        max_grouped_advantages = jnp.repeat(max_grouped_advantages, groups, axis=0)
+
+
+        min_grouped_advantages=advantages.reshape(-1, groups).min(axis=1)
+        min_grouped_advantages = jnp.repeat(min_grouped_advantages, groups, axis=0)
+
+        advantages=jnp.where(advantages>0,  -advantages* min_grouped_advantages/max_grouped_advantages    ,advantages            )
 
         advantages=jnp.clip(advantages,-4*max_grouped_advantages,None)
 

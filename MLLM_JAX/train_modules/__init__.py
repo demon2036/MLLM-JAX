@@ -110,7 +110,6 @@ def selective_log_softmax_jax(logits: jnp.ndarray, index: jnp.ndarray) -> jnp.nd
 
     return per_token_logps
 
-
 class TrainGRPOModule(nn.Module):
     model: Any
     pad_token_id:float

@@ -5,6 +5,8 @@ import os
 import flax.linen
 import jax
 
+from prompts import system_prompt
+
 # os.environ['JAX_TRACEBACK_FILTERING']='off'
 
 
@@ -54,7 +56,7 @@ tokenizer = AutoTokenizer.from_pretrained(model_path)
 # system_prompt= ("A conversation between User and Assistant. The User asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the User with the answer. "
 #         "The reasoning process is enclosed within <think> </think> and answer is enclosed within <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>."
 #                 )
-system_prompt="A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think>\n<answer> answer here </answer>."
+# system_prompt="A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think>\n<answer> answer here </answer>."
 
 
 def apply_r1_template(question: str):
@@ -69,7 +71,6 @@ def apply_r1_template(question: str):
 
 def gen_answers_jax(prompts,sampler,params,max_length_sample):
 
-    constraint_prompt=f'you can not generate more than {max_length_sample-128} token.'
 
     prompt = []
     for x in prompts:

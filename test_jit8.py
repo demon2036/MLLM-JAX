@@ -303,7 +303,7 @@ def main():
 
         per_token_logps=[]
 
-        for ppo_step in range(4):
+        for ppo_step in range(2):
 
             for j in range(grad_accum_steps):
                 local_data = jax.tree_util.tree_map(lambda x: slice_data(x, grad_accum_steps, j), datas, )

@@ -245,14 +245,17 @@ def get_advantages(rewards,groups,advantage_estimator='grpo_clip2',alpha=0.1,mea
 
         max_grouped_advantages=advantages.reshape(-1, groups).max(axis=1)
         max_grouped_advantages = jnp.repeat(max_grouped_advantages, groups, axis=0)
-
-
-        min_grouped_advantages=advantages.reshape(-1, groups).min(axis=1)
-        min_grouped_advantages = jnp.repeat(min_grouped_advantages, groups, axis=0)
-
+        # min_grouped_advantages=advantages.reshape(-1, groups).min(axis=1)
+        # min_grouped_advantages = jnp.repeat(min_grouped_advantages, groups, axis=0)
         # advantages=jnp.where(advantages>0,  -advantages* min_grouped_advantages/(max_grouped_advantages+1e-4)    ,advantages            )
 
         advantages=jnp.clip(advantages,-4*max_grouped_advantages,None)
+
+
+        scale_factors = jnp.where(max_grouped_advantages < 2, 2.0 / (max_grouped_advantages + 1e-6), 1.0)
+        scale_factors = jnp.repeat(scale_factors, groups, axis=0)
+        advantages = jnp.where(advantages > 0, advantages * scale_factors, advantages)
+
 
 
     elif advantage_estimator == 'john_grpo_replace':

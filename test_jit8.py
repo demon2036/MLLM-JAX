@@ -257,9 +257,9 @@ def main():
         std_grouped_complete_length = jnp.repeat(std_grouped_complete_length, num_pre_Q, axis=0)
 
         # normal_length=(complete_length-mean_grouped_complete_length)/std_grouped_complete_length
-        datas['rewards']=datas['rewards']+np.where(complete_length<=mean_correct_length,
-            1,-1
-        )
+        # datas['rewards']=datas['rewards']+np.where(complete_length<=mean_correct_length,
+        #     1,-1
+        # )
 
 
         if jax.process_index()==0:

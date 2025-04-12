@@ -318,7 +318,7 @@ def main():
 
             if ppo_step == 0:
                 datas['old_per_token_logps']=jnp.concat(per_token_logps)
-                metrics['mean_entropy']=jnp.concat(mean_entropy).sum()
+                metrics['mean_entropy']=jnp.array(mean_entropy).sum()
 
         if jax.process_index()==0:
             wandb.log(metrics,step)

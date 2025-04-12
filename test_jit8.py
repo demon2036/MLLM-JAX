@@ -40,7 +40,7 @@ num_pre_Q=16
 MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 grad_accum_steps = 1
-BATCH =  1
+BATCH =  2
 
 model_path = 'Qwen/Qwen2.5-1.5B-Instruct'
 

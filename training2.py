@@ -242,6 +242,7 @@ def get_advantages(rewards,groups,advantage_estimator='grpo_clip2',alpha=0.1,mea
         mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
         std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
         advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
+        advantages=advantages+alpha*(rewards - mean_global) / (std_global + 1e-4)
 
 
         max_grouped_advantages=advantages.reshape(-1, groups).max(axis=1)

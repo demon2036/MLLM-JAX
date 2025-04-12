@@ -251,7 +251,10 @@ def get_advantages(rewards,groups,advantage_estimator='grpo_clip2',alpha=0.02,me
 
 
         group_max = advantages.reshape(-1, groups).max(axis=1)
-        scale_factors = jnp.where(group_max < 2, 2.0 / (group_max + 1e-6), 1.0)
+        # scale_factors = jnp.where(group_max < 2, 2.0 / (group_max + 1e-6), 1.0)
+
+        scale_factors = 1.5 / (group_max + 1e-6)
+
         scale_factors = jnp.repeat(scale_factors, groups, axis=0)
         advantages = jnp.where(advantages > 0, advantages * scale_factors, advantages)
 

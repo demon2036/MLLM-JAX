@@ -36,11 +36,11 @@ from MLLM_JAX.utils import get_jax_mesh2, _form_global_array, collect_process_da
 import jax.numpy as jnp
 
 
-num_pre_Q=8
+num_pre_Q=16
 MAX_LENGTH_SAMPLE=1024
 MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
 grad_accum_steps = 1
-BATCH =  4
+BATCH =  2
 
 model_path = 'Qwen/Qwen2.5-1.5B-Instruct'
 
@@ -270,7 +270,7 @@ def main():
 
 
 
-        # datas['labels']=np.where(datas['labels'].sum(axis=1,keepdims=True)<=MAX_LENGTH_SAMPLE-128,datas['labels'],0)
+        datas['labels']=np.where(datas['labels'].sum(axis=1,keepdims=True)<=MAX_LENGTH_SAMPLE-128,datas['labels'],0)
 
 
         mean_global=process_allgather(datas['rewards']).mean()

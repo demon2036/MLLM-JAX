@@ -212,7 +212,7 @@ def tag_count_reward(item, answer, **kwargs) -> float:
 
 
 
-def get_advantages(rewards,groups,advantage_estimator='grpo_clip2',alpha=0.1,mean_global=None,std_global=None):
+def get_advantages(rewards,groups,advantage_estimator='grpo_clip2',alpha=0.02,mean_global=None,std_global=None):
 
     if advantage_estimator=='grpo':
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)

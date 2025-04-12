@@ -135,6 +135,10 @@ class TrainGRPOModule(nn.Module):
                                        attention_mask=attention_mask)
 
 
+
+
+
+
         chosen_ids = input_ids[:, 1:]  # (B, L-1), exclude the first input ID since we don't have logits for it
         # mask_loss = labels[:, 1:] != self.pad_token_id
         mask_loss = labels[:, 1:]
@@ -205,4 +209,10 @@ class TrainGRPOModule(nn.Module):
 
         loss = ((per_token_loss * mask_loss).sum() )/total_valid_token_count
 
-        return {"loss": loss,'per_token_logps':per_token_logps }
+        probs = jax.nn.softmax(logits[..., :-1, :]/ self.temperature, axis=-1)
+        token_entropy = -jnp.sum(probs * jnp.log(probs), axis=-1)
+        valid_token_entropy = token_entropy * mask_loss
+        mean_entropy = valid_token_entropy.sum() / total_valid_token_count
+
+
+        return {"loss": loss,'per_token_logps':per_token_logps ,'mean_entropy':mean_entropy}

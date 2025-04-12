@@ -92,7 +92,8 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
             end_value=0,
         )
         # tx = optax.adamw(learning_rate)
-        tx = optax.lion(learning_rate,weight_decay=1e-8)
+        # tx = optax.lion(learning_rate,weight_decay=1e-8)
+        tx = optax.lion(learning_rate, )
         # tx = optax.sgd(learning_rate)
         tx = optax.chain(optax.clip_by_global_norm(1.0), tx)
         if grad_accum_steps > 1:

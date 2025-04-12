@@ -299,7 +299,7 @@ def main():
             metrics[f"{reward_funcs_name}"]=reward_datas_mean
 
         datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), datas)
-        # metrics['advantages']=datas['advantages'].mean()
+        datas['total_valid_token_count']=datas['labels'][:, 1:].sum()
 
         per_token_logps=[]
 

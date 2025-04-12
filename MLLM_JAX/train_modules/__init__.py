@@ -139,6 +139,10 @@ class TrainGRPOModule(nn.Module):
         # mask_loss = labels[:, 1:] != self.pad_token_id
         mask_loss = labels[:, 1:]
 
+
+        total_valid_token_count=inputs.get( "total_valid_token_count", mask_loss.sum())
+
+
         if self.beta!=0:
             ref_logits, cache = self.ref_model( input_ids=input_ids,
                                            attention_mask=attention_mask)
@@ -199,6 +203,6 @@ class TrainGRPOModule(nn.Module):
         # loss = ((per_token_loss * mask_loss).sum(axis=1) / self.max_lengths ).mean()
         # loss = ((per_token_loss * mask_loss).sum(axis=1) / self.max_lengths).mean()
 
-        loss = ((per_token_loss * mask_loss).sum() )/mask_loss.sum()
+        loss = ((per_token_loss * mask_loss).sum() )/total_valid_token_count
 
         return {"loss": loss,'per_token_logps':per_token_logps }

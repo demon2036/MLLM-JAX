@@ -133,7 +133,7 @@ def training_step(state: TrainState, inputs: ArrayTree) -> tuple[TrainState, Arr
 
         # Collect a global gradient from the accumulated gradients and apply actual
         # parameter update with resetting the accumulations to zero.
-        grads = jax.tree_map(lambda g: g / state.micro_in_mini, state.grad_accum)
+        # grads = jax.tree_map(lambda g: g / state.micro_in_mini, state.grad_accum)
         state = state.apply_gradients(
             grads=grads,
             grad_accum=jax.tree_map(jnp.zeros_like, state.grad_accum),

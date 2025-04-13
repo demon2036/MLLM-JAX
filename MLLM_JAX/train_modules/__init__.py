@@ -120,7 +120,6 @@ class TrainGRPOModule(nn.Module):
     max_lengths:float=2048
     epsilon_low:float=0.2
     epsilon_high:float=0.3
-    k:int=100
 
 
 
@@ -134,10 +133,6 @@ class TrainGRPOModule(nn.Module):
 
         logits, cache = self.model( input_ids=input_ids,
                                        attention_mask=attention_mask)
-
-
-
-
 
 
         chosen_ids = input_ids[:, 1:]  # (B, L-1), exclude the first input ID since we don't have logits for it
@@ -210,21 +205,4 @@ class TrainGRPOModule(nn.Module):
 
         loss = ((per_token_loss * mask_loss).sum() )/total_valid_token_count
 
-        probs = jax.nn.softmax(logits[..., :-1, :]/ self.temperature, axis=-1)
-        token_entropy = -jnp.sum(probs * jnp.log(probs), axis=-1)
-        valid_token_entropy = token_entropy * mask_loss
-        mean_entropy = valid_token_entropy.sum() / total_valid_token_count
-
-        valid_mask = mask_loss == 1  # shape: [B, L-1]，布尔类型
-        # 累计每行中有效 token 的个数，生成序列号（每个有效 token 的累积索引）
-        cum_valid = jnp.cumsum(valid_mask, axis=-1)
-        # 选择前 k 个有效 token（条件为：对应有效 token且累积计数<=k）
-        kl_token_mask = jnp.logical_and(valid_mask,
-                                        jnp.logical_and(cum_valid >= 5, cum_valid <= self.k)
-            )
-
-        entropy_loss=(  token_entropy*kl_token_mask)/kl_token_mask.sum()
-
-
-
-        return {"loss": loss    ,'per_token_logps':per_token_logps ,'mean_entropy':mean_entropy}
+        return {"loss": loss,'per_token_logps':per_token_logps }

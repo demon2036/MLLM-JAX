@@ -63,8 +63,8 @@ class TrainingConfig:
 
     # Replay Buffer Settings (Infinite Size)
     # replay_buffer_max_size: int = 10000 # REMOVED - Buffer size is now infinite
-    sample_from_buffer_prob: float = 0.25
-    initial_buffer_fill_steps: int = 50
+    sample_from_buffer_prob: float = 1.0
+    initial_buffer_fill_steps: int = 10
 
     # Reward Functions and Weights (Set in reward_setup)
     reward_funcs_weights: Dict[str, float] = field(default_factory=dict)
@@ -450,20 +450,51 @@ def main():
             random.random() < config.sample_from_buffer_prob
         )
 
+        # if use_buffer:
+        #     sampled_entries = random.sample(replay_buffer, config.batch_size) # Sample from list
+        #     batch_inputs = [entry.original_input for entry in sampled_entries]
+        #     logger.info(f"Sampling {config.batch_size} inputs from replay buffer (current size {len(replay_buffer)}).")
+        # else:
+        #     batch_inputs = random.sample(qas_data, config.batch_size)
+        #     logger.info(f"Sampling {config.batch_size} inputs from dataset.")
+        #
+        # # Repeat the selected base inputs and apply template
+        # repeated_inputs = repeat(batch_inputs, config.num_pre_q)
+        # prompts = [apply_chat_template(tokenizer, item['Q']) for item in repeated_inputs]
+
         if use_buffer:
-            sampled_entries = random.sample(replay_buffer, config.batch_size) # Sample from list
-            batch_inputs = [entry.original_input for entry in sampled_entries]
-            logger.info(f"Sampling {config.batch_size} inputs from replay buffer (current size {len(replay_buffer)}).")
+            # --- Sample from Replay Buffer ---
+            sampled_entries = random.sample(replay_buffer, config.batch_size)
+            logger.info(
+                f"Sampling {config.batch_size} entries from replay buffer (size {len(replay_buffer)}) for continuation.")
+
+            # Prepare continuation prompts and corresponding original inputs
+            base_continuation_prompts = []
+            batch_inputs = []  # Original inputs corresponding to sampled entries
+            for entry in sampled_entries:
+                # Define the follow-up text
+                # Ensure proper spacing and roles if using chat templates implicitly
+                follow_up_text = "\nUser: I think this maybe correct.\nAssistant:"  # Example follow-up
+                # Construct the continuation prompt
+                continuation_prompt = entry.prompt_used + entry.generated_answer + follow_up_text
+                base_continuation_prompts.append(continuation_prompt)
+                batch_inputs.append(entry.original_input)  # Keep track of original input
+
+            # Repeat the base continuation prompts and original inputs num_pre_q times
+            prompts_for_generation = repeat(base_continuation_prompts, config.num_pre_q)
+            repeated_inputs = repeat(batch_inputs, config.num_pre_q)
+
         else:
+            # --- Sample from Dataset ---
             batch_inputs = random.sample(qas_data, config.batch_size)
             logger.info(f"Sampling {config.batch_size} inputs from dataset.")
-
-        # Repeat the selected base inputs and apply template
-        repeated_inputs = repeat(batch_inputs, config.num_pre_q)
-        prompts = [apply_chat_template(tokenizer, item['Q']) for item in repeated_inputs]
+            # Repeat original inputs
+            repeated_inputs = repeat(batch_inputs, config.num_pre_q)
+            # Create initial prompts using chat template
+            prompts_for_generation = [apply_chat_template(tokenizer, item['Q']) for item in repeated_inputs]
 
         # --- Generation ---
-        generated_answers, datas = run_generation_step(prompts, jax_setup, config)
+        generated_answers, datas = run_generation_step(prompts_for_generation, jax_setup, config)
 
         # --- Reward Calculation ---
         total_rewards_local, rewards_per_func_local = calculate_rewards(
@@ -475,7 +506,7 @@ def main():
         update_replay_buffer(
             replay_buffer,
             repeated_inputs,
-            prompts,
+            prompts_for_generation,
             generated_answers,
             total_rewards_local,
             rewards_per_func_local,

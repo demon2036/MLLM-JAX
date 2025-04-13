@@ -227,4 +227,4 @@ class TrainGRPOModule(nn.Module):
 
 
 
-        return {"loss": loss  +-0.01*entropy_loss  ,'per_token_logps':per_token_logps ,'mean_entropy':mean_entropy}
+        return {"loss": loss  -0.001*entropy_loss  ,'per_token_logps':per_token_logps ,'mean_entropy':mean_entropy}

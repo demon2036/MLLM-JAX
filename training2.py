@@ -290,4 +290,14 @@ def get_advantages(rewards,groups,advantage_estimator='grpo_clip2',alpha=0.02,me
         advantages = (rewards - mean_grouped_rewards) +alpha*(rewards-mean_global)
 
     return advantages
-    # return mean_grouped_rewards,std_grouped_rewards,advantages
+
+
+
+
+
+def mean(x):
+    return x.mean()
+
+
+def init_fn(x):
+    return x

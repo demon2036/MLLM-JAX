@@ -564,7 +564,7 @@ def main():
         # ---------------------------------------------------------
 
         # Call the JIT'd function with the selected estimator and necessary args
-        advantages_local = jax_setup["get_advantages_jit"][advantage_estimator](
+        advantages_local = jax_setup["get_advantages_jitted_funcs"][advantage_estimator](
             rewards=datas['rewards'], # Pass rewards array
             groups=config.num_pre_q, # Pass groups (static)
             alpha=config.advantage_alpha, # Pass alpha from config

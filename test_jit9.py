@@ -225,12 +225,20 @@ def run_generation_step(
 
     logger.info(f"Sample generated answers (last 2): {generated_answers[-2:]}")
 
-    max_len = config.max_length_total
+    # max_len = config.max_length_total
+    # data = {
+    #     'input_ids': train_input_ids[:, :max_len],
+    #     'attention_mask': train_attention_mask[:, :max_len],
+    #     'labels': train_completions_mask[:, :max_len],
+    # }
+
     data = {
-        'input_ids': train_input_ids[:, :max_len],
-        'attention_mask': train_attention_mask[:, :max_len],
-        'labels': train_completions_mask[:, :max_len],
+        'input_ids': train_input_ids,
+        'attention_mask': train_attention_mask,
+        'labels': train_completions_mask,
     }
+    print(train_input_ids.shape)
+
     return generated_answers, data
 
 def calculate_rewards(

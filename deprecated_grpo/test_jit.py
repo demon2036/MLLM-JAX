@@ -19,7 +19,7 @@ from transformers import AutoTokenizer
 
 from MLLM_JAX.train_modules import TrainGRPOModule
 from MLLM_JAX.utils import get_jax_mesh2, match_partition_rules, get_partition_rules_llama, _form_global_array
-from sample.sample_state_right_padding import get_model, Sampler
+from MLLM_JAX.sample.sample_state_right_padding import get_model, Sampler
 # from sample_state_left_padding import get_model, Sampler
 import jax.numpy as jnp
 from math_verify import parse, verify, ExprExtractionConfig

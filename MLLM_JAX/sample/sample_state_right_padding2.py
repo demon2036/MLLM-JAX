@@ -2,29 +2,23 @@ import random
 from functools import partial
 from typing import Any
 
-import random
-from typing import Any
-
 import chex
 import jax
 import jax.numpy as jnp
 import numpy as np
 import torch
+from jax.experimental.multihost_utils import process_allgather
 from jax.experimental.shard_map import shard_map
+from jax.sharding import PartitionSpec as P
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-from MLLM_JAX.language.llama.llama import convert_torch_to_flax_llama, LlamaJaxConfig
-from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache, pad_cache_right
-from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
-from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama, get_jax_mesh2, _form_global_array, \
+from .sanple_utils import _top_k_sampling_batched
+from ..language.llama.llama import convert_torch_to_flax_llama, LlamaJaxConfig
+from ..language.qwen2.configuration_qwen2 import init_cache, pad_cache_right
+from ..language.qwen2.modular_qwen2 import Qwen2ForCausalLM
+from ..utils import match_partition_rules, get_partition_rules_llama, _form_global_array, \
     collect_process_data, tree_path_to_string
-from sanple_utils import _greedy_sampling, _temperature_sampling, _nucleus_sampling,  \
-    _top_k_sampling_batched
-from jax.sharding import PartitionSpec as P
-from jax.experimental.multihost_utils import process_allgather
-
-
 
 content = """1+1=2 1+2=?
 """
@@ -361,6 +355,7 @@ class Sampler:
 
 if __name__ == "__main__":
     # test_qwen_torch()
+    pass
 
-    test_qwen2_fast_jit_sample2()
+    # test_qwen2_fast_jit_sample2()
     # test_qwen2_fast_jit_sample2()

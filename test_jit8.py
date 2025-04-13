@@ -316,6 +316,7 @@ def main():
 
             if ppo_step == 0:
                 datas['old_per_token_logps']=jnp.concat(per_token_logps)
+                metrics['entropy']=meta_data['entropy']
 
 
 

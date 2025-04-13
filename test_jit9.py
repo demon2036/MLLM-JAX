@@ -513,18 +513,21 @@ def main():
         )
         datas['rewards'] = total_rewards_local
 
-        # --- Replay Buffer Update ---
-        update_replay_buffer(
-            replay_buffer,
-            repeated_inputs,
-            prompts_for_generation,
-            generated_answers,
-            total_rewards_local,
-            rewards_per_func_local,
-            reward_functions,
-            step,
-            config
-        )
+
+        if not  use_buffer:
+
+            # --- Replay Buffer Update ---
+            update_replay_buffer(
+                replay_buffer,
+                repeated_inputs,
+                prompts_for_generation,
+                generated_answers,
+                total_rewards_local,
+                rewards_per_func_local,
+                reward_functions,
+                step,
+                config
+            )
 
         # --- Advantage Calculation ---
         rewards_global = process_allgather(total_rewards_local)

@@ -21,6 +21,8 @@ from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
 from MLLM_JAX.utils import get_jax_mesh2, match_partition_rules, get_partition_rules_llama
 from jax.sharding import PartitionSpec as P
 
+from MLLM_JAX.train_modules import TrainSFTModule
+
 MAX_LENGTH = 384
 epochs = 3
 
@@ -28,7 +30,7 @@ epochs = 3
 
 
 
-def test_qwen2(state,tokenizer,prompt="你好"):
+def test_qwen2(state,tokenizer,prompt="你好",model=None):
     dtype = jnp.bfloat16
     # dtype = jnp.float32
     max_cache_length=512
@@ -39,7 +41,6 @@ def test_qwen2(state,tokenizer,prompt="你好"):
     cache = init_cache(config,1,max_cache_length=max_cache_length, dtype=dtype)
 
     messages = [
-        # {"role": "system", "content": "You are a helpful assistant."},
         {"role": "system", "content": "You are a helpful assistant."},
         # {"role": "user", "content": "Who are you?"},
         # {"role": "user", "content": "Give me a short introduction to large language model."},
@@ -63,8 +64,11 @@ def test_qwen2(state,tokenizer,prompt="你好"):
     input_ids = input_ids
     position_ids = jnp.arange(0, input_ids.shape[1])[None, ...]
 
-    jit_infer = jax.jit(state.apply_fn)
-    logits, cache = jit_infer({'params': state.params}, input_ids=input_ids, position_ids=position_ids,
+    jit_infer = jax.jit(model.apply)
+
+
+
+    logits, cache = jit_infer({'params': state.params['model']}, input_ids=input_ids, position_ids=position_ids,
                               attention_mask=pad_attention, cache=cache)
 
     position_ids = position_ids[:, -1][..., None]
@@ -87,7 +91,7 @@ def test_qwen2(state,tokenizer,prompt="你好"):
         input_ids = select_ids[..., None]
         position_ids += 1
         pad_attention = pad_attention.at[:, attention_mask.sum(axis=1)[0] + i].set(1)
-        logits, cache = jit_infer({'params': state.params}, input_ids=input_ids, position_ids=position_ids,
+        logits, cache = jit_infer({'params': state.params['model']}, input_ids=input_ids, position_ids=position_ids,
                                   attention_mask=pad_attention, cache=cache)
 
     ans = []
@@ -173,7 +177,7 @@ def process_func_padding(example, tokenizer):
 
 def get_ds():
 
-    df = pd.read_json('huanhuan.json')
+    df = pd.read_json('../deprecated_huan/huanhuan.json')
     ds = Dataset.from_pandas(df)
 
     model_path = 'Qwen/Qwen2-7B-Instruct'
@@ -199,7 +203,7 @@ def get_ds():
     return dataloader,tokenizer
 
 
-def get_model(mesh):
+def get_model(mesh,tokenizer):
     dtype = jnp.bfloat16
     model_path = 'Qwen/Qwen2-7B-Instruct'
     model_path = 'Qwen/Qwen2-7B'
@@ -214,8 +218,9 @@ def get_model(mesh):
     params = convert_torch_to_flax_llama(state_dict)
     # params = jax.tree_util.tree_map(lambda x: jnp.asarray(np.array(x), dtype=dtype), params)
     params = jax.tree_util.tree_map(lambda x: jnp.asarray(np.array(x), dtype=dtype), params)
+    params = {'model': params}
     model = Qwen2ForCausalLM(config)
-
+    train_module = TrainSFTModule(model=model, pad_token_id=tokenizer.pad_token_id)
 
 
     training_steps=len(dataloader)*epochs
@@ -231,7 +236,7 @@ def get_model(mesh):
 
         # tx=optax.lion(learning_rate)
         tx = optax.lion(learning_rate)
-        return TrainState.create(params=params,tx=tx,apply_fn=model.apply)
+        return TrainState.create(params=params,tx=tx,apply_fn=train_module.apply)
 
 
     state_shapes = jax.eval_shape(init_fn, params, )
@@ -241,7 +246,7 @@ def get_model(mesh):
 
     state = jax.jit(init_fn, donate_argnums=(0,),out_shardings=train_state_sharding)(params)
 
-    return state
+    return state,model
 
 
 
@@ -261,34 +266,18 @@ if __name__=="__main__":
     dataloader,tokenizer=get_ds()
     mesh=get_jax_mesh2("1,-1,1")
 
-    state=get_model(mesh)
+    state,model=get_model(mesh,tokenizer)
 
-    def test_fn(state,inputs):
-        input_ids=inputs['input_ids']
-        attention_mask=inputs['attention_mask']
-        labels=inputs['labels']
-        # position_ids=jnp.arange(0,MAX_LENGTH)[None,...]
-        # print(position_ids.shape)
-        # print(attention_mask.shape,input_ids.shape,labels.shape)
-
-
+    def test_fn(state, inputs):
         def loss_fn(params):
-            logits, cache=state.apply_fn({'params':params,},input_ids=input_ids[:,:-1],attention_mask=attention_mask[:,:-1])
-            targets=jax.nn.one_hot(labels[:,1:],logits.shape[-1])
-            loss=optax.softmax_cross_entropy(logits,targets)
-            mask_loss=labels[:,1:]!=tokenizer.pad_token_id
-            loss=loss*mask_loss
-            loss_s=loss.sum()/(mask_loss.astype(jnp.float32).sum())
-            return loss_s, {'loss':loss_s,}#{'loss':loss_s,'mask_loss':mask_loss.astype(jnp.float32).sum(),}
+            metrics=state.apply_fn({'params': params, },inputs)
+            return metrics['loss'],metrics
 
         (_, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params)
-
         state = state.apply_gradients(
             grads=grads,
         )
-
-        # grad_fn=jax.value_and_grad(params)
-        return state,metrics
+        return state, metrics
 
 
     test_fn=jax.jit(test_fn,donate_argnums=(0,))
@@ -313,7 +302,7 @@ if __name__=="__main__":
             pbar.set_description(f"{loss=}")
 
 
-        test_qwen2(state,tokenizer,prompt='Hi!')
+        test_qwen2(state,tokenizer,model=model)#prompt='Hi!'
 
 
 

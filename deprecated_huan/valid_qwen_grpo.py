@@ -1,12 +1,6 @@
-import random
-import re
-
 import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
-
-from MLLM_JAX.utils import get_jax_mesh2
-from sample_state_left_padding import get_model, Sampler
 
 max_prompt_length=400
 num_pre_Q=2

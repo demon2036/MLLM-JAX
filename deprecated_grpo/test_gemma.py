@@ -4,13 +4,11 @@ import jax.tree_util
 import numpy as np
 from transformers import AutoProcessor, AutoConfig, AutoModelForCausalLM
 from transformers.models.gemma3 import Gemma3ForConditionalGeneration
-from PIL import Image
-import requests
 import torch
 
 from MLLM_JAX.language.gemma3.modeling_gemma3 import convert_torch_to_flax_gemma3, GemmaForCausalLM
 from MLLM_JAX.utils import get_jax_mesh2, match_partition_rules, get_partition_rules_llama
-from test_qwen import Sampler
+from app.test_qwen import Sampler
 import jax.numpy as jnp
 import jax
 

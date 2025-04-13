@@ -154,7 +154,7 @@ def process_func_padding(example, tokenizer):
 
 
 def get_ds():
-    df = pd.read_json('huanhuan.json')
+    df = pd.read_json('../deprecated_huan/huanhuan.json')
     ds = Dataset.from_pandas(df)
 
     model_path = 'Qwen/Qwen2-7B-Instruct'

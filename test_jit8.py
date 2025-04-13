@@ -1,11 +1,6 @@
-import copy
-import functools
-import os
-
-import flax.linen
 import jax
 
-from prompts import system_prompt
+from prompts.prompts import system_prompt
 
 # os.environ['JAX_TRACEBACK_FILTERING']='off'
 
@@ -15,9 +10,7 @@ jax.distributed.initialize()
 
 from jax.sharding import PartitionSpec as P
 from jax import NamedSharding
-import numpy
 import wandb
-from jax.experimental import multihost_utils
 from jax.experimental.multihost_utils import process_allgather
 
 from training2 import reward_correct, reward_format, get_state, training_step, repeat, slice_data, get_advantages, \
@@ -31,7 +24,7 @@ import numpy as np
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
-from MLLM_JAX.utils import get_jax_mesh2, _form_global_array, collect_process_data, match_partition_rules, \
+from MLLM_JAX.utils import get_jax_mesh2, _form_global_array, match_partition_rules, \
     get_partition_rules_llama
 import jax.numpy as jnp
 

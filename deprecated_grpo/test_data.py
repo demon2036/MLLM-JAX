@@ -42,7 +42,7 @@ if __name__ == "__main__":
     #     pass
 
     # 将JSON文件转换为CSV文件
-    df = pd.read_json('huanhuan.json')
+    df = pd.read_json('../deprecated_huan/huanhuan.json')
     ds = Dataset.from_pandas(df)
     tokenized_id = ds.map(process_func, remove_columns=ds.column_names)
 

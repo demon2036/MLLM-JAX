@@ -2,11 +2,9 @@ import streamlit as st
 import jax
 import jax.numpy as jnp
 import numpy as np
-from tqdm import tqdm
-import flax.linen as nn
 
 # Assuming these functions are defined elsewhere or imported
-from test_qwen import get_jax_mesh2, get_model, SampleState
+from app.test_qwen import get_jax_mesh2, get_model, SampleState
 
 st.set_page_config(page_title="我的应用", layout="wide")
 

@@ -17,7 +17,7 @@ def test_siglip():
     config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
     from PIL import Image
 
-    img=Image.open('../kane.jpg').resize((896, 896))
+    img=Image.open('kane.jpg').resize((896, 896))
     img=np.array(img,dtype=np.float32)[None,...]/255.0
 
 

@@ -162,7 +162,10 @@ def run_generation_step(
     position_ids = attention_mask.cumsum(-1) - 1
     position_ids = jnp.where(attention_mask == 0, 1, position_ids)
 
-    prefill_length = sampler.find_ceil(config.max_length_total)
+    # prefill_length = sampler.find_ceil(config.max_length_total)
+    prefill_length=process_allgather(input_ids.shape[1]).max()
+    print(prefill_length)
+    prefill_length = sampler.find_ceil(prefill_length)
     pad_width = max(0, prefill_length - input_ids.shape[1])
 
     if pad_width > 0:

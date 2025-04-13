@@ -215,4 +215,4 @@ class TrainGRPOModule(nn.Module):
         mean_entropy = valid_token_entropy.sum() / total_valid_token_count
 
 
-        return {"loss": loss,'per_token_logps':per_token_logps ,'mean_entropy':mean_entropy}
+        return {"loss": loss  +-0.01*mean_entropy  ,'per_token_logps':per_token_logps ,'mean_entropy':mean_entropy}

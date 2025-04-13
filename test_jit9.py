@@ -226,8 +226,7 @@ def main():
         reward_corrects=rewards_per_func[0,:]
         datas['rewards']=rewards
 
-        tip_text_global=process_allgather(tip_text)
-        answers_global=process_allgather(answers)
+
 
         reward_corrects_global=process_allgather(reward_corrects)
         completion_ids_global=process_allgather(datas['labels'])
@@ -237,11 +236,11 @@ def main():
         metrics = dict()
         mean_correct_length=ema_decay*mean_correct_length+(1-ema_decay)*completion_ids_global_correct.sum(axis=1).max()
 
+        correct_mask_local=reward_corrects==1.0
+        tip_text_local_incorrect=tip_text_global[~correct_mask_local]
+        answers_local_incorrect = answers_global[~correct_mask_local]
 
-        tip_text_global_incorrect=tip_text_global[~correct_mask]
-        answers_global_incorrect = answers_global[~correct_mask]
-
-        for q,a in zip(tip_text_global_incorrect,answers_global_incorrect):
+        for q,a in zip(tip_text_local_incorrect,answers_local_incorrect):
             replay_buffer[q].append(a)
 
 

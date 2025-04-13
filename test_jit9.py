@@ -192,26 +192,17 @@ def run_generation_step(
     original_lengths = (tokenizer(prompts, return_tensors="np", padding=False)['attention_mask']).sum(axis=1)
 
     logger.info(f"Generating completions for {len(prompts)} prompts...")
-    try:
-        # Use consistent argument names if possible (check sampler API)
-        outputs = sampler.generate(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            max_length=config.max_length_sample, # Max *new* tokens
-            params=params_dp_bf16
-        )
-    except TypeError as e:
-         logger.error(f"TypeError calling sampler.generate with common args: {e}. Check sampler API.")
-         # If generate expects specific names like input_ids_pad, try those (less common now)
-         outputs = sampler.generate(
-             input_ids_pad=input_ids,
-             pad_attention_mask=attention_mask,
-             pad_position_ids=position_ids,
-             prefill_length=prefill_length,
-             max_length=config.max_length_sample,
-             params=params_dp_bf16
-         )
+    # input_ids_pad, pad_attention, position_ids, prefill_length, max_length=8192,params=None
+    outputs = sampler.generate(
+        input_ids_pad=input_ids,
+        pad_attention=attention_mask,
+        position_ids=position_ids,
+        prefill_length=prefill_length,
+        max_length=config.max_length_sample, # Max *new* tokens
+        params=params_dp_bf16,
+
+    )
+
 
     logger.info("Generation complete.")
 

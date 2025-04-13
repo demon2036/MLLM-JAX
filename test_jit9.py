@@ -176,10 +176,12 @@ def run_generation_step(
     true_length_prompts = (inputs['attention_mask']).sum(axis=1)
 
     logger.info(f"Generating completions for {len(prompts)} prompts...")
+
+
     outputs = sampler.generate(
         input_ids_pad=input_ids,
-        pad_attention_mask=attention_mask,
-        pad_position_ids=position_ids,
+        pad_attention=attention_mask,
+        position_ids=position_ids,
         prefill_length=prefill_length,
         max_length=config.max_length_sample,
         params=params_dp_bf16

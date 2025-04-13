@@ -219,7 +219,9 @@ class TrainGRPOModule(nn.Module):
         # 累计每行中有效 token 的个数，生成序列号（每个有效 token 的累积索引）
         cum_valid = jnp.cumsum(valid_mask, axis=-1)
         # 选择前 k 个有效 token（条件为：对应有效 token且累积计数<=k）
-        kl_token_mask = jnp.logical_and(valid_mask, cum_valid <= self.k)
+        kl_token_mask = jnp.logical_and(valid_mask,
+                                        jnp.logical_and(cum_valid >= 5, cum_valid <= self.k)
+            )
 
         entropy_loss=(  token_entropy*kl_token_mask)/kl_token_mask.sum()
 

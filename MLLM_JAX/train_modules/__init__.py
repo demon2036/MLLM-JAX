@@ -205,15 +205,19 @@ class TrainGRPOModule(nn.Module):
 
         loss = ((per_token_loss * mask_loss).sum() )/total_valid_token_count
 
-        # 调整 logits 用于熵计算（去除第一个 token，和 per_token_logps 保持一致）
-        logits_for_entropy = logits[..., :-1, :] / self.temperature
-        # 计算每个 token 的概率分布
-        probabilities = jax.nn.softmax(logits_for_entropy, axis=-1)
-        # 计算熵：对于每个 token, H = - sum(p * log(p))
-        per_token_entropy = -jnp.sum(probabilities * jnp.log(probabilities + 1e-10), axis=-1)
-        # 对有效 token 求和并归一化
-        entropy_sum = (per_token_entropy * mask_loss).sum()
-        entropy_avg = entropy_sum / total_valid_token_count
+        valid_mask = (mask_loss == 1)  # shape: [B, L]
+        cum_valid = jnp.cumsum(valid_mask, axis=-1)
+
+        # 构造 entropy mask：第 5 到第 k 个有效 token
+        entropy_mask = jnp.logical_and(
+            valid_mask,
+            jnp.logical_and(cum_valid >= 5, cum_valid <= 100)
+        )
+
+        probs = jax.nn.softmax(logits[..., :-1, :] / self.temperature, axis=-1)
+        token_entropy = -jnp.sum(probs * jnp.log(probs + 1e-8), axis=-1)  # 加 epsilon 防 log(0)
+        valid_token_entropy = token_entropy * entropy_mask
+        entropy = valid_token_entropy.sum() / (entropy_mask.sum() + 1e-8)
 
 
-        return {"loss": loss -0.01 * entropy_avg  ,'per_token_logps':per_token_logps }
+        return {"loss": loss -0.01 * entropy  ,'per_token_logps':per_token_logps }

@@ -384,7 +384,7 @@ def collect_and_log_metrics(
         logger.warning("Could not find 'reward_correct' or its weight for length stats.")
         correct_mask_global = np.zeros(rewards_global.shape, dtype=bool)
 
-    completion_lengths = completion_ids_global.sum(axis=1)
+    completion_lengths = completion_ids_global.sum(axis=-1)
     print(completion_lengths.shape,completion_ids_global.shape,completion_ids_local.shape)
     if correct_mask_global.any():
          metrics['completion/correct_length_mean'] = completion_lengths[correct_mask_global].mean()
@@ -490,7 +490,7 @@ def main():
         mean_global = rewards_global.mean()
         std_global = max(rewards_global.std(), 1e-6)
 
-        logger.info(f"Step {step}: Local Rewards Mean: {total_rewards_local.mean():.4f}, Global Rewards Mean: {mean_global:.4f}, Std: {std_global:.4f}")
+        logger.info(f"Step {step}: Local Rewards Mean: {total_rewards_local.mean():.4f}, Global Rewards Mean: {mean_global:.4f}, Std: {std_global:.4f}  {rewards_global.shape=}")
 
         advantages_local = jax_setup["get_advantages_jit"](
             datas['rewards'], config.num_pre_q, mean_global=mean_global, std_global=std_global

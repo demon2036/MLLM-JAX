@@ -205,4 +205,15 @@ class TrainGRPOModule(nn.Module):
 
         loss = ((per_token_loss * mask_loss).sum() )/total_valid_token_count
 
-        return {"loss": loss,'per_token_logps':per_token_logps }
+        # 调整 logits 用于熵计算（去除第一个 token，和 per_token_logps 保持一致）
+        logits_for_entropy = logits[..., :-1, :] / self.temperature
+        # 计算每个 token 的概率分布
+        probabilities = jax.nn.softmax(logits_for_entropy, axis=-1)
+        # 计算熵：对于每个 token, H = - sum(p * log(p))
+        per_token_entropy = -jnp.sum(probabilities * jnp.log(probabilities + 1e-10), axis=-1)
+        # 对有效 token 求和并归一化
+        entropy_sum = (per_token_entropy * mask_loss).sum()
+        entropy_avg = entropy_sum / total_valid_token_count
+
+
+        return {"loss": loss -0.01 * entropy_avg  ,'per_token_logps':per_token_logps }

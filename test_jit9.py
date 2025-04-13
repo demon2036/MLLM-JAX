@@ -1,7 +1,11 @@
 import copy
 import functools
 import os
+from collections import defaultdict
+
+import flax.linen
 import jax
+from pygments.lexer import default
 
 from prompts import system_prompt
 
@@ -18,7 +22,7 @@ import wandb
 from jax.experimental import multihost_utils
 from jax.experimental.multihost_utils import process_allgather
 
-from training import reward_correct, reward_format, get_state, training_step, repeat, slice_data, get_advantages, \
+from training2 import reward_correct, reward_format, get_state, training_step, repeat, slice_data, get_advantages, \
     tag_count_reward
 
 import random
@@ -34,12 +38,11 @@ from MLLM_JAX.utils import get_jax_mesh2, _form_global_array, collect_process_da
 import jax.numpy as jnp
 
 
-max_prompt_length=400
 num_pre_Q=16
 MAX_LENGTH_SAMPLE=1024
-MAX_LENGTH=MAX_LENGTH_SAMPLE+512+128 #-128
-grad_accum_steps = 4
-
+MAX_LENGTH=MAX_LENGTH_SAMPLE+512 #-128
+grad_accum_steps = 1
+BATCH =  1
 
 model_path = 'Qwen/Qwen2.5-1.5B-Instruct'
 
@@ -67,7 +70,9 @@ def apply_r1_template(question: str):
 
 
 
-def gen_answers_jax(prompts,sampler,params):
+def gen_answers_jax(prompts,sampler,params,max_length_sample):
+
+
     prompt = []
     for x in prompts:
         prompt.append(tokenizer.apply_chat_template([
@@ -87,82 +92,60 @@ def gen_answers_jax(prompts,sampler,params):
     prefill_length = sampler.find_ceil(global_length)
 
     attention_mask = inputs['attention_mask']
+
+    true_length_prompts=attention_mask.sum(axis=1)
+
+
+
     input_ids_pad = jnp.pad(input_ids, ((0, 0), (0, prefill_length - input_ids.shape[1])),
                             constant_values=sampler.tokenizer.eos_token_id)
 
     pad_attention = jnp.pad(attention_mask, ((0, 0), (0, prefill_length - input_ids.shape[1])))
     pad_position_ids = jnp.pad(position_ids, ((0, 0), (0, prefill_length - input_ids.shape[1])))
 
-    completion_ids,local_sample_step=sampler.generate(input_ids_pad, pad_attention, pad_position_ids, prefill_length, max_length=MAX_LENGTH_SAMPLE,params=params)
+
+    outputs=sampler.generate(input_ids_pad, pad_attention, pad_position_ids, prefill_length, max_length=max_length_sample,params=params)
 
 
 
+    train_input_ids=np.full_like(outputs['local_token_buffer'],fill_value=tokenizer.pad_token_id)
+    train_attention_mask = np.full_like(outputs['local_attention_mask'], fill_value=0)
+    train_completions_mask = np.full_like(outputs['local_attention_mask'], fill_value=0)
     answers = []
-    for i, step in enumerate(local_sample_step):
+
+    for i, (true_length_prompt,step) in enumerate(zip(true_length_prompts,outputs['local_sample_step'])):
         output = \
-            sampler.tokenizer.batch_decode(completion_ids[i, prefill_length:prefill_length + step + 1].reshape(1, -1),
+            sampler.tokenizer.batch_decode(outputs['local_token_buffer'][i, prefill_length:prefill_length + step + 1].reshape(1, -1),
                                         skip_special_tokens=True,
                                         )
 
+
         answers.extend(output)
+        train_input_ids[i,:true_length_prompt]=outputs['local_token_buffer'][i,:true_length_prompt]
+        train_input_ids[i,true_length_prompt:true_length_prompt+step+1]=outputs['local_token_buffer'][i, prefill_length:prefill_length + step + 1]
+        train_attention_mask[i,:true_length_prompt]=outputs['local_attention_mask'][i,:true_length_prompt]
+        train_attention_mask[i,true_length_prompt:true_length_prompt+step+1]=outputs['local_attention_mask'][i, prefill_length:prefill_length + step + 1]
+        train_completions_mask[i, true_length_prompt:true_length_prompt + step + 1] = outputs['local_attention_mask'][i,
+                                                                                    prefill_length:prefill_length + step + 1]
+
 
     print(answers[-2:])
     print('\n' * 2, flush=True)
-    return prompt,answers
+    return (prompt,answers,
+            {
+        'input_ids':train_input_ids,
+        'attention_mask':train_attention_mask,
+        'labels':train_completions_mask,
+        }
+)
 
+def soft_overlong_punishment(max_length=1024,cache_length=256,completion_lengths=None):
 
-
-
-def soft_overlong_punishment(max_length=4096,cache_length=1024,completion_lengths=None,reward_corrects=None):
-    rewards=np.where(reward_corrects==1,0,    -completion_lengths/max_length       )
     if jax.process_index()==0:
-        print(completion_lengths,reward_corrects,rewards)
+        print(completion_lengths)
 
-
+    rewards=np.where(completion_lengths<max_length-cache_length,0,  (   (max_length-cache_length)-completion_lengths )/cache_length           )
     return rewards
-
-
-def batch_process(tip_texts,answers,rewards,tokenizer, reward_corrects,  max_length):
-    total_texts=[tip_text+answer+tokenizer.eos_token for tip_text,answer in zip(tip_texts,answers)]
-    tip_text_inputs=tokenizer(tip_texts, return_tensors="np", padding=True, padding_side="right")
-    total_text_inputs=tokenizer(total_texts, return_tensors="np", padding=True, padding_side="right")
-
-    true_lengths_prompts = tip_text_inputs['attention_mask'].sum(axis=1)
-    true_lengths_prompts_completions = total_text_inputs['attention_mask'].sum(axis=1)
-
-    true_lengths_completions=true_lengths_prompts_completions-true_lengths_prompts
-
-    attention_mask=total_text_inputs['attention_mask']
-    labels=[]
-    for true_length,mask in zip(true_lengths_prompts,attention_mask):
-        temp=numpy.copy(mask)
-        temp[:true_length]=0
-        labels.append(temp)
-
-    labels=np.array(labels,dtype=np.int32)
-    input_ids=total_text_inputs['input_ids']
-
-
-    input_ids_pad=np.full((input_ids.shape[0],MAX_LENGTH),fill_value=tokenizer.eos_token_id)
-    input_ids_pad[:,:input_ids.shape[1]]=input_ids
-
-    pad_attention=np.full((attention_mask.shape[0],MAX_LENGTH),fill_value=0)
-    pad_attention[:,:attention_mask.shape[1]]=attention_mask
-
-    pad_labels=np.full((labels.shape[0],MAX_LENGTH),fill_value=0)
-    pad_labels[:,:labels.shape[1]]=labels
-
-
-    pad_labels=np.where(true_lengths_completions[:,None]<=1024-128,pad_labels,0)
-
-    return {
-        "input_ids": input_ids_pad,
-        "attention_mask": pad_attention,
-        "labels": pad_labels,
-        'rewards': rewards  #+soft_overlong_punishment( max_length=max_length,     completion_lengths=true_lengths_completions,reward_corrects=reward_corrects)
-        ,
-
-    }
 
 
 
@@ -173,8 +156,16 @@ def init_fn(x):
     return x
 
 
+
+
+
+
+
 def main():
-    BATCH = 4
+
+
+    replay_buffer=defaultdict(list)
+
 
     reward_funcs=[reward_correct,reward_format,tag_count_reward]
     reward_funcs_weights = [1.0, 0.5, 0.5]
@@ -186,7 +177,7 @@ def main():
     mesh_fsdp = get_jax_mesh2("1,-1,1")
 
 
-    training_steps = 100
+    training_steps = 400
     state, sampler, train_state_sharding = get_state(mesh_fsdp, training_steps,model_path=model_path,
                                                      grad_accum_steps=grad_accum_steps,num_pre_q=num_pre_Q,max_lengths=MAX_LENGTH)
 
@@ -207,21 +198,19 @@ def main():
 
 
     if jax.process_index() == 0:
-        # wandb.init(name=configs['name'], project=configs['project'], config=configs)
         wandb.init(name='test', project='grop-gsm8k',)
 
 
+    ema_decay=0.9
+    mean_correct_length=MAX_LENGTH_SAMPLE
+
     for step in range(training_steps):
         inputs = random.sample(QAs, BATCH)
-        # inputs =QAs[step*BATCH:(step+1)*BATCH]
-
-        # datas = gen_samples(repeat(inputs, num_pre_Q), sampler, state.params)
         repeated_inputs=repeat(inputs, num_pre_Q)
         prompts = [x["Q"] for x in repeated_inputs]
-
-        tip_text, answers = gen_answers_jax(prompts, sampler,
-                                            params_to_dp(state.params)
-                                            # params_to_dp(jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params))
+        tip_text, answers,datas = gen_answers_jax(prompts, sampler,
+                                                  params_to_dp(jax.tree_util.tree_map(lambda x:jnp.astype(x,jnp.bfloat16),state.params)),
+                                                  max_length_sample=MAX_LENGTH_SAMPLE
                                             )
 
         rewards_per_func=np.zeros( ( len(reward_funcs), len(answers),  ))
@@ -234,23 +223,65 @@ def main():
                     rewards_per_func[i, j] = -1
 
         rewards=rewards_per_func.sum(axis=0)
-
         reward_corrects=rewards_per_func[0,:]
+        datas['rewards']=rewards
 
-        datas = batch_process(tip_text, answers, rewards, sampler.tokenizer,  reward_corrects,      max_length=MAX_LENGTH_SAMPLE)
+        tip_text_global=process_allgather(tip_text)
+        answers_global=process_allgather(answers)
+
+        reward_corrects_global=process_allgather(reward_corrects)
+        completion_ids_global=process_allgather(datas['labels'])
+        correct_mask=reward_corrects_global==1.0
+        completion_ids_global_correct=completion_ids_global[correct_mask]
+        completion_ids_global_incorrect=completion_ids_global[~correct_mask]
+        metrics = dict()
+        mean_correct_length=ema_decay*mean_correct_length+(1-ema_decay)*completion_ids_global_correct.sum(axis=1).max()
+
+
+        tip_text_global_incorrect=tip_text_global[~correct_mask]
+        answers_global_incorrect = answers_global[~correct_mask]
+
+        for q,a in zip(tip_text_global_incorrect,answers_global_incorrect):
+            replay_buffer[q].append(a)
+
+
+        if len(tip_text_global_incorrect) >0:
+            print(replay_buffer)
+        while True:
+            pass
+
+
+
+
+
+
+
+
+
+        if jax.process_index()==0:
+            metrics['completion_ids_correct_mean']=completion_ids_global_correct.sum(axis=1).mean()
+            metrics['completion_ids_correct_max'] = completion_ids_global_correct.sum(axis=1).max()
+            metrics['completion_ids_global_incorrect_mean'] = completion_ids_global_incorrect.sum(axis=1).mean()
+            metrics['completion_ids_global_incorrect_max'] = completion_ids_global_incorrect.sum(axis=1).max()
+            metrics['mean_correct_length_ema']=mean_correct_length
 
 
         mean_global=process_allgather(datas['rewards']).mean()
         std_global = process_allgather(datas['rewards']).std()
         print(f'{step=}',datas['rewards'], np.mean(datas['rewards']),mean_global ,answers[-2:]   )
 
+        metrics['mean_global']=mean_global
+        metrics['std_global']=std_global
+
+
         advantages = get_advantages_jit(datas['rewards'], num_pre_Q,mean_global=mean_global,std_global=std_global)
         datas['advantages'] = advantages
-
+        metrics['advantages_max']=advantages.max()
+        metrics['advantages_min']=advantages.min()
         rewards_per_func=jnp.array(rewards_per_func)
 
 
-        metrics=dict()
+
         for i, reward_func in enumerate(reward_funcs):
             reward_funcs_name=reward_func.__name__
             reward_datas_local=rewards_per_func[i]
@@ -258,15 +289,15 @@ def main():
             metrics[f"{reward_funcs_name}"]=reward_datas_mean
 
         datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), datas)
-        # metrics['advantages']=datas['advantages'].mean()
+        total_valid_token_count=datas['labels'][:, 1:].sum()
 
         per_token_logps=[]
 
-        for ppo_step in range(4):
+        for ppo_step in range(2):
 
             for j in range(grad_accum_steps):
                 local_data = jax.tree_util.tree_map(lambda x: slice_data(x, grad_accum_steps, j), datas, )
-                # batch = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh), local_data)
+                local_data['total_valid_token_count']=total_valid_token_count
                 state,meta_data= test_fn(state, local_data)
 
                 if ppo_step==0:
@@ -274,6 +305,7 @@ def main():
 
             if ppo_step == 0:
                 datas['old_per_token_logps']=jnp.concat(per_token_logps)
+                metrics['entropy']=meta_data['entropy']
 
 
 
@@ -287,13 +319,3 @@ if __name__=="__main__":
 
 
         # print(metrics)
-
-
-
-
-
-
-
-
-
-

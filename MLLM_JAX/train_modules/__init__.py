@@ -211,13 +211,13 @@ class TrainGRPOModule(nn.Module):
         # 构造 entropy mask：第 5 到第 k 个有效 token
         entropy_mask = jnp.logical_and(
             valid_mask,
-            jnp.logical_and(cum_valid >= 5, cum_valid <= 100)
+            jnp.logical_and(cum_valid >= 4, cum_valid <= 100)
         )
 
         probs = jax.nn.softmax(logits[..., :-1, :] / self.temperature, axis=-1)
         token_entropy = -jnp.sum(probs * jnp.log(probs + 1e-8), axis=-1)  # 加 epsilon 防 log(0)
         valid_token_entropy = token_entropy * entropy_mask
-        entropy = valid_token_entropy.sum() / (entropy_mask.sum() + 1e-8)
+        entropy = valid_token_entropy.sum() / (entropy_mask.sum() + 1e-4)
 
 
         return {"loss": loss -0.01 * entropy  ,'per_token_logps':per_token_logps }

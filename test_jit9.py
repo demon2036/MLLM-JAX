@@ -243,8 +243,7 @@ def main():
                 replay_buffer[q].append(a)
 
 
-        if len(tip_text_global_incorrect) >0:
-            print(replay_buffer)
+        print(replay_buffer)
         while True:
             pass
 

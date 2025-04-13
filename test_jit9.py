@@ -1,4 +1,5 @@
 # main.py
+import functools
 import os
 import random
 import logging
@@ -125,9 +126,13 @@ def setup_jax(config: TrainingConfig) -> Dict[str, Any]:
     params_to_dp = jax.jit(init_fn, out_shardings=params_sharding_dp)
     params_to_fsdp = jax.jit(init_fn, out_shardings=params_sharding_fsdp)
     # --- MODIFIED JIT for get_advantages ---
-    # Make only 'groups' static, allowing 'advantage_estimator' to be dynamic
-    get_advantages_jit = jax.jit(get_advantages, static_argnames=('groups',))
+    # Store the JITted functions in a dictionary
+    get_advantages_jitted_funcs = {
+        'grpo_clip2': jax.jit(functools.partial(get_advantages,advantage_estimator='grpo_clip2'), static_argnames=('groups',)),
+        'grpo': jax.jit(functools.partial(get_advantages,advantage_estimator='grpo'), static_argnames=('groups',)),
+    }
     # ---------------------------------------
+
     train_fn_jit = jax.jit(training_step, donate_argnums=(0,))
 
     logger.info("JAX setup complete.")
@@ -136,7 +141,8 @@ def setup_jax(config: TrainingConfig) -> Dict[str, Any]:
         "sampler": sampler,
         "mesh_dp": mesh_dp,
         "params_to_dp": params_to_dp,
-        "get_advantages_jit": get_advantages_jit, # Store the correctly JIT'd function
+        # "get_advantages_jit": get_advantages_jit, # Removed old single JIT function
+        "get_advantages_jitted_funcs": get_advantages_jitted_funcs, # Store the dict of JITted functions
         "train_fn_jit": train_fn_jit,
         "tokenizer": sampler.tokenizer
     }
@@ -558,10 +564,9 @@ def main():
         # ---------------------------------------------------------
 
         # Call the JIT'd function with the selected estimator and necessary args
-        advantages_local = jax_setup["get_advantages_jit"](
+        advantages_local = jax_setup["get_advantages_jit"][advantage_estimator](
             rewards=datas['rewards'], # Pass rewards array
             groups=config.num_pre_q, # Pass groups (static)
-            advantage_estimator=advantage_estimator, # Pass dynamic estimator string
             alpha=config.advantage_alpha, # Pass alpha from config
             mean_global=mean_global, # Pass global mean
             std_global=std_global # Pass global std

@@ -64,7 +64,7 @@ class TrainingConfig:
     # Replay Buffer Settings (Infinite Size)
     # replay_buffer_max_size: int = 10000 # REMOVED - Buffer size is now infinite
     sample_from_buffer_prob: float = 1.0
-    initial_buffer_fill_steps: int = 10
+    initial_buffer_fill_steps: int = 40
 
     # Reward Functions and Weights (Set in reward_setup)
     reward_funcs_weights: Dict[str, float] = field(default_factory=dict)
@@ -515,7 +515,6 @@ def main():
 
 
         if not  use_buffer:
-
             # --- Replay Buffer Update ---
             update_replay_buffer(
                 replay_buffer,

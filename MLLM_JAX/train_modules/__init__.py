@@ -120,7 +120,7 @@ class TrainGRPOModule(nn.Module):
     max_lengths:float=2048
     epsilon_low:float=0.2
     epsilon_high:float=0.3
-    kk:int=100
+    k:int=100
 
 
 

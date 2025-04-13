@@ -46,7 +46,8 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
     # model_path = 'Qwen/Qwen2-0.5B-Instruct'
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     if jax.process_index()==0:
-        print(config)
+        pass
+        # print(config)
     # Load the base model with adapters on top
 
     jax_config = LlamaJaxConfig(mesh=mesh)

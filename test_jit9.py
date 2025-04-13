@@ -1,6 +1,7 @@
 # %% Imports
 import random
 import logging
+import warnings
 from functools import partial
 from typing import Dict, List, Tuple, Any, Callable # No longer need Deque
 from dataclasses import dataclass, field
@@ -24,7 +25,7 @@ from prompts.prompts import system_prompt
 from training2 import (reward_correct, reward_format, get_state, training_step,
                        repeat, slice_data, get_advantages, tag_count_reward, init_fn)
 from MLLM_JAX.utils import (get_jax_mesh2, _form_global_array, match_partition_rules, get_partition_rules_llama)
-
+warnings.filterwarnings("ignore")
 # %% Configuration & Data Structures
 
 @dataclass
@@ -383,6 +384,7 @@ def collect_and_log_metrics(
         correct_mask_global = np.zeros(rewards_global.shape, dtype=bool)
 
     completion_lengths = completion_ids_global.sum(axis=1)
+    print(completion_lengths.shape)
     if correct_mask_global.any():
          metrics['completion/correct_length_mean'] = completion_lengths[correct_mask_global].mean()
          metrics['completion/correct_length_max'] = completion_lengths[correct_mask_global].max()

@@ -147,7 +147,7 @@ def setup_jax(config: TrainingConfig) -> Dict[str, Any]:
         "tokenizer": sampler.tokenizer
     }
 
-# %% Core Logic Functions (Copied back for single file)
+# %% Core Logic Functions (run_generation_step, calculate_rewards - unchanged)
 def run_generation_step(
     prompts: List[str],
     jax_setup: Dict[str, Any],
@@ -164,93 +164,76 @@ def run_generation_step(
     inputs = tokenizer(prompts, return_tensors="jax", padding=True, padding_side="right")
     input_ids = inputs['input_ids']
     attention_mask = inputs['attention_mask']
+    position_ids = attention_mask.cumsum(-1) - 1
+    position_ids = jnp.where(attention_mask == 0, 1, position_ids)
 
-    batch_size, seq_length = input_ids.shape
-    position_ids = jnp.broadcast_to(jnp.arange(seq_length), (batch_size, seq_length))
-
-    try:
-        # --- MODIFIED prefill_length calculation ---
-        # Calculate max length across all processes for consistent padding
-        local_max_len = input_ids.shape[1]
-        global_max_len = process_allgather(jnp.array([local_max_len])).max() # Gather max length
-        prefill_length = sampler.find_ceil(int(global_max_len)) # Find ceil based on global max
-        # -------------------------------------------
-    except AttributeError:
-        logger.warning("sampler.find_ceil not found, using config.max_length_total as prefill_length.")
-        prefill_length = config.max_length_total
-    except Exception as e:
-        logger.error(f"Error calculating prefill_length: {e}. Using config.max_length_total.")
-        prefill_length = config.max_length_total
-
-
+    prefill_length=process_allgather(input_ids.shape[1]).max()
+    prefill_length = sampler.find_ceil(prefill_length)
     pad_width = max(0, prefill_length - input_ids.shape[1])
 
     if pad_width > 0:
-         input_ids = jnp.pad(input_ids, ((0, 0), (0, pad_width)), constant_values=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id)
+         input_ids = jnp.pad(input_ids, ((0, 0), (0, pad_width)), constant_values=tokenizer.eos_token_id)
          attention_mask = jnp.pad(attention_mask, ((0, 0), (0, pad_width)), constant_values=0)
-         position_ids = jnp.pad(position_ids, ((0, 0), (0, pad_width)), constant_values=0)
+         position_ids = jnp.pad(position_ids, ((0, 0), (0, pad_width)), constant_values=1)
     elif input_ids.shape[1] > prefill_length:
          logger.warning(f"Input length {input_ids.shape[1]} exceeds prefill length {prefill_length}. Truncating.")
          input_ids = input_ids[:, :prefill_length]
          attention_mask = attention_mask[:, :prefill_length]
          position_ids = position_ids[:, :prefill_length]
 
-    original_lengths = (tokenizer(prompts, return_tensors="np", padding=False)['attention_mask']).sum(axis=1)
+    true_length_prompts = (inputs['attention_mask']).sum(axis=1)
 
     logger.info(f"Generating completions for {len(prompts)} prompts...")
-    # input_ids_pad, pad_attention, position_ids, prefill_length, max_length=8192,params=None
+
+
     outputs = sampler.generate(
         input_ids_pad=input_ids,
         pad_attention=attention_mask,
         position_ids=position_ids,
         prefill_length=prefill_length,
-        max_length=config.max_length_sample, # Max *new* tokens
-        params=params_dp_bf16,
-
+        max_length=config.max_length_sample,
+        params=params_dp_bf16
     )
-
-
     logger.info("Generation complete.")
 
     buffer_len = outputs['local_token_buffer'].shape[1]
-    train_input_ids = np.full((len(prompts), buffer_len), fill_value=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id, dtype=np.int32)
+    train_input_ids = np.full((len(prompts), buffer_len), fill_value=tokenizer.pad_token_id, dtype=np.int32)
     train_attention_mask = np.zeros_like(train_input_ids, dtype=np.int32)
     train_completions_mask = np.zeros_like(train_input_ids, dtype=np.int32)
     generated_answers = []
 
-    for i, (prompt_len, gen_step) in enumerate(zip(original_lengths, outputs['local_sample_step'])):
-        start_idx_in_buffer = prompt_len
-        end_idx_in_buffer = start_idx_in_buffer + gen_step + 1
-        start_idx_in_buffer = min(start_idx_in_buffer, buffer_len)
-        end_idx_in_buffer = min(end_idx_in_buffer, buffer_len)
+    for i, (true_len, gen_step) in enumerate(zip(true_length_prompts, outputs['local_sample_step'])):
+        start_idx = prefill_length
+        end_idx = start_idx + gen_step + 1
+        start_idx = min(start_idx, buffer_len)
+        end_idx = min(end_idx, buffer_len)
 
-        generated_tokens = outputs['local_token_buffer'][i, start_idx_in_buffer:end_idx_in_buffer]
+        generated_tokens = outputs['local_token_buffer'][i, start_idx:end_idx]
         answer = tokenizer.decode(generated_tokens, skip_special_tokens=True)
         generated_answers.append(answer)
 
-        prompt_tokens = tokenizer(prompts[i], return_tensors="np", padding=False)['input_ids'][0]
-        actual_prompt_len = len(prompt_tokens)
-        train_input_ids[i, :actual_prompt_len] = prompt_tokens
-        train_attention_mask[i, :actual_prompt_len] = 1
+        prompt_tokens = inputs['input_ids'][i, :true_len]
+        train_input_ids[i, :true_len] = prompt_tokens
+        train_attention_mask[i, :true_len] = 1
 
-        gen_len = len(generated_tokens)
-        comb_end_idx = actual_prompt_len + gen_len
-        comb_end_idx = min(comb_end_idx, buffer_len)
-        actual_gen_len = comb_end_idx - actual_prompt_len
+        gen_len = end_idx - start_idx
+        prompt_end_idx = true_len + gen_len
+        prompt_end_idx = min(prompt_end_idx, buffer_len)
+        actual_gen_len = prompt_end_idx - true_len
 
         if actual_gen_len > 0:
-            train_input_ids[i, actual_prompt_len:comb_end_idx] = generated_tokens[:actual_gen_len]
-            train_attention_mask[i, actual_prompt_len:comb_end_idx] = 1
-            train_completions_mask[i, actual_prompt_len:comb_end_idx] = 1
+            train_input_ids[i, true_len:prompt_end_idx] = generated_tokens[:actual_gen_len]
+            train_attention_mask[i, true_len:prompt_end_idx] = 1
+            train_completions_mask[i, true_len:prompt_end_idx] = 1
 
     logger.info(f"Sample generated answers (last 2): {generated_answers[-2:]}")
 
-    max_len = config.max_length_total
     data = {
-        'input_ids': train_input_ids[:, :max_len],
-        'attention_mask': train_attention_mask[:, :max_len],
-        'labels': train_completions_mask[:, :max_len],
+        'input_ids': train_input_ids,
+        'attention_mask': train_attention_mask,
+        'labels': train_completions_mask,
     }
+
     return generated_answers, data
 
 def calculate_rewards(

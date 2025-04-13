@@ -270,7 +270,7 @@ def main():
 
 
 
-        datas['labels']=np.where(datas['labels'].sum(axis=1,keepdims=True)<=MAX_LENGTH_SAMPLE-128,datas['labels'],0)
+        # datas['labels']=np.where(datas['labels'].sum(axis=1,keepdims=True)<=MAX_LENGTH_SAMPLE-128,datas['labels'],0)
 
 
         mean_global=process_allgather(datas['rewards']).mean()

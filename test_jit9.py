@@ -385,7 +385,7 @@ def collect_and_log_metrics(
         correct_mask_global = np.zeros(rewards_global.shape, dtype=bool)
 
     completion_lengths = completion_ids_global.sum(axis=1)
-    print(completion_lengths.shape)
+    print(completion_lengths.shape,completion_ids_global.shape,completion_ids_local.shape)
     if correct_mask_global.any():
          metrics['completion/correct_length_mean'] = completion_lengths[correct_mask_global].mean()
          metrics['completion/correct_length_max'] = completion_lengths[correct_mask_global].max()

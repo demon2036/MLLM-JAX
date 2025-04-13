@@ -221,4 +221,4 @@ class TrainGRPOModule(nn.Module):
         entropy = valid_token_entropy.sum() /(entropy_mask.sum() + 1e-4)
 
 
-        return {"loss": loss -0.03 * entropy  ,'per_token_logps':per_token_logps,'entropy':entropy }
+        return {"loss": loss -0.01 * entropy  ,'per_token_logps':per_token_logps,'entropy':entropy }

@@ -268,8 +268,8 @@ class TrainGRPOModule(nn.Module):
 
         # --- Final Loss Averaging ---
         # Apply mask and average over all valid tokens in the batch
-        print(cum_valid.max().shape)
-        mask_loss=jnp.where((cum_valid.max()<=1000)[...,None],mask_loss,0)
+        print(cum_valid.max(axis=-1).shape)
+        mask_loss=jnp.where((cum_valid.max(axis=-1)<=1000)[...,None],mask_loss,0)
 
         total_valid_token_count = jnp.maximum(mask_loss.sum(), 1e-6)
         masked_loss = per_token_loss * mask_loss

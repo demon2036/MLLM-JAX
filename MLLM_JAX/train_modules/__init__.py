@@ -247,11 +247,7 @@ class TrainGRPOModule(nn.Module):
         return {
             "loss": loss, # The main loss to minimize
             'per_token_logps': jax.lax.stop_gradient(per_token_logps), # Needed for next iteration's old_logps
-            # Monitoring outputs related to new advantage calculation:
-            'entropy_rank_advantages': jax.lax.stop_gradient(rank_based_advantages),
-            'avg_entropy_per_sample': jax.lax.stop_gradient(avg_entropy_per_sample),
-            'ranks_per_sample': jax.lax.stop_gradient(ranks),
             # Monitoring outputs related to original entropy calculation:
-            'entropy_metric': avg_entropy_metric,
+            'entropy': avg_entropy_metric,
             'entropy_loss_metric': entropy_loss_metric,
         }

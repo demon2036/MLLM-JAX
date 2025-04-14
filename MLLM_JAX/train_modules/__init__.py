@@ -198,7 +198,7 @@ class TrainGRPOModule(nn.Module):
 
         # Use rank_based_advantages, broadcasted to per-token shape [B, L-1]
         # Advantages shape [B] -> [B, 1] for broadcasting
-        adv_broadcast = (0.1*rank_based_advantages+inputs['advantages'])[:, None]
+        adv_broadcast = (0.01*rank_based_advantages+inputs['advantages'])[:, None]
 
         per_token_loss1 = ratio * adv_broadcast
         per_token_loss2 = clipped_ratio * adv_broadcast

@@ -19,24 +19,23 @@ CRITERION_COLLECTION = {
 
 class TrainSFTModule(nn.Module):
     model: Any
-    pad_token_id:float
+    pad_token_id: float
     label_smoothing: float = 0.0
     criterion: Callable[[Array, Array], Array] = CRITERION_COLLECTION["ce"]
 
     def __call__(self, inputs) -> ArrayTree:
-        input_ids=inputs['input_ids']
-        attention_mask=inputs['attention_mask']
-        labels=inputs['labels']
+        input_ids = inputs['input_ids']
+        attention_mask = inputs['attention_mask']
+        labels = inputs['labels']
 
-        logits, cache = self.model( input_ids=input_ids[:, :-1],
-                                       attention_mask=attention_mask[:, :-1])
+        logits, cache = self.model(input_ids=input_ids[:, :-1],
+                                   attention_mask=attention_mask[:, :-1])
 
-        targets=jax.nn.one_hot(labels[:,1:],logits.shape[-1])
-        loss=optax.softmax_cross_entropy(logits,targets)
-        mask_loss=labels[:,1:]!=self.pad_token_id
-        loss=loss*mask_loss
-        loss_s=loss.sum()/(mask_loss.astype(jnp.float32).sum())
-
+        targets = jax.nn.one_hot(labels[:, 1:], logits.shape[-1])
+        loss = optax.softmax_cross_entropy(logits, targets)
+        mask_loss = labels[:, 1:] != self.pad_token_id
+        loss = loss * mask_loss
+        loss_s = loss.sum() / (mask_loss.astype(jnp.float32).sum())
 
         targets = targets == targets.max(-1, keepdims=True)
 
@@ -47,7 +46,6 @@ class TrainSFTModule(nn.Module):
         preds = jax.lax.top_k(logits, k=5)[1]
         accs = jnp.take_along_axis(targets, preds, axis=-1)
         return {"loss": loss_s, }
-
 
 
 # def selective_log_softmax_jax_inner(logits,index):
@@ -110,55 +108,48 @@ def selective_log_softmax_jax(logits: jnp.ndarray, index: jnp.ndarray) -> jnp.nd
 
     return per_token_logps
 
+
 class TrainGRPOModule(nn.Module):
     model: Any
-    pad_token_id:float
-    num_pre_Q:int
-    ref_model: Any =None
-    beta:float =0.04
-    temperature:float =1.0
-    max_lengths:float=2048
-    epsilon_low:float=0.2
-    epsilon_high:float=0.28
-    entropy_threshold:float =0.3
+    pad_token_id: float
+    num_pre_Q: int
+    ref_model: Any = None
+    beta: float = 0.04
+    temperature: float = 1.0
+    max_lengths: float = 2048
+    epsilon_low: float = 0.2
+    epsilon_high: float = 0.28
+    entropy_threshold: float = 0.3
 
-
-
-    def __call__(self, inputs,) -> ArrayTree:
-        input_ids=inputs['input_ids']
-        attention_mask=inputs['attention_mask']
-        labels=inputs['labels']
+    def __call__(self, inputs, ) -> ArrayTree:
+        input_ids = inputs['input_ids']
+        attention_mask = inputs['attention_mask']
+        labels = inputs['labels']
         rewards = inputs['rewards']
-        advantages=inputs.get( "advantages", None)
+        advantages = inputs.get("advantages", None)
 
-
-        logits, cache = self.model( input_ids=input_ids,
-                                       attention_mask=attention_mask)
-
+        logits, cache = self.model(input_ids=input_ids,
+                                   attention_mask=attention_mask)
 
         chosen_ids = input_ids[:, 1:]  # (B, L-1), exclude the first input ID since we don't have logits for it
         # mask_loss = labels[:, 1:] != self.pad_token_id
         mask_loss = labels[:, 1:]
 
+        total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
 
-        total_valid_token_count=inputs.get( "total_valid_token_count", mask_loss.sum())
+        if self.beta != 0:
+            ref_logits, cache = self.ref_model(input_ids=input_ids,
+                                               attention_mask=attention_mask)
 
-
-        if self.beta!=0:
-            ref_logits, cache = self.ref_model( input_ids=input_ids,
-                                           attention_mask=attention_mask)
-
-            ref_logits=jax.lax.stop_gradient(ref_logits)
+            ref_logits = jax.lax.stop_gradient(ref_logits)
 
             ref_per_token_logps = jnp.take_along_axis(  # [B, S]
                 jax.nn.log_softmax(ref_logits[..., :-1, :], axis=-1), chosen_ids[..., None], axis=-1
             )[..., 0]
 
-
-
         per_token_logps = jnp.take_along_axis(  # [B, S]
-            jax.nn.log_softmax( logits[..., :-1, :], axis=-1), chosen_ids[..., None], axis=-1
-        )[..., 0]/self.temperature
+            jax.nn.log_softmax(logits[..., :-1, :], axis=-1), chosen_ids[..., None], axis=-1
+        )[..., 0] / self.temperature
 
         # per_token_logps = selective_log_softmax_jax(logits,index=chosen_ids) / self.temperature
 
@@ -166,9 +157,8 @@ class TrainGRPOModule(nn.Module):
             old_per_token_logps = inputs["old_per_token_logps"]
             print(f'from second time {old_per_token_logps.shape=}')
         else:
-            old_per_token_logps=jax.lax.stop_gradient(per_token_logps)
+            old_per_token_logps = jax.lax.stop_gradient(per_token_logps)
             print(f'from first time {old_per_token_logps.shape=}')
-
 
         coef_1 = jnp.exp(per_token_logps - old_per_token_logps)
         coef_2 = jnp.clip(coef_1, 1 - self.epsilon_low, 1 + self.epsilon_high)
@@ -184,27 +174,21 @@ class TrainGRPOModule(nn.Module):
         #     # advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
         #     advantages = (rewards - mean_grouped_rewards)
 
-
         # per_token_loss = jnp.exp(per_token_logps - old_per_token_logps) * advantages[..., None]
 
-
-
-
-
-        if self.beta!=0:
+        if self.beta != 0:
             per_token_kl = jnp.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1
 
             per_token_loss = -(per_token_loss - self.beta * per_token_kl)
         else:
             per_token_loss = -per_token_loss
 
-
         # loss = ((per_token_loss * mask_loss).sum(axis=1) / mask_loss.sum(axis=1)).mean()
 
         # loss = ((per_token_loss * mask_loss).sum(axis=1) / self.max_lengths ).mean()
         # loss = ((per_token_loss * mask_loss).sum(axis=1) / self.max_lengths).mean()
 
-        loss = ((per_token_loss * mask_loss).sum() )/total_valid_token_count
+        loss = ((per_token_loss * mask_loss).sum()) / total_valid_token_count
 
         valid_mask = (mask_loss == 1)  # shape: [B, L]
         cum_valid = jnp.cumsum(valid_mask, axis=-1)
@@ -214,16 +198,15 @@ class TrainGRPOModule(nn.Module):
             valid_mask,
             jnp.logical_and(cum_valid >= 4, cum_valid <= 100)
         )
-        entropy_mask=jnp.where(advantages[...,None]>0,entropy_mask,0)
+        entropy_mask = jnp.where(advantages[..., None] > 0, entropy_mask, 0)
 
         probs = jax.nn.softmax(logits[..., :-1, :] / self.temperature, axis=-1)
         token_entropy = -jnp.sum(probs * jnp.log(probs + 1e-8), axis=-1)  # 加 epsilon 防 log(0)
-        entropy = (token_entropy * entropy_mask).sum() /(entropy_mask.sum() + 1e-4)
+        entropy = (token_entropy * entropy_mask).sum() / (entropy_mask.sum() + 1e-4)
         # valid_token_entropy = token_entropy * mask_loss
         # entropy = valid_token_entropy.sum() /(mask_loss.sum() + 1e-4)
 
-
-        entropy_mask=jnp.logical_and(entropy_mask,token_entropy<self.entropy_threshold)
+        entropy_mask = jnp.logical_and(entropy_mask, token_entropy < self.entropy_threshold)
         entropy_loss = (token_entropy * entropy_mask).sum() / (entropy_mask.sum() + 1e-4)
 
-        return {"loss": loss -0.05*entropy_loss  ,'per_token_logps':per_token_logps,'entropy':entropy }
+        return {"loss": loss - 0.05 * entropy_loss, 'per_token_logps': per_token_logps, 'entropy': entropy,'entropy_loss':entropy_loss}

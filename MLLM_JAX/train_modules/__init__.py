@@ -236,11 +236,6 @@ class TrainGRPOModule(nn.Module):
         count_entropy_metric = jnp.maximum(entropy_calc_mask.sum(), 1e-6)
         avg_entropy_metric = sum_entropy_metric / count_entropy_metric
 
-        # Loss/Penalty associated with low entropy within that masked region
-        low_entropy_mask = jnp.logical_and(entropy_calc_mask, token_entropy < self.entropy_threshold)
-        sum_entropy_loss_metric = (token_entropy * low_entropy_mask).sum()
-        count_entropy_loss_metric = jnp.maximum(low_entropy_mask.sum(), 1e-6)
-        entropy_loss_metric = sum_entropy_loss_metric / count_entropy_loss_metric # More like 'low_entropy_penalty_metric'
 
         # --- Return Dictionary ---
         # Stop gradient on values returned only for monitoring or next step's input
@@ -248,6 +243,6 @@ class TrainGRPOModule(nn.Module):
             "loss": loss, # The main loss to minimize
             'per_token_logps': jax.lax.stop_gradient(per_token_logps), # Needed for next iteration's old_logps
             # Monitoring outputs related to original entropy calculation:
-            'entropy': avg_entropy_metric,
-            'entropy_loss': entropy_loss_metric,
+            'entropy': avg_entropy_per_sample,
+            'entropy_loss': avg_entropy_metric,
         }

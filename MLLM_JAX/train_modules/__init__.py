@@ -115,7 +115,7 @@ def selective_log_softmax_jax(logits: jnp.ndarray, index: jnp.ndarray) -> jnp.nd
 
 
 
-def get_advantages(rewards,groups,alpha=1.0,avg_entropy_per_sample=None):
+def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None):
     avg_entropy_grouped = avg_entropy_per_sample.reshape(-1, groups)
     # Ranks within each group (0=lowest entropy, groups-1=highest)
     ranks_grouped = jnp.argsort(jnp.argsort(avg_entropy_grouped, axis=1), axis=1)

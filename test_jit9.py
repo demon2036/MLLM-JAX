@@ -76,14 +76,13 @@ def reward_setup() -> Tuple[List[Callable], List[float]]:
     return reward_functions, reward_weights
 
 # %% Helper Functions (Copied back for single file)
-def apply_chat_template(tokenizer: PreTrainedTokenizerBase, question: str) -> str:
-    """Applies the chat template to a given question."""
+def apply_chat_template(tokenizer: PreTrainedTokenizerBase, conversation_history: List[Dict[str, str]]) -> str:
+    """Applies the chat template to a given conversation history."""
+    # Ensure the generation prompt is added correctly for the final turn
     return tokenizer.apply_chat_template(
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question}
-        ],
-        tokenize=False, add_generation_prompt=True
+        conversation_history,
+        tokenize=False,
+        add_generation_prompt=True # This typically adds the prompt for the assistant's next turn
     )
 
 def load_data(config: TrainingConfig) -> List[Dict[str, str]]:
@@ -484,24 +483,72 @@ def main():
 
         prompts_for_generation: List[str] = []
         repeated_inputs: List[Dict[str, str]] = []
+        base_prompts: List[str] = []  # Store base prompts before repeating
+        batch_inputs: List[Dict[str, str]] = []  # Store base inputs before repeating
 
+        #
+        # if use_buffer:
+        #     sampled_entries = random.sample(replay_buffer, config.batch_size)
+        #     logger.info(f"Sampling {config.batch_size} entries from replay buffer (size {len(replay_buffer)}) for continuation.")
+        #     base_continuation_prompts = []
+        #     batch_inputs = []
+        #     for entry in sampled_entries:
+        #         follow_up_text = "\nUser: I think this maybe correct.\nAssistant:"
+        #         continuation_prompt = entry.prompt_used + entry.generated_answer + follow_up_text
+        #         base_continuation_prompts.append(continuation_prompt)
+        #         batch_inputs.append(entry.original_input)
+        #     prompts_for_generation = repeat(base_continuation_prompts, config.num_pre_q)
+        #     repeated_inputs = repeat(batch_inputs, config.num_pre_q)
+        # else:
+        #     batch_inputs = random.sample(qas_data, config.batch_size)
+        #     logger.info(f"Sampling {config.batch_size} inputs from dataset.")
+        #     repeated_inputs = repeat(batch_inputs, config.num_pre_q)
+        #     prompts_for_generation = [apply_chat_template(tokenizer, item['Q']) for item in repeated_inputs]
+
+
+
+        # --- MODIFIED: Construct history differently based on source ---
         if use_buffer:
             sampled_entries = random.sample(replay_buffer, config.batch_size)
             logger.info(f"Sampling {config.batch_size} entries from replay buffer (size {len(replay_buffer)}) for continuation.")
-            base_continuation_prompts = []
-            batch_inputs = []
+            follow_up_text = "I think this maybe correct." # Define the follow-up
+
             for entry in sampled_entries:
-                follow_up_text = "\nUser: I think this maybe correct.\nAssistant:"
-                continuation_prompt = entry.prompt_used + entry.generated_answer + follow_up_text
-                base_continuation_prompts.append(continuation_prompt)
+                # Construct the 4-turn history for replay buffer entries
+                history = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": entry.original_input['Q']},
+                    {"role": "assistant", "content": entry.generated_answer},
+                    {"role": "user", "content": follow_up_text}
+                    # The add_generation_prompt=True in apply_chat_template
+                    # should prompt the model for the next assistant turn
+                ]
+                # Apply the template to this specific history
+                base_prompts.append(apply_chat_template(tokenizer, history))
                 batch_inputs.append(entry.original_input)
-            prompts_for_generation = repeat(base_continuation_prompts, config.num_pre_q)
+
+            # Repeat the generated base prompts and corresponding inputs
+            prompts_for_generation = repeat(base_prompts, config.num_pre_q)
             repeated_inputs = repeat(batch_inputs, config.num_pre_q)
+
         else:
-            batch_inputs = random.sample(qas_data, config.batch_size)
+            batch_inputs_base = random.sample(qas_data, config.batch_size)
             logger.info(f"Sampling {config.batch_size} inputs from dataset.")
+
+            for item in batch_inputs_base:
+                # Construct the standard 2-turn history for dataset entries
+                history = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": item['Q']}
+                ]
+                # Apply the template to this specific history
+                base_prompts.append(apply_chat_template(tokenizer, history))
+                batch_inputs.append(item) # Store the original item
+
+            # Repeat the generated base prompts and corresponding inputs
+            prompts_for_generation = repeat(base_prompts, config.num_pre_q)
             repeated_inputs = repeat(batch_inputs, config.num_pre_q)
-            prompts_for_generation = [apply_chat_template(tokenizer, item['Q']) for item in repeated_inputs]
+        # ----------------------------------------------------------
 
         # 2. Generate Answers
         generated_answers, datas = run_generation_step(prompts_for_generation, jax_setup, config)

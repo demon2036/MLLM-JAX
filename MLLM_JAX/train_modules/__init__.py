@@ -212,7 +212,6 @@ class TrainGRPOModule(nn.Module):
             valid_mask_for_metric,
             jnp.logical_and(cum_valid >= 4, cum_valid <= 100)
         )
-
         # Average entropy within the masked region (tokens 4-100)
         masked_token_entropy_truncated = token_entropy * entropy_calc_mask
         sum_entropy_per_sample_truncated = masked_token_entropy_truncated.sum(axis=-1)  # Shape: [B]

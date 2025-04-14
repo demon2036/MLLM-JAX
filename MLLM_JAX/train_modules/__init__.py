@@ -109,6 +109,36 @@ def selective_log_softmax_jax(logits: jnp.ndarray, index: jnp.ndarray) -> jnp.nd
     return per_token_logps
 
 
+
+
+
+
+
+
+def get_advantages(rewards,groups,alpha=1.0,avg_entropy_per_sample=None):
+    avg_entropy_grouped = avg_entropy_per_sample.reshape(-1, groups)
+    # Ranks within each group (0=lowest entropy, groups-1=highest)
+    ranks_grouped = jnp.argsort(jnp.argsort(avg_entropy_grouped, axis=1), axis=1)
+    denom_grp = jnp.maximum(groups - 1.0, 0)  # Avoid division by zero if groups=1
+    entropy_scores_grouped = -1.0 + 2.0 * ranks_grouped.astype(jnp.float32) / denom_grp
+    entropy_scores = entropy_scores_grouped.reshape(-1)  # Shape [B]
+    # 2. Combine original rewards with weighted entropy score
+    modified_rewards = rewards + alpha * entropy_scores  # Shape [B]
+    # 3. Apply standard GRPO normalization to the *modified* rewards
+    mean_grouped_mod_rewards = modified_rewards.reshape(-1, groups).mean(axis=1)
+    std_grouped_mod_rewards = modified_rewards.reshape(-1, groups).std(axis=1)
+    mean_grouped_mod_rewards = jnp.repeat(mean_grouped_mod_rewards, groups, axis=0)
+    std_grouped_mod_rewards = jnp.repeat(std_grouped_mod_rewards, groups, axis=0)
+    advantages = (modified_rewards - mean_grouped_mod_rewards) / (std_grouped_mod_rewards + 1e-4)
+    return advantages
+
+
+
+
+
+
+
+
 class TrainGRPOModule(nn.Module):
     model: Any
     pad_token_id: float
@@ -173,14 +203,6 @@ class TrainGRPOModule(nn.Module):
         sum_entropy_per_sample = masked_token_entropy.sum(axis=-1) # Shape: [B]
         avg_entropy_per_sample = sum_entropy_per_sample / mask_loss.sum(axis=-1) # Shape: [B]
 
-        # 3. Rank samples based on average entropy
-        # argsort(argsort) gives ranks: 0 for lowest entropy, B-1 for highest
-        ranks = jnp.argsort(jnp.argsort(avg_entropy_per_sample)) # Shape: [B]
-
-        # 4. Scale ranks to advantage range [-1, 1]
-        # Linear scaling: rank 0 -> -1, rank B-1 -> +1
-        rank_based_advantages = -1.0 + 2.0 * ranks.astype(jnp.float32) / (B - 1.0) # Shape: [B]
-
         # --- PPO Loss Calculation (using the NEW rank_based_advantages) ---
         # Get old log probs (from previous iteration or stop grad)
         if "old_per_token_logps" in inputs:
@@ -196,7 +218,7 @@ class TrainGRPOModule(nn.Module):
 
         # Use rank_based_advantages, broadcasted to per-token shape [B, L-1]
         # Advantages shape [B] -> [B, 1] for broadcasting
-        adv_broadcast = (0.4*rank_based_advantages+inputs['advantages'])[:, None]
+        adv_broadcast=get_advantages(inputs['rewards'],16,avg_entropy_per_sample=avg_entropy_per_sample)[:, None]
 
         per_token_loss1 = ratio * adv_broadcast
         per_token_loss2 = clipped_ratio * adv_broadcast

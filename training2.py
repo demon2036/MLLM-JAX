@@ -196,7 +196,7 @@ def tag_count_reward(item, answer, **kwargs) -> float:
 
 
 
-def get_advantages(rewards,groups,advantage_estimator='grpo',alpha=0.02,mean_global=None,std_global=None):
+def get_advantages(rewards,groups,advantage_estimator='grpo',alpha=0.02,mean_global=None,std_global=None,avg_entropy_per_sample=None):
 
     if advantage_estimator=='grpo':
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
@@ -227,8 +227,6 @@ def get_advantages(rewards,groups,advantage_estimator='grpo',alpha=0.02,mean_glo
         std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
         advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
         advantages=advantages+alpha*(rewards - mean_global) / (std_global + 1e-4)
-
-
         # max_grouped_advantages=advantages.reshape(-1, groups).max(axis=1)
         # max_grouped_advantages = jnp.repeat(max_grouped_advantages, groups, axis=0)
 
@@ -243,13 +241,6 @@ def get_advantages(rewards,groups,advantage_estimator='grpo',alpha=0.02,mean_glo
         advantages = jnp.where(advantages < 0, advantages * scale_factors_neg, advantages)
 
         # advantages = jnp.clip(advantages, -4 * max_grouped_advantages, None)
-
-
-
-
-
-
-
     elif advantage_estimator == 'john_grpo_replace':
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
         std_grouped_rewards = rewards.reshape(-1, groups).std(axis=1)
@@ -260,18 +251,32 @@ def get_advantages(rewards,groups,advantage_estimator='grpo',alpha=0.02,mean_glo
         advantages_global = (rewards - mean_global) / (std_global + 1e-4)
         advantages=jnp.where(std_grouped_rewards<std_global,advantages_global,advantages)
 
-
-
     elif advantage_estimator == 'john_grpo':
         mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
         std_grouped_rewards = rewards.reshape(-1, groups).std(axis=1)
         mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
         std_grouped_rewards = jnp.repeat(std_grouped_rewards, groups, axis=0)
         advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4) +alpha*(rewards - mean_global) / (std_global + 1e-4)
-    else:
-        mean_grouped_rewards = rewards.reshape(-1, groups).mean(axis=1)
-        mean_grouped_rewards = jnp.repeat(mean_grouped_rewards, groups, axis=0)
-        advantages = (rewards - mean_grouped_rewards) +alpha*(rewards-mean_global)
+    elif advantage_estimator =='grpo_entropy':
+        avg_entropy_grouped = avg_entropy_per_sample.reshape(-1, groups)
+        # Ranks within each group (0=lowest entropy, groups-1=highest)
+        ranks_grouped = jnp.argsort(jnp.argsort(avg_entropy_grouped, axis=1), axis=1)
+
+        denom_grp = jnp.maximum(groups - 1.0, 0)  # Avoid division by zero if groups=1
+        entropy_scores_grouped = -1.0 + 2.0 * ranks_grouped.astype(jnp.float32) / denom_grp
+
+        entropy_scores = entropy_scores_grouped.reshape(-1)  # Shape [B]
+
+        # 2. Combine original rewards with weighted entropy score
+        modified_rewards = rewards + alpha * entropy_scores  # Shape [B]
+        # 3. Apply standard GRPO normalization to the *modified* rewards
+        mean_grouped_mod_rewards = modified_rewards.reshape(-1, groups).mean(axis=1)
+        std_grouped_mod_rewards = modified_rewards.reshape(-1, groups).std(axis=1)
+        mean_grouped_mod_rewards = jnp.repeat(mean_grouped_mod_rewards, groups, axis=0)
+        std_grouped_mod_rewards = jnp.repeat(std_grouped_mod_rewards, groups, axis=0)
+        advantages = (modified_rewards - mean_grouped_mod_rewards) / (std_grouped_mod_rewards + 1e-4)
+        return advantages
+
 
     return advantages
 

@@ -576,7 +576,7 @@ def main():
             advantage_estimator = 'grpo_clip2'
         else:
             advantage_estimator = 'grpo'
-        advantage_estimator = 'grpo_clip2'
+        advantage_estimator = 'grpo'
         logger.info(f"Using advantage estimator: {advantage_estimator} (based on last entropy: {last_entropy:.4f})")
         # ---------------------------------------------------------
 

@@ -198,7 +198,7 @@ class TrainGRPOModule(nn.Module):
 
         # Use rank_based_advantages, broadcasted to per-token shape [B, L-1]
         # Advantages shape [B] -> [B, 1] for broadcasting
-        adv_broadcast = (rank_based_advantages+inputs['advantages'])[:, None]
+        adv_broadcast = (0.1*rank_based_advantages+inputs['advantages'])[:, None]
 
         per_token_loss1 = ratio * adv_broadcast
         per_token_loss2 = clipped_ratio * adv_broadcast
@@ -249,5 +249,5 @@ class TrainGRPOModule(nn.Module):
             'per_token_logps': jax.lax.stop_gradient(per_token_logps), # Needed for next iteration's old_logps
             # Monitoring outputs related to original entropy calculation:
             'entropy': avg_entropy_metric,
-            'entropy_loss_metric': entropy_loss_metric,
+            'entropy_loss': entropy_loss_metric,
         }

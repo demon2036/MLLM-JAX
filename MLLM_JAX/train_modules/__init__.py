@@ -115,7 +115,7 @@ def selective_log_softmax_jax(logits: jnp.ndarray, index: jnp.ndarray) -> jnp.nd
 
 
 
-def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None,entropy_threshold=0.4):
+def get_advantages(rewards,groups,alpha=0.1,avg_entropy_per_sample=None,entropy_threshold=0.4):
     avg_entropy_grouped = avg_entropy_per_sample.reshape(-1, groups)
     # Ranks within each group (0=lowest entropy, groups-1=highest)
     ranks_grouped = jnp.argsort(jnp.argsort(avg_entropy_grouped, axis=1), axis=1)
@@ -142,6 +142,17 @@ def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None,entropy_
     mean_grouped_mod_rewards = jnp.repeat(mean_grouped_mod_rewards, groups, axis=0)
     std_grouped_mod_rewards = jnp.repeat(std_grouped_mod_rewards, groups, axis=0)
     advantages = (modified_rewards - mean_grouped_mod_rewards) / (std_grouped_mod_rewards + 1e-4)
+
+    group_max = advantages.reshape(-1, groups).max(axis=1)
+    scale_factors = 1.5 / (group_max + 1e-6)
+    scale_factors = jnp.repeat(scale_factors, groups, axis=0)
+    advantages = jnp.where(advantages > 0, advantages * scale_factors, advantages)
+
+    group_min = advantages.reshape(-1, groups).min(axis=1)
+    scale_factors_neg = -0.25 / (group_min + 1e-6)
+    scale_factors_neg = jnp.repeat(scale_factors_neg, groups, axis=0)
+    advantages = jnp.where(advantages < 0, advantages * scale_factors_neg, advantages)
+
     return advantages
 
 

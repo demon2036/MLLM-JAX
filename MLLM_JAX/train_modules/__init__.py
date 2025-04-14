@@ -203,6 +203,21 @@ class TrainGRPOModule(nn.Module):
         sum_entropy_per_sample = masked_token_entropy.sum(axis=-1) # Shape: [B]
         avg_entropy_per_sample = sum_entropy_per_sample / mask_loss.sum(axis=-1) # Shape: [B]
 
+        # --- Monitoring Metrics (Optional: Original entropy/entropy_loss calculation) ---
+        # These are NOT part of the main loss calculation anymore, just for logging.
+        # Create the specific mask for tokens 4-100 (inclusive)
+        valid_mask_for_metric = (mask_loss == 1)
+        cum_valid = jnp.cumsum(valid_mask_for_metric, axis=-1)
+        entropy_calc_mask = jnp.logical_and(
+            valid_mask_for_metric,
+            jnp.logical_and(cum_valid >= 4, cum_valid <= 100)
+        )
+
+        # Average entropy within the masked region (tokens 4-100)
+        masked_token_entropy_truncated = token_entropy * entropy_calc_mask
+        sum_entropy_per_sample_truncated = masked_token_entropy_truncated.sum(axis=-1)  # Shape: [B]
+        avg_entropy_per_sample_truncated = sum_entropy_per_sample_truncated / entropy_calc_mask.sum(axis=-1)  # Shape: [B]
+
         # --- PPO Loss Calculation (using the NEW rank_based_advantages) ---
         # Get old log probs (from previous iteration or stop grad)
         if "old_per_token_logps" in inputs:
@@ -218,7 +233,7 @@ class TrainGRPOModule(nn.Module):
 
         # Use rank_based_advantages, broadcasted to per-token shape [B, L-1]
         # Advantages shape [B] -> [B, 1] for broadcasting
-        adv_broadcast=get_advantages(inputs['rewards'],16,avg_entropy_per_sample=avg_entropy_per_sample)[:, None]
+        adv_broadcast=get_advantages(inputs['rewards'],16,avg_entropy_per_sample=avg_entropy_per_sample_truncated)[:, None]
 
         per_token_loss1 = ratio * adv_broadcast
         per_token_loss2 = clipped_ratio * adv_broadcast
@@ -241,20 +256,7 @@ class TrainGRPOModule(nn.Module):
         masked_loss = per_token_loss * mask_loss
         loss = masked_loss.sum() / total_valid_token_count
 
-        # --- Monitoring Metrics (Optional: Original entropy/entropy_loss calculation) ---
-        # These are NOT part of the main loss calculation anymore, just for logging.
-        # Create the specific mask for tokens 4-100 (inclusive)
-        valid_mask_for_metric = (mask_loss == 1)
-        cum_valid = jnp.cumsum(valid_mask_for_metric, axis=-1)
-        entropy_calc_mask = jnp.logical_and(
-            valid_mask_for_metric,
-            jnp.logical_and(cum_valid >= 4, cum_valid <= 100)
-        )
 
-        # Average entropy within the masked region (tokens 4-100)
-        sum_entropy_metric = (token_entropy * entropy_calc_mask).sum()
-        count_entropy_metric = jnp.maximum(entropy_calc_mask.sum(), 1e-6)
-        avg_entropy_metric = sum_entropy_metric / count_entropy_metric
 
 
         # --- Return Dictionary ---
@@ -264,5 +266,5 @@ class TrainGRPOModule(nn.Module):
             'per_token_logps': jax.lax.stop_gradient(per_token_logps), # Needed for next iteration's old_logps
             # Monitoring outputs related to original entropy calculation:
             'entropy': avg_entropy_per_sample,
-            'entropy_loss': avg_entropy_metric,
+            'entropy_loss': avg_entropy_per_sample_truncated,
         }

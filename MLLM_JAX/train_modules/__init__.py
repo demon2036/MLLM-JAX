@@ -147,7 +147,7 @@ class TrainGRPOModule(nn.Module):
         # --- Calculate Log Probs and Mask ---
         chosen_ids = input_ids[:, 1:]  # (B, L-1)
         # *** IMPORTANT: Use pad_token_id to create the mask correctly ***
-        mask_loss = (labels[:, 1:] != self.pad_token_id).astype(jnp.float32) # Shape: [B, L-1]
+        mask_loss = labels[:, 1:] # Shape: [B, L-1]
         # Avoid division by zero for counts
         total_valid_token_count = jnp.maximum(mask_loss.sum(), 1e-6)
 
@@ -196,7 +196,7 @@ class TrainGRPOModule(nn.Module):
 
         # Use rank_based_advantages, broadcasted to per-token shape [B, L-1]
         # Advantages shape [B] -> [B, 1] for broadcasting
-        adv_broadcast = (0.01*rank_based_advantages+inputs['advantages'])[:, None]
+        adv_broadcast = (1*rank_based_advantages+inputs['advantages'])[:, None]
 
         per_token_loss1 = ratio * adv_broadcast
         per_token_loss2 = clipped_ratio * adv_broadcast

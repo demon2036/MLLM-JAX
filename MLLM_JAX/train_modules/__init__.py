@@ -209,4 +209,4 @@ class TrainGRPOModule(nn.Module):
         entropy_mask = jnp.logical_and(entropy_mask, token_entropy < self.entropy_threshold)
         entropy_loss = (token_entropy * entropy_mask).sum() / (entropy_mask.sum() + 1e-4)
 
-        return {"loss": loss - 0.05 * entropy_loss, 'per_token_logps': per_token_logps, 'entropy': entropy,'entropy_loss':entropy_loss}
+        return {"loss": loss - 0.01 * entropy_loss, 'per_token_logps': per_token_logps, 'entropy': entropy,'entropy_loss':entropy_loss}

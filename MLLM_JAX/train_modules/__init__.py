@@ -120,6 +120,7 @@ class TrainGRPOModule(nn.Module):
     max_lengths:float=2048
     epsilon_low:float=0.2
     epsilon_high:float=0.28
+    entropy_threshold:float =0.3
 
 
 
@@ -217,10 +218,12 @@ class TrainGRPOModule(nn.Module):
 
         probs = jax.nn.softmax(logits[..., :-1, :] / self.temperature, axis=-1)
         token_entropy = -jnp.sum(probs * jnp.log(probs + 1e-8), axis=-1)  # 加 epsilon 防 log(0)
-        valid_token_entropy = token_entropy * entropy_mask
-        entropy = valid_token_entropy.sum() /(entropy_mask.sum() + 1e-4)
+        entropy = (token_entropy * entropy_mask).sum() /(entropy_mask.sum() + 1e-4)
         # valid_token_entropy = token_entropy * mask_loss
         # entropy = valid_token_entropy.sum() /(mask_loss.sum() + 1e-4)
 
 
-        return {"loss": loss -0.05*entropy  ,'per_token_logps':per_token_logps,'entropy':entropy }
+        entropy_mask=jnp.logical_and(entropy_mask,token_entropy<self.entropy_threshold)
+        entropy_loss = (token_entropy * entropy_mask).sum() / (entropy_mask.sum() + 1e-4)
+
+        return {"loss": loss -0.05*entropy_loss  ,'per_token_logps':per_token_logps,'entropy':entropy }

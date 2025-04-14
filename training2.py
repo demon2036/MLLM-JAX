@@ -229,20 +229,20 @@ def get_advantages(rewards,groups,advantage_estimator='grpo',alpha=0.02,mean_glo
         advantages=advantages+alpha*(rewards - mean_global) / (std_global + 1e-4)
 
 
-        max_grouped_advantages=advantages.reshape(-1, groups).max(axis=1)
-        max_grouped_advantages = jnp.repeat(max_grouped_advantages, groups, axis=0)
+        # max_grouped_advantages=advantages.reshape(-1, groups).max(axis=1)
+        # max_grouped_advantages = jnp.repeat(max_grouped_advantages, groups, axis=0)
 
         group_max = advantages.reshape(-1, groups).max(axis=1)
         scale_factors = 1.5 / (group_max + 1e-6)
         scale_factors = jnp.repeat(scale_factors, groups, axis=0)
         advantages = jnp.where(advantages > 0, advantages * scale_factors, advantages)
 
-        # group_min = advantages.reshape(-1, groups).min(axis=1)
-        # scale_factors_neg = -0.5 / (group_min + 1e-6)
-        # scale_factors_neg = jnp.repeat(scale_factors_neg, groups, axis=0)
-        # advantages = jnp.where(advantages < 0, advantages * scale_factors_neg, advantages)
+        group_min = advantages.reshape(-1, groups).min(axis=1)
+        scale_factors_neg = -0.5 / (group_min + 1e-6)
+        scale_factors_neg = jnp.repeat(scale_factors_neg, groups, axis=0)
+        advantages = jnp.where(advantages < 0, advantages * scale_factors_neg, advantages)
 
-        advantages = jnp.clip(advantages, -4 * max_grouped_advantages, None)
+        # advantages = jnp.clip(advantages, -4 * max_grouped_advantages, None)
 
 
 

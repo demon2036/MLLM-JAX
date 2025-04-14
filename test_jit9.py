@@ -54,8 +54,8 @@ class TrainingConfig:
     ppo_epochs: int = 2
     mesh_shape_dp: str = "-1,1,1"
     mesh_shape_fsdp: str = "1,-1,1"
-    sample_from_buffer_prob: float = 1.0
-    initial_buffer_fill_steps: int = 20
+    sample_from_buffer_prob: float = 0.25
+    initial_buffer_fill_steps: int = 25
     # Advantage calculation alpha (for grpo_clip2)
     advantage_alpha: float = 0.02 # Added alpha for grpo_clip2
     reward_funcs_weights: Dict[str, float] = field(default_factory=dict)
@@ -439,7 +439,7 @@ def main():
         process_count = 1
         process_index = 0
         logger.warning(f"Could not initialize JAX distributed: {e}. Running in single-process mode.")
-
+    rng=jax.random.PRNGKey(0)
     config = TrainingConfig()
     reward_functions, reward_weights = reward_setup()
     config.reward_funcs_weights = {func.__name__: weight for func, weight in zip(reward_functions, reward_weights)}
@@ -474,12 +474,15 @@ def main():
     for step in range(config.training_steps):
         logger.info(f"--- Step {step}/{config.training_steps} ---")
 
+
         # 1. Data Selection (Dataset or Replay Buffer)
+        key, rng = jax.random.split(rng)
         use_buffer = (
             step >= config.initial_buffer_fill_steps and
             len(replay_buffer) >= config.batch_size and
-            random.random() < config.sample_from_buffer_prob
+            jax.random.uniform(key,(1,),dtype=jnp.float32,minval=0,maxval=1) < config.sample_from_buffer_prob
         )
+
 
         prompts_for_generation: List[str] = []
         repeated_inputs: List[Dict[str, str]] = []
@@ -569,7 +572,7 @@ def main():
         logger.info(f"Step {step}: Local Rewards Mean: {total_rewards_local.mean():.4f}, Global Rewards Mean: {mean_global:.4f}, Std: {std_global:.4f}")
 
         # --- Determine Advantage Estimator based on last_entropy ---
-        if last_entropy > 0.4 and step>30 :
+        if last_entropy > 0.4 and step>300 :
             advantage_estimator = 'grpo_clip2'
         else:
             advantage_estimator = 'grpo'

@@ -178,8 +178,6 @@ class TrainGRPOModule(nn.Module):
         ranks = jnp.argsort(jnp.argsort(avg_entropy_per_sample)) # Shape: [B]
 
         # 4. Scale ranks to advantage range [-1, 1]
-        # Handle edge case B=1 separately to avoid division by zero and define behavior
-
         # Linear scaling: rank 0 -> -1, rank B-1 -> +1
         rank_based_advantages = -1.0 + 2.0 * ranks.astype(jnp.float32) / (B - 1.0) # Shape: [B]
 

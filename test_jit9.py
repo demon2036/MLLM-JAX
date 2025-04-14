@@ -486,27 +486,6 @@ def main():
         base_prompts: List[str] = []  # Store base prompts before repeating
         batch_inputs: List[Dict[str, str]] = []  # Store base inputs before repeating
 
-        #
-        # if use_buffer:
-        #     sampled_entries = random.sample(replay_buffer, config.batch_size)
-        #     logger.info(f"Sampling {config.batch_size} entries from replay buffer (size {len(replay_buffer)}) for continuation.")
-        #     base_continuation_prompts = []
-        #     batch_inputs = []
-        #     for entry in sampled_entries:
-        #         follow_up_text = "\nUser: I think this maybe correct.\nAssistant:"
-        #         continuation_prompt = entry.prompt_used + entry.generated_answer + follow_up_text
-        #         base_continuation_prompts.append(continuation_prompt)
-        #         batch_inputs.append(entry.original_input)
-        #     prompts_for_generation = repeat(base_continuation_prompts, config.num_pre_q)
-        #     repeated_inputs = repeat(batch_inputs, config.num_pre_q)
-        # else:
-        #     batch_inputs = random.sample(qas_data, config.batch_size)
-        #     logger.info(f"Sampling {config.batch_size} inputs from dataset.")
-        #     repeated_inputs = repeat(batch_inputs, config.num_pre_q)
-        #     prompts_for_generation = [apply_chat_template(tokenizer, item['Q']) for item in repeated_inputs]
-
-
-
         # --- MODIFIED: Construct history differently based on source ---
         if use_buffer:
             sampled_entries = random.sample(replay_buffer, config.batch_size)
@@ -590,7 +569,7 @@ def main():
         logger.info(f"Step {step}: Local Rewards Mean: {total_rewards_local.mean():.4f}, Global Rewards Mean: {mean_global:.4f}, Std: {std_global:.4f}")
 
         # --- Determine Advantage Estimator based on last_entropy ---
-        if last_entropy > 0.3 and step>20 :
+        if last_entropy > 0.4 and step>30 :
             advantage_estimator = 'grpo_clip2'
         else:
             advantage_estimator = 'grpo'

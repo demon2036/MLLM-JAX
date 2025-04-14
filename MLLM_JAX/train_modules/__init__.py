@@ -178,8 +178,6 @@ class TrainGRPOModule(nn.Module):
         # rewards = inputs['rewards']
         # original_advantages = inputs.get("advantages", None) # We won't use this
 
-        B = input_ids.shape[0] # Get batch size
-
         # --- Model Forward Pass ---
         logits, _ = self.model(input_ids=input_ids,
                                attention_mask=attention_mask) # Ignoring cache

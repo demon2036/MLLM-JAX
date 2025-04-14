@@ -54,8 +54,8 @@ class TrainingConfig:
     ppo_epochs: int = 2
     mesh_shape_dp: str = "-1,1,1"
     mesh_shape_fsdp: str = "1,-1,1"
-    sample_from_buffer_prob: float = 0.0
-    initial_buffer_fill_steps: int = 50
+    sample_from_buffer_prob: float = 1.0
+    initial_buffer_fill_steps: int = 30
     # Advantage calculation alpha (for grpo_clip2)
     advantage_alpha: float = 0.02 # Added alpha for grpo_clip2
     reward_funcs_weights: Dict[str, float] = field(default_factory=dict)
@@ -543,11 +543,11 @@ def main():
         logger.info(f"Step {step}: Local Rewards Mean: {total_rewards_local.mean():.4f}, Global Rewards Mean: {mean_global:.4f}, Std: {std_global:.4f}")
 
         # --- Determine Advantage Estimator based on last_entropy ---
-        # if last_entropy > 0.3 and step>20 :
-        #     advantage_estimator = 'grpo_clip2'
-        # else:
-        #     advantage_estimator = 'grpo'
-        advantage_estimator = 'grpo_clip2'
+        if last_entropy > 0.3 and step>20 :
+            advantage_estimator = 'grpo_clip2'
+        else:
+            advantage_estimator = 'grpo'
+        # advantage_estimator = 'grpo_clip2'
         logger.info(f"Using advantage estimator: {advantage_estimator} (based on last entropy: {last_entropy:.4f})")
         # ---------------------------------------------------------
 

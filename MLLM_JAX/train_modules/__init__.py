@@ -115,15 +115,27 @@ def selective_log_softmax_jax(logits: jnp.ndarray, index: jnp.ndarray) -> jnp.nd
 
 
 
-def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None):
+def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None,entropy_threshold=0.4):
     avg_entropy_grouped = avg_entropy_per_sample.reshape(-1, groups)
     # Ranks within each group (0=lowest entropy, groups-1=highest)
     ranks_grouped = jnp.argsort(jnp.argsort(avg_entropy_grouped, axis=1), axis=1)
     denom_grp = jnp.maximum(groups - 1.0, 0)  # Avoid division by zero if groups=1
     entropy_scores_grouped = -1.0 + 2.0 * ranks_grouped.astype(jnp.float32) / denom_grp
     entropy_scores = entropy_scores_grouped.reshape(-1)  # Shape [B]
+
+    # --- Apply High Entropy Threshold ---
+    # Create mask for samples with average entropy > threshold
+    high_entropy_mask = (avg_entropy_per_sample > entropy_threshold)  # Shape [B]
+
+    # Determine the final entropy score: 1.0 if entropy > threshold, otherwise use rank-based score
+    final_entropy_scores = jnp.where(
+        high_entropy_mask,
+        jnp.ones_like(entropy_scores),  # Use 1.0 for high entropy samples
+        entropy_scores  # Use rank-based score otherwise
+    )  # Shape [B]
+
     # 2. Combine original rewards with weighted entropy score
-    modified_rewards = rewards + alpha * entropy_scores  # Shape [B]
+    modified_rewards = rewards + alpha * final_entropy_scores  # Shape [B]
     # 3. Apply standard GRPO normalization to the *modified* rewards
     mean_grouped_mod_rewards = modified_rewards.reshape(-1, groups).mean(axis=1)
     std_grouped_mod_rewards = modified_rewards.reshape(-1, groups).std(axis=1)

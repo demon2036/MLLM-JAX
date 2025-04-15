@@ -553,6 +553,8 @@ def main():
             print(truncated_prefixes[  -2:],)
             print()
             print(generated_answers[-2:])
+            print()
+            print(prompts_for_generation[-2:])
             while True:
                 pass
             # print(prompts_for_generation[-2:])

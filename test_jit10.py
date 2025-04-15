@@ -54,8 +54,8 @@ class TrainingConfig:
     ppo_epochs: int = 2
     mesh_shape_dp: str = "-1,1,1"
     mesh_shape_fsdp: str = "1,-1,1"
-    sample_from_buffer_prob: float = 1.0
-    initial_buffer_fill_steps: int = 1
+    sample_from_buffer_prob: float = 0.5
+    initial_buffer_fill_steps: int = 20
     # Advantage calculation alpha (for grpo_clip2)
     advantage_alpha: float = 0.02 # Added alpha for grpo_clip2
     reward_funcs_weights: Dict[str, float] = field(default_factory=dict)
@@ -548,7 +548,7 @@ def main():
         if use_buffer:
             generated_answers=[prefix + answer for prefix, answer in zip(truncated_prefixes, generated_answers)]
             # print(truncated_prefixes[  -2:],)
-            print(generated_answers[-2:])
+            # print(generated_answers[-2:])
             # print(prompts_for_generation[-2:])
             # print(len(truncated_prefixes),len(generated_answers))
 

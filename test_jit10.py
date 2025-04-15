@@ -84,7 +84,8 @@ def apply_chat_template(tokenizer: PreTrainedTokenizerBase, conversation_history
     return tokenizer.apply_chat_template(
         conversation_history,
         tokenize=False,
-        add_generation_prompt=False if completion else True
+        add_generation_prompt=False if completion else True,
+        continue_final_message=True if completion else False,
     )
 
 
@@ -512,12 +513,11 @@ def main():
                         truncated_answer = full_answer[:trunc_length]
                     truncated_prefixes.append(truncated_answer)
 
-                    # 构造 4 轮对话历史，其中 assistant 的回答为截断文本
+                    # 构造 3 轮对话历史，其中 assistant 的回答为截断文本
                     history = [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": entry.original_input['Q']},
                         {"role": "assistant", "content": truncated_answer},
-                        # {"role": "user", "content": follow_up_text}
                     ]
                     # 注意：当是用于续写（completion）任务时，completion 参数传 True，
                     # 这样调用时不会自动添加生成提示，保证历史仅包含截断部分
@@ -550,13 +550,7 @@ def main():
 
         if use_buffer:
             generated_answers=[prefix + answer for prefix, answer in zip(truncated_prefixes, generated_answers)]
-            print(truncated_prefixes[  -2:],)
-            print()
             print(generated_answers[-2:])
-            print()
-            print(prompts_for_generation[-2:])
-            while True:
-                pass
             # print(prompts_for_generation[-2:])
             # print(len(truncated_prefixes),len(generated_answers))
 

@@ -48,14 +48,14 @@ class TrainingConfig:
     dataset_name: str = "openai/gsm8k"
     dataset_split: str = "train"
     num_pre_q: int = 16
-    batch_size: int = 2
+    batch_size: int = 1
     training_steps: int = 400
     grad_accum_steps: int = 1
     ppo_epochs: int = 2
     mesh_shape_dp: str = "-1,1,1"
     mesh_shape_fsdp: str = "1,-1,1"
-    sample_from_buffer_prob: float = 0.0
-    initial_buffer_fill_steps: int = 25
+    sample_from_buffer_prob: float = 0.5
+    initial_buffer_fill_steps: int = 20
     # Advantage calculation alpha (for grpo_clip2)
     advantage_alpha: float = 0.02 # Added alpha for grpo_clip2
     reward_funcs_weights: Dict[str, float] = field(default_factory=dict)

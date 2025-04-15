@@ -516,7 +516,7 @@ def main():
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": entry.original_input['Q']},
                     {"role": "assistant", "content": truncated_answer},
-                    {"role": "user", "content": follow_up_text}
+                    # {"role": "user", "content": follow_up_text}
                 ]
                 # 注意：当是用于续写（completion）任务时，completion 参数传 True，
                 # 这样调用时不会自动添加生成提示，保证历史仅包含截断部分

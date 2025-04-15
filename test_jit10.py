@@ -501,32 +501,35 @@ def main():
             # 定义续写指令，可以根据需要调整
             follow_up_text = "Please continue the response in a detailed manner."
             for entry in sampled_entries:
-                # 对历史生成答案进行随机截断：截取 30%-50% 的字符长度
-                full_answer = entry.generated_answer
-                if len(full_answer) == 0:
-                    truncated_answer = ""
-                else:
-                    trunc_fraction = random.uniform(0.3, 0.5)
-                    trunc_length = max(1, int(len(full_answer) * trunc_fraction))
-                    truncated_answer = full_answer[:trunc_length]
-                truncated_prefixes.append(truncated_answer)
+                for _ in range(config.num_pre_q):
+                    # 对历史生成答案进行随机截断：截取 30%-50% 的字符长度
+                    full_answer = entry.generated_answer
+                    if len(full_answer) == 0:
+                        truncated_answer = ""
+                    else:
+                        trunc_fraction = random.uniform(0.3, 0.5)
+                        trunc_length = max(1, int(len(full_answer) * trunc_fraction))
+                        truncated_answer = full_answer[:trunc_length]
+                    truncated_prefixes.append(truncated_answer)
 
-                # 构造 4 轮对话历史，其中 assistant 的回答为截断文本
-                history = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": entry.original_input['Q']},
-                    {"role": "assistant", "content": truncated_answer},
-                    # {"role": "user", "content": follow_up_text}
-                ]
-                # 注意：当是用于续写（completion）任务时，completion 参数传 True，
-                # 这样调用时不会自动添加生成提示，保证历史仅包含截断部分
-                base_prompts.append(apply_chat_template(tokenizer, history, completion=True))
-                batch_inputs.append(entry.original_input)
+                    # 构造 4 轮对话历史，其中 assistant 的回答为截断文本
+                    history = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": entry.original_input['Q']},
+                        {"role": "assistant", "content": truncated_answer},
+                        # {"role": "user", "content": follow_up_text}
+                    ]
+                    # 注意：当是用于续写（completion）任务时，completion 参数传 True，
+                    # 这样调用时不会自动添加生成提示，保证历史仅包含截断部分
+                    base_prompts.append(apply_chat_template(tokenizer, history, completion=True))
+                    batch_inputs.append(entry.original_input)
 
             # 重复生成基准提示和对应输入（repeat 8 次）
-            prompts_for_generation = repeat(base_prompts, config.num_pre_q)
-            repeated_inputs = repeat(batch_inputs, config.num_pre_q)
-            truncated_prefixes=repeat(truncated_prefixes,config.num_pre_q)
+            # prompts_for_generation = repeat(base_prompts, config.num_pre_q)
+            # repeated_inputs = repeat(batch_inputs, config.num_pre_q)
+            # truncated_prefixes=repeat(truncated_prefixes,config.num_pre_q)
+            prompts_for_generation=base_prompts
+            repeated_inputs=batch_inputs
         else:
             batch_inputs_base = random.sample(qas_data, config.batch_size)
             logger.info(f"Sampling {config.batch_size} inputs from dataset.")
@@ -547,8 +550,11 @@ def main():
 
         if use_buffer:
             generated_answers=[prefix + answer for prefix, answer in zip(truncated_prefixes, generated_answers)]
-            # print(truncated_prefixes[  -2:],)
+            print(truncated_prefixes[  -2:],)
+            print()
             print(generated_answers[-2:])
+            while True:
+                pass
             # print(prompts_for_generation[-2:])
             # print(len(truncated_prefixes),len(generated_answers))
 

@@ -144,7 +144,7 @@ def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None,entropy_
     advantages = (modified_rewards - mean_grouped_mod_rewards) / (std_grouped_mod_rewards + 1e-4)
 
     group_max = advantages.reshape(-1, groups).max(axis=1)
-    scale_factors = 2.0 / (group_max + 1e-6)
+    scale_factors = 1.0 / (group_max + 1e-6)
     scale_factors = jnp.repeat(scale_factors, groups, axis=0)
     advantages = jnp.where(advantages > 0, advantages * scale_factors, advantages)
 

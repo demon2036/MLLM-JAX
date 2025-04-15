@@ -252,7 +252,7 @@ class TrainGRPOModule(nn.Module):
 
         # Use rank_based_advantages, broadcasted to per-token shape [B, L-1]
         # Advantages shape [B] -> [B, 1] for broadcasting
-        adv_broadcast=get_advantages(inputs['rewards'],16,avg_entropy_per_sample=aavg_entropy_per_sample)[:, None]
+        adv_broadcast=get_advantages(inputs['rewards'],16,avg_entropy_per_sample=avg_entropy_per_sample)[:, None]
 
         per_token_loss1 = ratio * adv_broadcast
         per_token_loss2 = clipped_ratio * adv_broadcast

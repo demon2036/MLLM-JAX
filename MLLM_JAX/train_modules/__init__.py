@@ -143,15 +143,15 @@ def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None,entropy_
     std_grouped_mod_rewards = jnp.repeat(std_grouped_mod_rewards, groups, axis=0)
     advantages = (modified_rewards - mean_grouped_mod_rewards) / (std_grouped_mod_rewards + 1e-4)
 
-    # group_max = advantages.reshape(-1, groups).max(axis=1)
-    # scale_factors = 1.0 / (group_max + 1e-6)
-    # scale_factors = jnp.repeat(scale_factors, groups, axis=0)
-    # advantages = jnp.where(advantages > 0, advantages * scale_factors, advantages)
-    #
-    # group_min = advantages.reshape(-1, groups).min(axis=1)
-    # scale_factors_neg = -1.0 / (group_min + 1e-6)
-    # scale_factors_neg = jnp.repeat(scale_factors_neg, groups, axis=0)
-    # advantages = jnp.where(advantages < 0, advantages * scale_factors_neg, advantages)
+    group_max = advantages.reshape(-1, groups).max(axis=1)
+    scale_factors = 1.0 / (group_max + 1e-6)
+    scale_factors = jnp.repeat(scale_factors, groups, axis=0)
+    advantages = jnp.where(advantages > 0, advantages * scale_factors, advantages)
+
+    group_min = advantages.reshape(-1, groups).min(axis=1)
+    scale_factors_neg = -2.0 / (group_min + 1e-6)
+    scale_factors_neg = jnp.repeat(scale_factors_neg, groups, axis=0)
+    advantages = jnp.where(advantages < 0, advantages * scale_factors_neg, advantages)
 
     return advantages
 
@@ -268,8 +268,8 @@ class TrainGRPOModule(nn.Module):
 
         # --- Final Loss Averaging ---
         # Apply mask and average over all valid tokens in the batch
-        print(cum_valid.max(axis=-1).shape)
-        mask_loss=jnp.where((cum_valid.max(axis=-1)<=1000)[...,None],mask_loss,0)
+        # print(cum_valid.max(axis=-1).shape)
+        # mask_loss=jnp.where((cum_valid.max(axis=-1)<=1000)[...,None],mask_loss,0)
 
         total_valid_token_count = jnp.maximum(mask_loss.sum(), 1e-6)
         masked_loss = per_token_loss * mask_loss

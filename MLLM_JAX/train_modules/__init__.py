@@ -151,6 +151,10 @@ def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None,entropy_
     group_min = advantages.reshape(-1, groups).min(axis=1)
     scale_factors_neg = -2.0 / (group_min + 1e-6)
     scale_factors_neg = jnp.repeat(scale_factors_neg, groups, axis=0)
+
+    scale_factors_neg2 = -0.25/ (group_min + 1e-6)
+    scale_factors_neg2 = jnp.repeat(scale_factors_neg2, groups, axis=0)
+    scale_factors_neg=jnp.where(avg_entropy_per_sample<0.5,scale_factors_neg,scale_factors_neg2)
     advantages = jnp.where(advantages < 0, advantages * scale_factors_neg, advantages)
 
     return advantages

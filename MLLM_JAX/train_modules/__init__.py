@@ -135,7 +135,7 @@ def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None,entropy_
     )  # Shape [B]
 
     # 2. Combine original rewards with weighted entropy score
-    modified_rewards = rewards + alpha * final_entropy_scores  # Shape [B]
+    modified_rewards = rewards #+ alpha * final_entropy_scores  # Shape [B]
     # 3. Apply standard GRPO normalization to the *modified* rewards
     mean_grouped_mod_rewards = modified_rewards.reshape(-1, groups).mean(axis=1)
     std_grouped_mod_rewards = modified_rewards.reshape(-1, groups).std(axis=1)

@@ -546,7 +546,9 @@ def main():
 
         if use_buffer:
             # generated_answers=[prefix + answer for prefix, answer in zip(truncated_prefixes, generated_answers)]
-            print(truncated_prefixes[  -2:],generated_answers[-2:])
+            print(truncated_prefixes[  -2:],)
+            print(generated_answers[-2:])
+            print(prompts_for_generation[-2:])
             print(len(truncated_prefixes),len(generated_answers))
 
 

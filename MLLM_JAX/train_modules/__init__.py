@@ -276,8 +276,11 @@ class TrainGRPOModule(nn.Module):
         # print(cum_valid.max(axis=-1).shape)
         # mask_loss=jnp.where((cum_valid.max(axis=-1)<=1000)[...,None],mask_loss,0)
 
-        total_valid_token_count = jnp.maximum(mask_loss.sum(), 1e-6)
-        masked_loss = per_token_loss * mask_loss
+
+        mask_loss_low_entropy=jnp.where((avg_entropy_per_sample<0.4)[...,None],mask_loss,0)
+
+        total_valid_token_count = jnp.maximum(mask_loss_low_entropy.sum(), 1e-6)
+        masked_loss = per_token_loss * mask_loss_low_entropy
         loss = masked_loss.sum() / total_valid_token_count
 
         loss_avg = ((per_token_loss * mask_loss).sum(axis=1) / mask_loss.sum(axis=1)).mean()

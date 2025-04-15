@@ -526,6 +526,7 @@ def main():
             # 重复生成基准提示和对应输入（repeat 8 次）
             prompts_for_generation = repeat(base_prompts, config.num_pre_q)
             repeated_inputs = repeat(batch_inputs, config.num_pre_q)
+            truncated_prefixes=repeat(truncated_prefixes,config.num_pre_q)
         else:
             batch_inputs_base = random.sample(qas_data, config.batch_size)
             logger.info(f"Sampling {config.batch_size} inputs from dataset.")
@@ -545,11 +546,11 @@ def main():
         generated_answers, datas = run_generation_step(prompts_for_generation, jax_setup, config)
 
         if use_buffer:
-            # generated_answers=[prefix + answer for prefix, answer in zip(truncated_prefixes, generated_answers)]
-            print(truncated_prefixes[  -2:],)
+            generated_answers=[prefix + answer for prefix, answer in zip(truncated_prefixes, generated_answers)]
+            # print(truncated_prefixes[  -2:],)
             print(generated_answers[-2:])
-            print(prompts_for_generation[-2:])
-            print(len(truncated_prefixes),len(generated_answers))
+            # print(prompts_for_generation[-2:])
+            # print(len(truncated_prefixes),len(generated_answers))
 
 
         # 3. Calculate Rewards

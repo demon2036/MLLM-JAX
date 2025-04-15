@@ -275,9 +275,11 @@ class TrainGRPOModule(nn.Module):
         # print(cum_valid.max(axis=-1).shape)
         # mask_loss=jnp.where((cum_valid.max(axis=-1)<=1000)[...,None],mask_loss,0)
 
-        total_valid_token_count = jnp.maximum(mask_loss.sum(), 1e-6)
-        masked_loss = per_token_loss * mask_loss
-        loss = masked_loss.sum() / total_valid_token_count
+        # total_valid_token_count = jnp.maximum(mask_loss.sum(), 1e-6)
+        # masked_loss = per_token_loss * mask_loss
+        # loss = masked_loss.sum() / total_valid_token_count
+
+        loss = ((per_token_loss * mask_loss).sum(axis=1) / mask_loss.sum(axis=1)).mean()
 
         # --- Return Dictionary ---
         # Stop gradient on values returned only for monitoring or next step's input

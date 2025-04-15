@@ -144,14 +144,14 @@ def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None,entropy_
     advantages = (modified_rewards - mean_grouped_mod_rewards) / (std_grouped_mod_rewards + 1e-4)
     advantages = advantages + alpha * (rewards - rewards.mean()) / (rewards.std() + 1e-4)
 
-    group_max = advantages.reshape(-1, groups).max(axis=1)
-    scale_factors = 1.0 / (group_max + 1e-6)
-    scale_factors = jnp.repeat(scale_factors, groups, axis=0)
-    advantages = jnp.where(advantages > 0, advantages * scale_factors, advantages)
-
-    group_min = advantages.reshape(-1, groups).min(axis=1)
-    scale_factors_neg = -1.0 / (group_min + 1e-6)
-    scale_factors_neg = jnp.repeat(scale_factors_neg, groups, axis=0)
+    # group_max = advantages.reshape(-1, groups).max(axis=1)
+    # scale_factors = 1.0 / (group_max + 1e-6)
+    # scale_factors = jnp.repeat(scale_factors, groups, axis=0)
+    # advantages = jnp.where(advantages > 0, advantages * scale_factors, advantages)
+    #
+    # group_min = advantages.reshape(-1, groups).min(axis=1)
+    # scale_factors_neg = -1.0 / (group_min + 1e-6)
+    # scale_factors_neg = jnp.repeat(scale_factors_neg, groups, axis=0)
 
     # scale_factors_neg2 = -0.25/ (group_min + 1e-6)
     # scale_factors_neg2 = jnp.repeat(scale_factors_neg2, groups, axis=0)

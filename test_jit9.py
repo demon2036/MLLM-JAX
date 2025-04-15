@@ -48,7 +48,7 @@ class TrainingConfig:
     dataset_name: str = "openai/gsm8k"
     dataset_split: str = "train"
     num_pre_q: int = 16
-    batch_size: int = 1
+    batch_size: int = 4
     training_steps: int = 400
     grad_accum_steps: int = 1
     ppo_epochs: int = 2

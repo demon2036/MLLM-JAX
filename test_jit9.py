@@ -47,8 +47,8 @@ class TrainingConfig:
     max_length_total: int = max_length_sample + 512
     dataset_name: str = "openai/gsm8k"
     dataset_split: str = "train"
-    num_pre_q: int = 16
-    batch_size: int = 2
+    num_pre_q: int = 32
+    batch_size: int = 1
     training_steps: int = 400
     grad_accum_steps: int = 1
     ppo_epochs: int = 2

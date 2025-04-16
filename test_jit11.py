@@ -555,7 +555,7 @@ def main():
         base_prompts = []  # 用于续写的提示
         truncated_prefixes = []  # 保存截断文本（供调试或后续使用）
         batch_inputs_for_completion = []  # 对应的原始输入
-        for item, full_answer in zip(batch_inputs_base, generated_answers):
+        for item, full_answer in zip(repeated_inputs, generated_answers):
 
             trunc_fraction = random.uniform(0.3, 0.5)
             trunc_length = max(1, int(len(full_answer) * trunc_fraction))

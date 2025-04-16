@@ -433,6 +433,10 @@ def collect_and_log_metrics(
              logger.error(f"WandB logging failed: {e}")
 
 
+
+
+
+
 # %% Main Training Loop (MODIFIED ADVANTAGE CALCULATION)
 def main():
     """Main function to run the PPO training loop."""
@@ -543,7 +547,8 @@ def main():
 
         merged_datas = {}
         for key in datas.keys():
-            merged_datas[key] = np.concatenate([datas[key], completion_datas[key]], axis=0)
+            l=datas[key].shape[-1]
+            merged_datas[key] = np.concatenate([datas[key], completion_datas[key][:,:l]], axis=0)
 
         datas=merged_datas
         repeated_inputs=all_inputs

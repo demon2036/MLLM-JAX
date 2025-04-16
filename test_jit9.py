@@ -47,10 +47,10 @@ class TrainingConfig:
     max_length_total: int = max_length_sample + 512
     dataset_name: str = "openai/gsm8k"
     dataset_split: str = "train"
-    num_pre_q: int = 32
+    num_pre_q: int = 64
     batch_size: int = 1
     training_steps: int = 400
-    grad_accum_steps: int = 1
+    grad_accum_steps: int = 2
     ppo_epochs: int = 2
     mesh_shape_dp: str = "-1,1,1"
     mesh_shape_fsdp: str = "1,-1,1"

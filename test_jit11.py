@@ -582,7 +582,7 @@ def main():
 
         generated_answers = [prefix + answer for prefix, answer in zip(truncated_prefixes, completion_generated)]
 
-        for a in generated_answers:
+        for a in generated_answers[-2:]:
             print(a)
             while True:
                 pass

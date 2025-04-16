@@ -414,6 +414,10 @@ def collect_and_log_metrics(
         current_entropy = float(np.asarray(final_ppo_metadata['entropy_loss']))
         metrics['ppo/entropy_loss'] = current_entropy
 
+    if 'per_token_kl' in final_ppo_metadata:
+        current_entropy = float(np.asarray(final_ppo_metadata['per_token_kl']))
+        metrics['ppo/per_token_kl'] = current_entropy
+
     # Log to WandB
     if jax.process_index() == 0:
         # Include current entropy in log message

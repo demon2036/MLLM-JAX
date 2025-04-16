@@ -48,7 +48,7 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
     model_ref = get_model(mesh, model_path=model_path, only_model=True)
 
-    beta=0
+    beta=0.04
 
     train_module = flax.linen.remat(TrainGRPOModule,policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)(model=model,
                                    pad_token_id=tokenizer.pad_token_id,
@@ -92,8 +92,8 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
                                  micro_step=0,
                                  micro_in_mini=grad_accum_steps,
                                  grad_accum=grad_accum if grad_accum_steps > 1 else None,
-                                 ema_decay=0.99,
-                                 ema_params=copy.deepcopy(params),
+                                 # ema_decay=0.99,
+                                 # ema_params=copy.deepcopy(params),
                                  )
 
 
@@ -129,10 +129,10 @@ def training_step(state: TrainState, inputs: ArrayTree) -> tuple[TrainState, Arr
             micro_step=state.micro_step % state.micro_in_mini,
         )
 
-        new_ema_params = jax.tree_util.tree_map(
-            lambda ema, normal: ema * state.ema_decay + (1 - state.ema_decay) * normal,
-            state.ema_params, state.params)
-        state = state.replace(ema_params=new_ema_params)
+        # new_ema_params = jax.tree_util.tree_map(
+        #     lambda ema, normal: ema * state.ema_decay + (1 - state.ema_decay) * normal,
+        #     state.ema_params, state.params)
+        # state = state.replace(ema_params=new_ema_params)
 
         return state
 

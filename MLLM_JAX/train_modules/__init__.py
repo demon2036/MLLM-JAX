@@ -253,7 +253,9 @@ class TrainGRPOModule(nn.Module):
 
         # Use rank_based_advantages, broadcasted to per-token shape [B, L-1]
         # Advantages shape [B] -> [B, 1] for broadcasting
-        adv_broadcast=get_advantages(inputs['rewards'],32,avg_entropy_per_sample=avg_entropy_per_sample)[:, None]
+        # adv_broadcast=get_advantages(inputs['rewards'],32,avg_entropy_per_sample=avg_entropy_per_sample)[:, None]
+
+        adv_broadcast=inputs['advantages'][...,None]
 
         per_token_loss1 = ratio * adv_broadcast
         per_token_loss2 = clipped_ratio * adv_broadcast
@@ -276,16 +278,35 @@ class TrainGRPOModule(nn.Module):
         # print(cum_valid.max(axis=-1).shape)
         # mask_loss=jnp.where((cum_valid.max(axis=-1)<=1000)[...,None],mask_loss,0)
 
+        # mask_loss_low_entropy=jnp.where((avg_entropy_per_sample<0.4)[...,None],mask_loss,0)
+        # total_valid_token_count = jnp.maximum(mask_loss_low_entropy.sum(), 1e-6)
+        # masked_loss = per_token_loss * mask_loss_low_entropy
+        # loss = masked_loss.sum() / total_valid_token_count
+        # loss_avg = ((per_token_loss * mask_loss).sum(axis=1) / mask_loss.sum(axis=1)).mean()
+        # loss=jnp.where(avg_entropy_per_sample<0.4,loss,loss_avg)
 
-        mask_loss_low_entropy=jnp.where((avg_entropy_per_sample<0.4)[...,None],mask_loss,0)
 
-        total_valid_token_count = jnp.maximum(mask_loss_low_entropy.sum(), 1e-6)
-        masked_loss = per_token_loss * mask_loss_low_entropy
+        # 1. Calculate valid length for each sequence
+        seq_valid_length = mask_loss.sum(axis=-1)  # Shape: [B]
+        # 2. Calculate mean valid length across the batch
+        mean_seq_valid_length = jnp.mean(seq_valid_length)
+        # 3. Create mask for sequences shorter than the mean length
+        short_sequence_mask = (seq_valid_length < mean_seq_valid_length)  # Shape: [B]
+        # 4. Apply this condition to the original loss mask
+        #    Only keep mask entries (mask_loss=1) where the sequence is shorter than average
+        mask_loss_conditioned = jnp.where(
+            short_sequence_mask[..., None],  # Broadcast [B] to [B, 1]
+            mask_loss,  # Use original mask if condition is True
+            0  # Otherwise, mask is 0
+        )  # Shape: [B, L-1]
+
+        # 5. Calculate final loss averaged over only the conditioned mask
+        total_valid_token_count = jnp.maximum(mask_loss_conditioned.sum(), 1e-6)  # Sum over B, L-1
+        masked_loss = per_token_loss * mask_loss_conditioned
         loss = masked_loss.sum() / total_valid_token_count
 
         loss_avg = ((per_token_loss * mask_loss).sum(axis=1) / mask_loss.sum(axis=1)).mean()
-
-        loss=jnp.where(avg_entropy_per_sample<0.4,loss,loss_avg)
+        loss=jnp.where(short_sequence_mask,loss,loss_avg)
 
 
         # --- Return Dictionary ---

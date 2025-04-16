@@ -584,25 +584,25 @@ def main():
         # 4. 续写生成：使用截断后的重复提示进行续写，得到最终完成结果
         completion_generated, completion_datas = run_generation_step(prompts_for_completion, jax_setup, config)
 
-        # generated_answers = [prefix + answer for prefix, answer in zip(truncated_prefixes, completion_generated)]
+        generated_answers = [prefix + answer for prefix, answer in zip(truncated_prefixes, completion_generated)]
 
 
-        print(len(answers),len(truncated_prefixes),len(completion_generated))
-
-        for a,prefix, complete in zip(answers,truncated_prefixes, completion_generated):
-            print(a)
-            print()
-            print(prefix)
-            print()
-            print(complete)
-            while True:
-                pass
-
-
-        # for a in generated_answers[-2:]:
+        # print(len(answers),len(truncated_prefixes),len(completion_generated))
+        #
+        # for a,prefix, complete in zip(answers,truncated_prefixes, completion_generated):
         #     print(a)
+        #     print()
+        #     print(prefix)
+        #     print()
+        #     print(complete)
         #     while True:
         #         pass
+
+
+        for a in generated_answers[-2:]:
+            print(a)
+            while True:
+                pass
 
 
 

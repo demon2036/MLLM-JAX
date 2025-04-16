@@ -40,6 +40,9 @@ class TrainState(train_state.TrainState):
     grad_accum: ArrayTree | None = None
     ref_params:Any=None
 
+    ema_params: ArrayTree|None = None
+    ema_decay: float = 0.9998
+
 
 def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.5-3B',num_pre_q=16,max_lengths=None):
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
@@ -89,6 +92,8 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
                                  micro_step=0,
                                  micro_in_mini=grad_accum_steps,
                                  grad_accum=grad_accum if grad_accum_steps > 1 else None,
+                                 ema_decay=0.99,
+                                 ema_params=copy.deepcopy(params),
                                  )
 
 

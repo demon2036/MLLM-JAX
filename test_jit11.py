@@ -534,7 +534,7 @@ def main():
         answers=repeat(answers,repeat_times)
 
         # 4. 续写生成：使用截断后的重复提示进行续写，得到最终完成结果
-        completion_generated, completion_datas = run_generation_step(prompts_for_completion, jax_setup, config)
+        completion_generated, completion_datas = run_generation_step(prompts_for_completion, jax_setup, config,use_ema=True)
         completion_generated_answers = [prefix + answer for prefix, answer in zip(truncated_prefixes, completion_generated)]
         print(completion_generated_answers[-2:])
 

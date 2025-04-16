@@ -574,11 +574,12 @@ def main():
             base_prompts.append(apply_chat_template(tokenizer, history, completion=True))
             batch_inputs_for_completion.append(item)
 
+        repeat_times=1
         # 4. 重复扩充续写提示 7 次（及对应输入），构成续写生成的数据：num_pre_q * 7 条
-        prompts_for_completion = repeat(base_prompts, 7)
-        repeated_inputs_for_completion = repeat(batch_inputs_for_completion, 7)
-        truncated_prefixes=repeat(truncated_prefixes,7)
-        answers=repeat(answers,7)
+        prompts_for_completion = repeat(base_prompts, repeat_times)
+        repeated_inputs_for_completion = repeat(batch_inputs_for_completion, repeat_times)
+        truncated_prefixes=repeat(truncated_prefixes,repeat_times)
+        answers=repeat(answers,repeat_times)
 
         # 4. 续写生成：使用截断后的重复提示进行续写，得到最终完成结果
         completion_generated, completion_datas = run_generation_step(prompts_for_completion, jax_setup, config)

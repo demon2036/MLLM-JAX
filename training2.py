@@ -92,7 +92,7 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
                                  micro_step=0,
                                  micro_in_mini=grad_accum_steps,
                                  grad_accum=grad_accum if grad_accum_steps > 1 else None,
-                                 ema_decay=0.9,
+                                 ema_decay=0.99,
                                  ema_params=copy.deepcopy(params),
                                  )
 

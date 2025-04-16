@@ -598,11 +598,9 @@ def main():
         #     while True:
         #         pass
 
-
-        for a in generated_answers[-2:]:
-            print(a)
-            while True:
-                pass
+        print(generated_answers[-2:])
+        while True:
+            pass
 
 
 

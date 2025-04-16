@@ -42,15 +42,15 @@ class ReplayBufferEntry:
 @dataclass
 class TrainingConfig:
     """Configuration settings for the training script."""
-    model_path: str = 'Qwen/Qwen2.5-1.5B-Instruct'
+    model_path: str = 'Qwen/Qwen2.5-3B'#'Qwen/Qwen2.5-1.5B-Instruct'
     max_length_sample: int = 1024
     max_length_total: int = max_length_sample + 512
     dataset_name: str = "openai/gsm8k"
     dataset_split: str = "train"
-    num_pre_q: int = 64
+    num_pre_q: int = 16
     batch_size: int = 1
     training_steps: int = 400
-    grad_accum_steps: int = 2
+    grad_accum_steps: int = 1
     ppo_epochs: int = 2
     mesh_shape_dp: str = "-1,1,1"
     mesh_shape_fsdp: str = "1,-1,1"

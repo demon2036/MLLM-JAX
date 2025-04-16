@@ -292,6 +292,7 @@ class TrainGRPOModule(nn.Module):
         mean_seq_valid_length = jnp.mean(seq_valid_length)
         # 3. Create mask for sequences shorter than the mean length
         short_sequence_mask = (seq_valid_length < mean_seq_valid_length)  # Shape: [B]
+        short_sequence_mask=inputs['advantages']<=0
         # 4. Apply this condition to the original loss mask
         #    Only keep mask entries (mask_loss=1) where the sequence is shorter than average
         mask_loss_conditioned = jnp.where(

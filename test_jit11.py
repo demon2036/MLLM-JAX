@@ -555,29 +555,27 @@ def main():
         base_prompts = []  # 用于续写的提示
         truncated_prefixes = []  # 保存截断文本（供调试或后续使用）
         batch_inputs_for_completion = []  # 对应的原始输入
-        for original_input, full_answer in zip(prompts_for_generation, generated_answers):
-            # 对生成答案进行随机截断：截取 30%-50% 的字符
-            if len(full_answer) == 0:
-                truncated_answer = ""
-            else:
-                trunc_fraction = random.uniform(0.3, 0.5)
-                trunc_length = max(1, int(len(full_answer) * trunc_fraction))
-                truncated_answer = full_answer[:trunc_length]
+        for item, full_answer in zip(batch_inputs_base, generated_answers):
+
+            trunc_fraction = random.uniform(0.3, 0.5)
+            trunc_length = max(1, int(len(full_answer) * trunc_fraction))
+            truncated_answer = full_answer[:trunc_length]
             truncated_prefixes.append(truncated_answer)
 
             # 构造三轮对话历史，其中 assistant 的回答为截断文本
             history = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": original_input['Q']},
+                {"role": "user", "content": item['Q']},
                 {"role": "assistant", "content": truncated_answer},
             ]
             # completion 参数传 True，保证不会自动加入生成提示
             base_prompts.append(apply_chat_template(tokenizer, history, completion=True))
-            batch_inputs_for_completion.append(original_input)
+            batch_inputs_for_completion.append(item)
 
         # 4. 重复扩充续写提示 7 次（及对应输入），构成续写生成的数据：num_pre_q * 7 条
         prompts_for_completion = repeat(base_prompts, 7)
         repeated_inputs_for_completion = repeat(batch_inputs_for_completion, 7)
+        truncated_prefixes=repeat(truncated_prefixes,7)
 
         # 4. 续写生成：使用截断后的重复提示进行续写，得到最终完成结果
         completion_generated, completion_datas = run_generation_step(prompts_for_completion, jax_setup, config)

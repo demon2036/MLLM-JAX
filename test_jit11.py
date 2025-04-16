@@ -554,6 +554,7 @@ def main():
         # 3. 对每个生成的答案执行随机截断，并复制 7 份，用于续写任务
         base_prompts = []  # 用于续写的提示
         truncated_prefixes = []  # 保存截断文本（供调试或后续使用）
+        answers=[]
         batch_inputs_for_completion = []  # 对应的原始输入
         for item, full_answer in zip(repeated_inputs, generated_answers):
 
@@ -561,6 +562,7 @@ def main():
             trunc_length = max(1, int(len(full_answer) * trunc_fraction))
             truncated_answer = full_answer[:trunc_length]
             truncated_prefixes.append(truncated_answer)
+            answers.append(full_answer)
 
             # 构造三轮对话历史，其中 assistant 的回答为截断文本
             history = [
@@ -576,16 +578,27 @@ def main():
         prompts_for_completion = repeat(base_prompts, 7)
         repeated_inputs_for_completion = repeat(batch_inputs_for_completion, 7)
         truncated_prefixes=repeat(truncated_prefixes,7)
+        answers=repeat(answers,7)
 
         # 4. 续写生成：使用截断后的重复提示进行续写，得到最终完成结果
         completion_generated, completion_datas = run_generation_step(prompts_for_completion, jax_setup, config)
 
         generated_answers = [prefix + answer for prefix, answer in zip(truncated_prefixes, completion_generated)]
 
-        for a in generated_answers[-2:]:
+        for a,prefix, answer in zip(answers,truncated_prefixes, completion_generated):
             print(a)
+            print()
+            print(prefix)
+            print(answer)
+            print()
             while True:
                 pass
+
+
+        # for a in generated_answers[-2:]:
+        #     print(a)
+        #     while True:
+        #         pass
 
 
 

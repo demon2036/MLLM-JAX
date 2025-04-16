@@ -1,4 +1,5 @@
 # main.py
+import copy
 import functools
 import os
 import random
@@ -503,56 +504,64 @@ def main():
         # 2. Generate Answers
         generated_answers, datas = run_generation_step(prompts_for_generation, jax_setup, config)
 
-        # 3. 对每个生成的答案执行随机截断，并复制 7 份，用于续写任务
-        base_prompts = []  # 用于续写的提示
-        truncated_prefixes = []  # 保存截断文本（供调试或后续使用）
-        answers=[]
-        batch_inputs_for_completion = []  # 对应的原始输入
-        for item, full_answer in zip(repeated_inputs, generated_answers):
 
-            trunc_fraction = random.uniform(0.3, 0.5)
-            trunc_length = max(1, int(len(full_answer) * trunc_fraction))
-            truncated_answer = full_answer[:trunc_length]
-            truncated_prefixes.append(truncated_answer)
-            answers.append(full_answer)
+        if step>20:
 
-            # 构造三轮对话历史，其中 assistant 的回答为截断文本
-            history = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": item['Q']},
-                {"role": "assistant", "content": truncated_answer},
-            ]
-            # completion 参数传 True，保证不会自动加入生成提示
-            base_prompts.append(apply_chat_template(tokenizer, history, completion=True))
-            batch_inputs_for_completion.append(item)
+            # 3. 对每个生成的答案执行随机截断，并复制 7 份，用于续写任务
+            base_prompts = []  # 用于续写的提示
+            truncated_prefixes = []  # 保存截断文本（供调试或后续使用）
+            answers=[]
+            batch_inputs_for_completion = []  # 对应的原始输入
+            for item, full_answer in zip(repeated_inputs, generated_answers):
 
-        repeat_times=1
-        # 4. 重复扩充续写提示 7 次（及对应输入），构成续写生成的数据：num_pre_q * 7 条
-        prompts_for_completion = repeat(base_prompts, repeat_times)
-        repeated_inputs_for_completion = repeat(batch_inputs_for_completion, repeat_times)
-        truncated_prefixes=repeat(truncated_prefixes,repeat_times)
-        answers=repeat(answers,repeat_times)
+                trunc_fraction = random.uniform(0.3, 0.5)
+                trunc_length = max(1, int(len(full_answer) * trunc_fraction))
+                truncated_answer = full_answer[:trunc_length]
+                truncated_prefixes.append(truncated_answer)
+                answers.append(full_answer)
 
-        # 4. 续写生成：使用截断后的重复提示进行续写，得到最终完成结果
-        completion_generated, completion_datas = run_generation_step(prompts_for_completion, jax_setup, config,use_ema=True)
-        completion_generated_answers = [prefix + answer for prefix, answer in zip(truncated_prefixes, completion_generated)]
-        print(completion_generated_answers[-2:])
+                # 构造三轮对话历史，其中 assistant 的回答为截断文本
+                history = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": item['Q']},
+                    {"role": "assistant", "content": truncated_answer},
+                ]
+                # completion 参数传 True，保证不会自动加入生成提示
+                base_prompts.append(apply_chat_template(tokenizer, history, completion=True))
+                batch_inputs_for_completion.append(item)
+
+            repeat_times=1
+            # 4. 重复扩充续写提示 7 次（及对应输入），构成续写生成的数据：num_pre_q * 7 条
+            prompts_for_completion = repeat(base_prompts, repeat_times)
+            repeated_inputs_for_completion = repeat(batch_inputs_for_completion, repeat_times)
+            truncated_prefixes=repeat(truncated_prefixes,repeat_times)
+            answers=repeat(answers,repeat_times)
+
+            # 4. 续写生成：使用截断后的重复提示进行续写，得到最终完成结果
+            completion_generated, completion_datas = run_generation_step(prompts_for_completion, jax_setup, config,use_ema=True)
+            completion_generated_answers = [prefix + answer for prefix, answer in zip(truncated_prefixes, completion_generated)]
+            print(completion_generated_answers[-2:])
 
 
-        # 将初步生成的答案和续写生成的答案拼接成一个完整的答案列表
-        all_generated_answers = generated_answers + completion_generated_answers
+            # 将初步生成的答案和续写生成的答案拼接成一个完整的答案列表
+            all_generated_answers = generated_answers + completion_generated_answers
 
-        # 同时，将初步生成时的输入和续写生成时的输入拼接在一起
-        all_inputs = repeated_inputs + repeated_inputs_for_completion
+            # 同时，将初步生成时的输入和续写生成时的输入拼接在一起
+            all_inputs = repeated_inputs + repeated_inputs_for_completion
 
-        merged_datas = {}
-        for key in datas.keys():
-            l=datas[key].shape[-1]
-            merged_datas[key] = np.concatenate([datas[key], completion_datas[key][:,:l]], axis=0)
+            merged_datas = {}
+            for key in datas.keys():
+                l=datas[key].shape[-1]
+                merged_datas[key] = np.concatenate([datas[key], completion_datas[key][:,:l]], axis=0)
 
-        datas=merged_datas
-        repeated_inputs=all_inputs
-        generated_answers=all_generated_answers
+            datas=merged_datas
+            repeated_inputs=all_inputs
+            generated_answers=all_generated_answers
+
+        if step==20:
+            state=jax_setup['state']
+            jax_setup['state']=state.replace(  ema_params=copy.deepcopy(state.params)   )
+
         # 3. Calculate Rewards
         total_rewards_local, rewards_per_func_local = calculate_rewards(
             repeated_inputs,

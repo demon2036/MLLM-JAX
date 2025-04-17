@@ -171,20 +171,20 @@ class TrainGRPOModule(nn.Module):
 
         per_token_kl_metrics=None
         # --- KL Penalty (Optional) ---
-        if self.beta != 0 and self.ref_model is not None:
-            per_token_kl = jnp.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1
-            adv_broadcast = get_advantages(inputs['rewards'],
-                                           16,
-                                           avg_entropy_per_sample=avg_entropy_per_sample,
-                                           per_token_kl=per_token_kl)[:,None]
-            per_token_kl_metrics=jnp.sum(per_token_kl,axis=-1)
-
-        else:
-            adv_broadcast = get_advantages(inputs['rewards'], 32, avg_entropy_per_sample=avg_entropy_per_sample)[:, None]
-
+        # if self.beta != 0 and self.ref_model is not None:
+        #     per_token_kl = jnp.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1
+        #     adv_broadcast = get_advantages(inputs['rewards'],
+        #                                    16,
+        #                                    avg_entropy_per_sample=avg_entropy_per_sample,
+        #                                    per_token_kl=per_token_kl)[:,None]
+        #     per_token_kl_metrics=jnp.sum(per_token_kl,axis=-1)
+        #
+        # else:
+        #     adv_broadcast = get_advantages(inputs['rewards'], 32, avg_entropy_per_sample=avg_entropy_per_sample)[:, None]
+        #
 
         # Advantages shape [B] -> [B, 1] for broadcasting
-        # adv_broadcast=inputs['advantages'][...,None]
+        adv_broadcast=inputs['advantages'][...,None]
         per_token_loss1 = ratio * adv_broadcast
         per_token_loss2 = clipped_ratio * adv_broadcast
         per_token_ppo_loss = jnp.minimum(per_token_loss1, per_token_loss2) # Shape: [B, L-1]

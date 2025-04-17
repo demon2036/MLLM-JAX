@@ -90,7 +90,7 @@ class TrainGRPOModule(nn.Module):
     temperature: float = 1.0
     max_lengths: float = 2048 # Still present, not used in final loss below
     epsilon_low: float = 0.2
-    epsilon_high: float = 0.28
+    epsilon_high: float = 0.3
     entropy_threshold: float = 0.3 # Used only for monitoring metrics now
 
     def __call__(self, inputs) -> ArrayTree:
@@ -168,20 +168,6 @@ class TrainGRPOModule(nn.Module):
         # PPO ratio and clipping
         ratio = jnp.exp(per_token_logps - old_per_token_logps)
         clipped_ratio = jnp.clip(ratio, 1.0 - self.epsilon_low, 1.0 + self.epsilon_high)
-
-        per_token_kl_metrics=1.0
-        # --- KL Penalty (Optional) ---
-        # if self.beta != 0 and self.ref_model is not None:
-        #     per_token_kl = jnp.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1
-        #     adv_broadcast = get_advantages(inputs['rewards'],
-        #                                    16,
-        #                                    avg_entropy_per_sample=avg_entropy_per_sample,
-        #                                    per_token_kl=per_token_kl)[:,None]
-        #     per_token_kl_metrics=jnp.sum(per_token_kl,axis=-1)
-        #
-        # else:
-        #     adv_broadcast = get_advantages(inputs['rewards'], 32, avg_entropy_per_sample=avg_entropy_per_sample)[:, None]
-        #
 
         # Advantages shape [B] -> [B, 1] for broadcasting
         adv_broadcast=inputs['advantages'][...,None]

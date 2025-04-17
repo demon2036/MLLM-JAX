@@ -287,6 +287,8 @@ def get_advantages(rewards,groups,advantage_estimator='grpo',alpha=0.02,mean_glo
         std_grouped_mod_rewards = jnp.repeat(std_grouped_mod_rewards, groups, axis=0)
         advantages = (modified_rewards - mean_grouped_mod_rewards) / (std_grouped_mod_rewards + 1e-4)
         return advantages
+    elif advantage_estimator=='reinforce':
+        return (rewards-mean_global)/std_global
 
 
     return advantages

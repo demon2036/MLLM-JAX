@@ -576,7 +576,7 @@ def main():
         logger.info(f"Step {step}: Local Rewards Mean: {total_rewards_local.mean():.4f}, Global Rewards Mean: {mean_global:.4f}, Std: {std_global:.4f}")
 
         # --- Determine Advantage Estimator based on last_entropy ---
-        if last_entropy > 0.2 and step>300 :
+        if last_entropy > 0.2  :
             advantage_estimator = 'grpo_clip2'
         else:
             advantage_estimator = 'reinforce'

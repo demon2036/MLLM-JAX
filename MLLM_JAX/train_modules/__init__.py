@@ -62,8 +62,8 @@ return advantages
 
 
 def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None,entropy_threshold=0.4,per_token_kl=None):
-    if per_token_kl is not None:
-        rewards=rewards-0.001* jnp.sum(per_token_kl,axis=-1)
+    # if per_token_kl is not None:
+    #     rewards=rewards-0.001* jnp.sum(per_token_kl,axis=-1)
     # mean_grouped_mod_rewards = rewards.reshape(-1, groups).mean(axis=1)
     # std_grouped_mod_rewards = rewards.reshape(-1, groups).std(axis=1)
     # mean_grouped_mod_rewards = jnp.repeat(mean_grouped_mod_rewards, groups, axis=0)
@@ -189,11 +189,7 @@ class TrainGRPOModule(nn.Module):
         per_token_loss2 = clipped_ratio * adv_broadcast
         per_token_ppo_loss = jnp.minimum(per_token_loss1, per_token_loss2) # Shape: [B, L-1]
 
-        if self.beta != 0 and self.ref_model is not None:
-            per_token_loss = 0.0001 * per_token_kl - per_token_ppo_loss
-        else:
-            # Loss = -PPO (negate because we minimize loss, PPO maximizes objective)
-            per_token_loss = -per_token_ppo_loss
+        per_token_loss=-per_token_ppo_loss
         total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
         loss = ((per_token_loss * mask_loss).sum()) / total_valid_token_count
 

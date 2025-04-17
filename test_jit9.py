@@ -128,7 +128,7 @@ def setup_jax(config: TrainingConfig) -> Dict[str, Any]:
     # Store the JITted functions in a dictionary
     get_advantages_jitted_funcs = {
         'grpo_clip2': jax.jit(functools.partial(get_advantages,advantage_estimator='grpo_clip2'), static_argnames=('groups',)),
-        'grpo': jax.jit(functools.partial(get_advantages,advantage_estimator='grpo'), static_argnames=('groups',)),
+        'reinforce': jax.jit(functools.partial(get_advantages,advantage_estimator='reinforce'), static_argnames=('groups',)),
     }
     # ---------------------------------------
 

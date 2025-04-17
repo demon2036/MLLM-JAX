@@ -189,7 +189,11 @@ class TrainGRPOModule(nn.Module):
         per_token_loss2 = clipped_ratio * adv_broadcast
         per_token_ppo_loss = jnp.minimum(per_token_loss1, per_token_loss2) # Shape: [B, L-1]
 
-        per_token_loss=-per_token_ppo_loss
+        if self.beta != 0 and self.ref_model is not None:
+            per_token_loss = 0.0001 * per_token_kl - per_token_ppo_loss
+        else:
+            # Loss = -PPO (negate because we minimize loss, PPO maximizes objective)
+            per_token_loss = -per_token_ppo_loss
         total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
         loss = ((per_token_loss * mask_loss).sum()) / total_valid_token_count
 

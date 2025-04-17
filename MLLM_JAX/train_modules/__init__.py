@@ -202,5 +202,5 @@ class TrainGRPOModule(nn.Module):
             # Monitoring outputs related to original entropy calculation:
             'entropy': avg_entropy_per_sample,
             'entropy_loss': avg_entropy_per_sample_truncated,
-            'per_token_kl':per_token_kl_metrics
+            # 'per_token_kl':per_token_kl_metrics
         }

@@ -169,7 +169,7 @@ class TrainGRPOModule(nn.Module):
         ratio = jnp.exp(per_token_logps - old_per_token_logps)
         clipped_ratio = jnp.clip(ratio, 1.0 - self.epsilon_low, 1.0 + self.epsilon_high)
 
-        per_token_kl_metrics=0.0
+        per_token_kl_metrics=1.0
         # --- KL Penalty (Optional) ---
         # if self.beta != 0 and self.ref_model is not None:
         #     per_token_kl = jnp.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1

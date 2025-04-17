@@ -63,7 +63,7 @@ return advantages
 
 def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None,entropy_threshold=0.4,per_token_kl=None):
     if per_token_kl is not None:
-        rewards=rewards-0.001* jnp.sum(per_token_kl,axis=-1)
+        rewards=rewards-0.01* jnp.sum(per_token_kl,axis=-1)
     # mean_grouped_mod_rewards = rewards.reshape(-1, groups).mean(axis=1)
     # std_grouped_mod_rewards = rewards.reshape(-1, groups).std(axis=1)
     # mean_grouped_mod_rewards = jnp.repeat(mean_grouped_mod_rewards, groups, axis=0)

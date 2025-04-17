@@ -84,7 +84,7 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
         tx = optax.chain(optax.clip_by_global_norm(1.0), tx)
         if grad_accum_steps > 1:
             print(f'{grad_accum_steps=}')
-            grad_accum = jax.tree_map(jnp.zeros_like, params)
+            grad_accum = jax.tree_util.tree_map(jnp.zeros_like, params)
 
 
         return TrainState.create(apply_fn=train_module.apply,params=params,tx=tx,
@@ -115,7 +115,7 @@ def training_step(state: TrainState, inputs: ArrayTree) -> tuple[TrainState, Arr
     def loss_fn(params: ArrayTree) -> ArrayTree:
         metrics=state.apply_fn({'params': {'model':params,'ref_model':state.ref_params }, },inputs)
         per_token_logps=metrics.pop('per_token_logps',None)
-        metrics = jax.tree_map(jnp.mean, metrics)
+        metrics = jax.tree_util.tree_map(jnp.mean, metrics)
         return metrics["loss"], metrics |{'per_token_logps':per_token_logps}
 
     def update_fn(state: TrainState) -> TrainState:
@@ -125,7 +125,7 @@ def training_step(state: TrainState, inputs: ArrayTree) -> tuple[TrainState, Arr
         # grads = jax.tree_map(lambda g: g / state.micro_in_mini, state.grad_accum)
         state = state.apply_gradients(
             grads=grads,
-            grad_accum=jax.tree_map(jnp.zeros_like, state.grad_accum),
+            grad_accum=jax.tree_util.tree_map(jnp.zeros_like, state.grad_accum),
             micro_step=state.micro_step % state.micro_in_mini,
         )
 
@@ -146,7 +146,7 @@ def training_step(state: TrainState, inputs: ArrayTree) -> tuple[TrainState, Arr
         state = state.apply_gradients(grads=grads)
     else:
         state = state.replace(
-            grad_accum=jax.tree_map(lambda ga, g: ga + g, state.grad_accum, grads),
+            grad_accum=jax.tree_util.tree_map(lambda ga, g: ga + g, state.grad_accum, grads),
             micro_step=state.micro_step + 1,
         )
         state = jax.lax.cond(

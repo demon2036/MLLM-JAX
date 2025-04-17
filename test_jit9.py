@@ -51,7 +51,7 @@ class TrainingConfig:
     batch_size: int = 1
     training_steps: int = 400
     grad_accum_steps: int = 1
-    ppo_epochs: int = 2
+    ppo_epochs: int = 1
     mesh_shape_dp: str = "-1,1,1"
     mesh_shape_fsdp: str = "1,-1,1"
     sample_from_buffer_prob: float = 0.0

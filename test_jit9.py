@@ -481,7 +481,7 @@ def main():
 
 
         # --- Determine Advantage Estimator based on last_entropy ---
-        if last_entropy < 0.3  and counter>0 :
+        if last_entropy < 0.3  and counter<0 :
             config.batch_size = 16
             config.num_pre_q = 1
         else:

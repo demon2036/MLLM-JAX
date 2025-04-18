@@ -480,12 +480,13 @@ def main():
 
 
         # --- Determine Advantage Estimator based on last_entropy ---
-        if last_entropy > 0.2  :
-            config.batch_size = 1
-            config.num_pre_q=16
-        else:
+        if last_entropy < 0.3  and step>60 :
             config.batch_size = 16
             config.num_pre_q = 1
+        else:
+            config.batch_size = 1
+            config.num_pre_q = 16
+
 
 
 
@@ -586,11 +587,16 @@ def main():
         logger.info(f"Step {step}: Local Rewards Mean: {total_rewards_local.mean():.4f}, Global Rewards Mean: {mean_global:.4f}, Std: {std_global:.4f}")
 
         # --- Determine Advantage Estimator based on last_entropy ---
-        if last_entropy > 0.2  :
-            advantage_estimator = 'grpo_clip2'
-        else:
+        # if last_entropy > 0.2  :
+        #     advantage_estimator = 'grpo_clip2'
+        # else:
+        #     advantage_estimator = 'reinforce'
+
+        if last_entropy < 0.3  and step>60 :
             advantage_estimator = 'reinforce'
-        # advantage_estimator = 'grpo_clip2'
+        else:
+            advantage_estimator = 'grpo_clip2'
+
         logger.info(f"Using advantage estimator: {advantage_estimator} (based on last entropy: {last_entropy:.4f})")
         # ---------------------------------------------------------
 

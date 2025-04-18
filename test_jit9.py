@@ -479,6 +479,16 @@ def main():
         logger.info(f"--- Step {step}/{config.training_steps} ---")
 
 
+        # --- Determine Advantage Estimator based on last_entropy ---
+        if last_entropy > 0.2  :
+            config.batch_size = 1
+            config.num_pre_q=16
+        else:
+            config.batch_size = 16
+            config.num_pre_q = 1
+
+
+
         # 1. Data Selection (Dataset or Replay Buffer)
         key, rng = jax.random.split(rng)
         use_buffer = (

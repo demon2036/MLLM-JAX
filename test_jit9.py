@@ -475,7 +475,7 @@ def main():
 
     # --- Training Loop ---
     logger.info("Starting training loop...")
-    counter=60
+    counter=30
     for step in range(config.training_steps):
         logger.info(f"--- Step {step}/{config.training_steps} ---")
 

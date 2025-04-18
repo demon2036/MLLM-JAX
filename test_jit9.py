@@ -598,7 +598,7 @@ def main():
 
         else:
             advantage_estimator = 'grpo_clip2'
-            if counter<0:
+            if counter<0 and last_entropy>=0.3:
                 counter+=5
             counter -= 1
 

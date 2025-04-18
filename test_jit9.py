@@ -475,12 +475,13 @@ def main():
 
     # --- Training Loop ---
     logger.info("Starting training loop...")
+    counter=60
     for step in range(config.training_steps):
         logger.info(f"--- Step {step}/{config.training_steps} ---")
 
 
         # --- Determine Advantage Estimator based on last_entropy ---
-        if last_entropy < 0.3  and step>60 :
+        if last_entropy < 0.3  and counter>0 :
             config.batch_size = 16
             config.num_pre_q = 1
         else:
@@ -592,10 +593,15 @@ def main():
         # else:
         #     advantage_estimator = 'reinforce'
 
-        if last_entropy < 0.3  and step>60 :
+        if last_entropy < 0.3  and counter<0 :
             advantage_estimator = 'reinforce'
+            counter-=1
         else:
             advantage_estimator = 'grpo_clip2'
+            if counter<0:
+                counter+=5
+
+
 
         logger.info(f"Using advantage estimator: {advantage_estimator} (based on last entropy: {last_entropy:.4f})")
         # ---------------------------------------------------------

@@ -595,11 +595,12 @@ def main():
 
         if last_entropy < 0.3  and counter<0 :
             advantage_estimator = 'reinforce'
-            counter-=1
+
         else:
             advantage_estimator = 'grpo_clip2'
             if counter<0:
                 counter+=5
+            counter -= 1
 
 
 

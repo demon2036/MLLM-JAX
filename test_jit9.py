@@ -481,7 +481,7 @@ def main():
 
 
         # --- Determine Advantage Estimator based on last_entropy ---
-        if last_entropy < 0.3  and counter<0 :
+        if last_entropy < 0.2  and counter<0 :
             config.batch_size = 16
             config.num_pre_q = 1
         else:
@@ -593,12 +593,12 @@ def main():
         # else:
         #     advantage_estimator = 'reinforce'
 
-        if last_entropy < 0.3  and counter<0 :
+        if last_entropy < 0.2  and counter<0 :
             advantage_estimator = 'reinforce'
 
         else:
             advantage_estimator = 'grpo_clip2'
-            if counter<0 and last_entropy>=0.3:
+            if counter<0 and last_entropy>=0.2:
                 counter=5
             counter -= 1
 

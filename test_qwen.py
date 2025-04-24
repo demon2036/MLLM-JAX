@@ -87,7 +87,6 @@ def get_params(model_path):
     params = convert_torch_to_flax_llama(state_dict)
     # params = jax.tree_util.tree_map(lambda x: jnp.asarray(np.array(x), dtype=dtype), params)
     params = jax.tree_util.tree_map(lambda x: np.array(x), params)
-
     return params
 
 

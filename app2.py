@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,17 +10,21 @@ import jax.numpy as jnp
 import numpy as np
 from tqdm import tqdm
 from pydantic import BaseModel
+from transformers import TextIteratorStreamer, AutoTokenizer
 
 from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache
 # 假设以下函数和类在 test_qwen 中定义好
-from test_qwen import get_jax_mesh2, get_model, SampleState, Sampler, create_sample_state
+from test_qwen import get_model, Sampler
 import cloud_tpu_client
+
+from MLLM_JAX.utils import get_jax_mesh2
+from safe_decode import  TextStreamer
 
 tpu_name='node-2'
 
-ctc=cloud_tpu_client.client.Client(tpu_name)
-endpoints=ctc.network_endpoints()
-print(endpoints)
+# ctc=cloud_tpu_client.client.Client(tpu_name)
+# endpoints=ctc.network_endpoints()
+# print(endpoints)
 
 
 
@@ -42,22 +47,42 @@ class ChatRequest(BaseModel):
     model: str = "qwen2"  # 示例模型名称
     messages: list  # 形如 [{"role": "user", "content": "xxx"}, ...]
     temperature: float = 0.7
-    max_tokens: int = 16384
+    max_tokens: int = 4096
     stream: bool = True
 
 
 # 在应用启动时加载模型及相关资源（仅加载一次）
 @app.on_event("startup")
 async def startup_event():
-    pass
-    # max_cache_length = 16384
-    # # 根据实际情况修改 mesh 参数
+
+
+    max_cache_length = 1024
+    # 根据实际情况修改 mesh 参数
+    mesh = get_jax_mesh2("1,1,-1")
+    model, params, tokenizer, init_cache = get_model(mesh, max_cache_length=max_cache_length)
+    del init_cache
+    print(mesh)
+    app.sampler=Sampler(model, params, tokenizer,mesh=mesh)
+    print('go')
+
+
+    # max_cache_length = 4096
+    # # # 根据实际情况修改 mesh 参数
     # mesh = get_jax_mesh2("1,1,-1")
-    # model, params, tokenizer, init_cache = get_model(mesh, max_cache_length=max_cache_length)
-    # del init_cache
-    # print(mesh)
-    # app.sampler=Sampler(model, params, tokenizer,mesh=mesh)
-    # print('go')
+    # model_path = 'Qwen/Qwen2.5-7B-Instruct'
+    # model, params, tokenizer = get_model(mesh, model_path=model_path, )
+    # sampler = Sampler(model, tokenizer,mesh=mesh,)
+    # app.sampler=sampler
+    # app.params=params
+
+
+# 检查是否生成结束 token
+# data = {
+#     "model": "qwen2.5:7b-instruct",
+#     "created_at": datetime.utcnow().isoformat() + "Z",
+#     "response": f" {current_text}",
+#     "done": "False"
+# }
 
 
 async def generate_stream_response(chat_request: ChatRequest):
@@ -67,63 +92,71 @@ async def generate_stream_response(chat_request: ChatRequest):
         tokenize=False,
         add_generation_prompt=True
     )
-    print(chat_request.max_tokens)
+    print(prompt)
 
     res_tokens=[]
-    for i,token in enumerate(sampler.generate_prefill_auto_regressive(prompt,max_length=chat_request.max_tokens,stream=True)):
-        res_tokens.append(token)
-        if (i + 1) % 100 == 0:
-            current_text = sampler.tokenizer.decode(
-                # np.array(next_token),
-                np.array(res_tokens).reshape(-1),
-                skip_special_tokens=True
-            )
-            # res_tokens = []
-            # 检查是否生成结束 token
-            # SSE 格式（每个消息前缀 "data:"），确保客户端能实时接收
-            # yield f"{current_text}"
-            # await asyncio.sleep(0.0001)  # 根据需要调节间隔
 
-    current_text = sampler.tokenizer.decode(
-        # np.array(next_token),
-        np.array(res_tokens).reshape(-1),
-        skip_special_tokens=True
-    )
-
-    output={
-        "choices":[{
-            'finish_reason': 'stop', 'index': 0, 'logprobs': None,
-            "message": {"content": current_text,'role': 'assistant', 'annotations': None, 'audio': None, 'function_call': None,
-            'tool_calls': [], 'reasoning_content': None},
-            'stop_reason': None
-        }]
+    generated_token_ids=[]
+    all_decoded_text: str = ""  #
+    decoded_text_offset=0
+    decoder=TextStreamer(tokenizer=sampler.tokenizer)
 
 
+    def handle_msg(chunk):
+        return {
+              "model": "qwen2.5:7b-instruct",
+              "created_at":datetime.utcnow().isoformat() + "Z",
+              "message": {
+                "role": "assistant",
+                "content": f"{chunk}",
+                "images": None,
+                "tool_calls": []
+              },
+              "done": False,
+            }
+
+    if "r1" in chat_request.model:
+        data= handle_msg('<think>')
+        yield f"{json.dumps(data, ensure_ascii=False)}\n"data
+    else:
+        print('this is not r1 model')
+
+    async for token in sampler.generate_prefill_auto_regressive(prompt,max_length=8192,stream=True):
+        generated_token_ids.append( int(token[0]))
+        token=int(token[0])
+        new_text_chunk = decoder.put(np.array([token]))
+        if new_text_chunk is not None:
+            # print(new_text_chunk)
+            data=handle_msg(new_text_chunk)
+            yield f"{json.dumps(data, ensure_ascii=False)}\n"
+
+    if final_chunk := decoder.end():
+        print(final_chunk)
+        # data = handle_msg(final_chunk)
+        # yield f"{json.dumps(data, ensure_ascii=False)}\n"
+        data={
+            "model": "qwen2.5:7b-instruct",
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "message": {
+                "role": "assistant",
+                "content": f"{final_chunk}",
+                "images": None,
+                "tool_calls": []
+            },
+            "done": True,
+        }
+        yield f"{json.dumps(data, ensure_ascii=False)}\n"
 
 
-    }
-
-    yield json.dumps(output)
 
 
 
 
-@app.post("/chat")
+@app.post("/api/chat")
 async def chat(chat_request: ChatRequest):
     """
     FastAPI 端点，根据请求参数调用模型生成，并返回流式响应。
     """
-
-
-    print()
-
-
-
-    while True:
-        pass
-
-
-
     try:
         return StreamingResponse(
             generate_stream_response(chat_request),

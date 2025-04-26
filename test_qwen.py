@@ -17,6 +17,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from MLLM_JAX.language.llama.llama import convert_torch_to_flax_llama, LlamaJaxConfig
 from MLLM_JAX.language.qwen2.configuration_qwen2 import Qwen2Config, init_cache, pad_cache
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
+from MLLM_JAX.sample.sanple_utils import _temperature_sampling
 from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama, get_jax_mesh2
 import os
 from jax.sharding import PartitionSpec as P
@@ -87,13 +88,14 @@ def get_params(model_path):
     params = convert_torch_to_flax_llama(state_dict)
     # params = jax.tree_util.tree_map(lambda x: jnp.asarray(np.array(x), dtype=dtype), params)
     params = jax.tree_util.tree_map(lambda x: np.array(x), params)
+
     return params
 
 
 def get_model(mesh, max_cache_length=8192):
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
-    # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
-    model_path = 'Qwen/Qwen2.5-7B-Instruct'
+    model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
+    # model_path = 'Qwen/Qwen2.5-14B-Instruct'
     # model_path = 'Qwen/QwQ-32B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
 
@@ -187,11 +189,7 @@ class Sampler:
         self.cache = cache
         self.jit_infer_prefill = jax.jit(self.model.apply)
         self.jit_infer_step = jax.jit(self.infer)
-
-
-        self.sample_fn=_greedy_sampling
-
-
+        self.sample_fn=_temperature_sampling
         self.prefill_bucket = [
             128, 256, 512, 1024, 2048, 4096,8192,16384,16384*2
         ]
@@ -214,10 +212,7 @@ class Sampler:
                                          attention_mask=sample_state.attention_mask, cache=sample_state.cache)
 
 
-
         key,key2=jax.random.split(sample_state.key)
-
-
         next_token_predict = jnp.where(i < sample_state.num_input_tokens - 1,
                                        sample_state.token_buffer[:, i + 1],
                                        # jnp.argmax(logits[:, -1], axis=1)
@@ -255,8 +250,8 @@ class Sampler:
         input_ids = inputs['input_ids']
         true_length = input_ids.shape[1]
 
-        # prefill_length = self.find_ceil(true_length)
-        prefill_length=true_length
+        prefill_length = self.find_ceil(true_length)
+        # prefill_length=true_length
         # prefill_length = 32
 
         attention_mask = inputs['attention_mask']
@@ -297,7 +292,7 @@ class Sampler:
         return None  # 如果 input 大于所有数字，返回 None
 
 
-    def generate_prefill_auto_regressive(self, prompt, prefill_length=20, max_length=8192, stream=False):
+    async def generate_prefill_auto_regressive(self, prompt, prefill_length=20, max_length=8192, stream=False):
 
         input_ids_pad, pad_attention, position_ids, true_length, prefill_length = self.preprocess_prompt_prefill(prompt,
                                                                                                                  prefill_length)
@@ -329,38 +324,28 @@ class Sampler:
                                            pad_attention=pad_attention, true_length=true_length,
                                            decoding_step=true_length)
 
-        # print(        self.tokenizer.batch_decode(np.array(next_token_predict).reshape(1, -1), skip_special_tokens=False,
-        #                             clean_up_tokenization_spaces=False)[
-        #     0])
-        # while True:
-        #     pass
-
 
         exit_token_ids = self.tokenizer.eos_token_id
-        # exit_token_ids=106
 
         if stream:
             yield next_token_predict
 
         res = [next_token_predict]
-        for i in tqdm(range(max_length - true_length)):
+        for i in tqdm(range(max_length - true_length)  ,):
             sample_state = self.jit_infer_step(sample_state, self.params)
             select_ids = sample_state.next_token_buffer
-            res.append(select_ids)
-
-            if stream:
-                yield select_ids
-
+            # res.append(select_ids)
             if select_ids[0] == exit_token_ids:
                 output = \
                     self.tokenizer.batch_decode(np.array(res).reshape(1, -1), skip_special_tokens=False,
                                                 clean_up_tokenization_spaces=False)[
                         0]
                 print(output)
-
                 break
+            if stream:
+                yield select_ids
 
-        return None
+        # return None
 
 
 def test_qwen2_fast_jit_sample2():

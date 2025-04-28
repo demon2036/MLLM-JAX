@@ -92,7 +92,7 @@ async def generate_stream_response(chat_request: ChatRequest):
             joined = "".join(part.get("text", "") for part in msg["content"])
             msg["content"] = joined
 
-    final_message = msg.pop()
+    final_message = chat_request.messages.pop()
 
     sampler=app.sampler
     prompt = sampler.tokenizer.apply_chat_template(

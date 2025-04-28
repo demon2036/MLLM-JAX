@@ -96,7 +96,8 @@ async def generate_stream_response(chat_request: ChatRequest):
     prompt = sampler.tokenizer.apply_chat_template(
         chat_request.messages,
         tokenize=False,
-        add_generation_prompt=False
+        add_generation_prompt=False,
+        continue_final_message=True
     )
     print(prompt)
 

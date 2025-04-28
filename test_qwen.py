@@ -296,14 +296,17 @@ class Sampler:
 
     async def generate_prefill_auto_regressive(self, prompt, prefill_length=20, max_length=8192, stream=False):
 
-        print(self.jit_init_data)
-        cache = init_cache(self.model.config, len(prompt), max_cache_length=prefill_length, dtype=dtype,
-                           # shard_method=self.jit_init_data
-                           )
+        print(self.jit_init_data,len(prompt))
+
 
 
         input_ids_pad, pad_attention, position_ids, true_length, prefill_length = self.preprocess_prompt_prefill(prompt,
                                                                                                                  prefill_length)
+
+
+        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,
+                           # shard_method=self.jit_init_data
+                           )
 
         print(f'{prefill_length=}')
 

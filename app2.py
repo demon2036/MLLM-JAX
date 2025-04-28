@@ -98,7 +98,7 @@ async def generate_stream_response(chat_request: ChatRequest):
         tokenize=False,
         add_generation_prompt=True
     )
-    print(prompt)
+    # print(prompt)
 
     res_tokens=[]
 

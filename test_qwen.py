@@ -193,7 +193,7 @@ class Sampler:
         self.jit_infer_step = jax.jit(self.infer)
         self.sample_fn=functools.partial(_temperature_sampling,t=0.6)
         self.prefill_bucket = [
-            128, 256, 512, 1024, 2048, 4096,8192,16384,int(16384*1.5),16384*2
+            128, 256, 512, 1024, 2048, 4096,8192,16384,int(16384*1.5),16384*2-1024
         ]
 
 

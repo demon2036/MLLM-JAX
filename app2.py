@@ -86,7 +86,7 @@ async def startup_event():
 
 
 async def generate_stream_response(chat_request: ChatRequest):
-    print(chat_request)
+    # print(chat_request)
     for msg in chat_request.messages:
         if isinstance(msg["content"], list):
             joined = "".join(part.get("text", "") for part in msg["content"])
@@ -98,7 +98,7 @@ async def generate_stream_response(chat_request: ChatRequest):
         tokenize=False,
         add_generation_prompt=False
     )
-    # print(prompt)
+    print(prompt)
 
     res_tokens=[]
 
@@ -222,7 +222,7 @@ async def chat(chat_request: ChatRequest):
     """
     FastAPI 端点，根据请求参数调用模型生成，并返回流式响应。
     """
-    print(chat_request)
+    # print(chat_request)
     try:
         return StreamingResponse(
             generate_stream_response(chat_request),

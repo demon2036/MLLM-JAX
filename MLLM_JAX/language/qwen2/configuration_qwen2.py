@@ -204,6 +204,7 @@ def init_cache(
 
     config=getattr(config,"text_config",config)
     head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+    print(f'{shard_method=}')
 
     if shard_method is not None:
         cache = {

@@ -255,7 +255,8 @@ class Qwen2ForCausalLM(nn.Module):
             position_ids: jax.Array = None,  # [B, L]
             cache=None,  # (sequence length L')
             attention_mask: jax.Array = None,  # [B, L, L']
-            inputs_embeds: jax.Array | None = None
+            inputs_embeds: jax.Array | None = None,
+            true_length=None
     ):
         b, n = input_ids.shape
 
@@ -278,6 +279,10 @@ class Qwen2ForCausalLM(nn.Module):
         )
 
         hidden_states = outputs
+
+        if true_length is not None:
+            hidden_states = hidden_states[:, true_length]
+
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
         logits = self.lm_head(hidden_states)
         return logits, cache

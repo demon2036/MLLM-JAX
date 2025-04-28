@@ -747,12 +747,10 @@ class LlamaAttention(nn.Module):
             'end_index': jnp.zeros((batch_size,), dtype=jnp.int32),
         }
         if shard_method:
-            # cache['v']=shard_method(cache['v'])
-            # cache['k'] = shard_method(cache['k'])
-
-
-            cache['v'] = jax.tree_util.tree_map_with_path(shard_method,cache['v'])
-            cache['k'] = jax.tree_util.tree_map_with_path(shard_method,cache['k'])
+            cache['v']=shard_method(cache['v'])
+            cache['k'] = shard_method(cache['k'])
+            # cache['v'] = jax.tree_util.tree_map_with_path(shard_method,cache['v'])
+            # cache['k'] = jax.tree_util.tree_map_with_path(shard_method,cache['k'])
 
 
 

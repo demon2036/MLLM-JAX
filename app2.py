@@ -47,7 +47,7 @@ class ChatRequest(BaseModel):
     model: str = "qwen2"  # 示例模型名称
     messages: list  # 形如 [{"role": "user", "content": "xxx"}, ...]
     temperature: float = 0.7
-    max_tokens: int = 4096
+    max_tokens: int|None = None
     stream: bool = True
 
 
@@ -86,6 +86,12 @@ async def startup_event():
 
 
 async def generate_stream_response(chat_request: ChatRequest):
+    print(chat_request)
+    for msg in chat_request.messages:
+        if isinstance(msg["content"], list):
+            joined = "".join(part.get("text", "") for part in msg["content"])
+            msg["content"] = joined
+
     sampler=app.sampler
     prompt = sampler.tokenizer.apply_chat_template(
         chat_request.messages,
@@ -103,49 +109,77 @@ async def generate_stream_response(chat_request: ChatRequest):
 
 
     def handle_msg(chunk):
-        return {
-              "model": "qwen2.5:7b-instruct",
-              "created_at":datetime.utcnow().isoformat() + "Z",
-              "message": {
+        # return {
+        #       "model": "qwen2.5:7b-instruct",
+        #       "created_at":datetime.utcnow().isoformat() + "Z",
+        #       "message": {
+        #         "role": "assistant",
+        #         "content": f"{chunk}",
+        #         "images": None,
+        #         "tool_calls": []
+        #       },
+        #       "done": False,
+        #     }
+
+        return      {
+          "id": "chatcmpl-935",
+          "object": "chat.completion.chunk",
+          "created": 1745666537,
+          "model": "qwen2.5:7b-instruct",
+          "system_fingerprint": "fp_ollama",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
                 "role": "assistant",
-                "content": f"{chunk}",
-                "images": None,
-                "tool_calls": []
+                "content": chunk
               },
-              "done": False,
+              "finish_reason": None
             }
+          ]
+        }
 
-    if "r1" in chat_request.model:
-        data= handle_msg('<think>')
-        yield f"{json.dumps(data, ensure_ascii=False)}\n"data
-    else:
-        print('this is not r1 model')
 
-    async for token in sampler.generate_prefill_auto_regressive(prompt,max_length=8192,stream=True):
+
+    # if "r1" in chat_request.model:
+    #     data= handle_msg('<think>')
+    #     yield f"{json.dumps(data, ensure_ascii=False)}\n"
+    # else:
+    #     print('this is not r1 model')
+
+    l = sampler.tokenizer(prompt, return_tensors="jax", )['input_ids'].shape[1]
+    max_length=min(sampler.find_ceil(l)*2,int(16384*1.5))
+
+
+    async for token in sampler.generate_prefill_auto_regressive(prompt,max_length=max_length,stream=True):
         generated_token_ids.append( int(token[0]))
         token=int(token[0])
         new_text_chunk = decoder.put(np.array([token]))
         if new_text_chunk is not None:
-            # print(new_text_chunk)
+            print(new_text_chunk)
             data=handle_msg(new_text_chunk)
-            yield f"{json.dumps(data, ensure_ascii=False)}\n"
+            # yield f"{json.dumps(data, ensure_ascii=False)}\n"
+            yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     if final_chunk := decoder.end():
         print(final_chunk)
+        data = handle_msg(final_chunk)
+        yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
         # data = handle_msg(final_chunk)
         # yield f"{json.dumps(data, ensure_ascii=False)}\n"
-        data={
-            "model": "qwen2.5:7b-instruct",
-            "created_at": datetime.utcnow().isoformat() + "Z",
-            "message": {
-                "role": "assistant",
-                "content": f"{final_chunk}",
-                "images": None,
-                "tool_calls": []
-            },
-            "done": True,
-        }
-        yield f"{json.dumps(data, ensure_ascii=False)}\n"
+        # data={
+        #     "model": "qwen2.5:7b-instruct",
+        #     "created_at": datetime.utcnow().isoformat() + "Z",
+        #     "message": {
+        #         "role": "assistant",
+        #         "content": f"{final_chunk}",
+        #         "images": None,
+        #         "tool_calls": []
+        #     },
+        #     "done": True,
+        # }
+        # yield f"{json.dumps(data, ensure_ascii=False)}\n"
+    yield 'data: [DONE]\n\n'
 
 
 
@@ -153,6 +187,21 @@ async def generate_stream_response(chat_request: ChatRequest):
 
 
 @app.post("/api/chat")
+async def chat(chat_request: ChatRequest):
+    """
+    FastAPI 端点，根据请求参数调用模型生成，并返回流式响应。
+    """
+    try:
+        return StreamingResponse(
+            generate_stream_response(chat_request),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/chat/completions")
 async def chat(chat_request: ChatRequest):
     """
     FastAPI 端点，根据请求参数调用模型生成，并返回流式响应。

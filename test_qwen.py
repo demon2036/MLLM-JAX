@@ -1,3 +1,4 @@
+import functools
 import random
 from typing import Any
 
@@ -94,7 +95,8 @@ def get_params(model_path):
 
 def get_model(mesh, max_cache_length=8192):
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
-    model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
+    # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
+    model_path = 'Qwen/Qwen2.5-32B-Instruct'
     # model_path = 'Qwen/Qwen2.5-14B-Instruct'
     # model_path = 'Qwen/QwQ-32B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
@@ -189,9 +191,9 @@ class Sampler:
         self.cache = cache
         self.jit_infer_prefill = jax.jit(self.model.apply)
         self.jit_infer_step = jax.jit(self.infer)
-        self.sample_fn=_temperature_sampling
+        self.sample_fn=functools.partial(_temperature_sampling,t=0.6)
         self.prefill_bucket = [
-            128, 256, 512, 1024, 2048, 4096,8192,16384,16384*2
+            128, 256, 512, 1024, 2048, 4096,8192,16384,int(16384*1.5)
         ]
 
 
@@ -294,6 +296,12 @@ class Sampler:
 
     async def generate_prefill_auto_regressive(self, prompt, prefill_length=20, max_length=8192, stream=False):
 
+        print(self.jit_init_data)
+        cache = init_cache(self.model.config, len(prompt), max_cache_length=prefill_length, dtype=dtype,
+                           shard_method=self.jit_init_data
+                           )
+
+
         input_ids_pad, pad_attention, position_ids, true_length, prefill_length = self.preprocess_prompt_prefill(prompt,
                                                                                                                  prefill_length)
 
@@ -301,24 +309,22 @@ class Sampler:
 
         # max_length=max(8192,prefill_length*2)
         # cache = init_cache(self.model.config, 1, max_cache_length=prefill_length, dtype=dtype)
-        cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,
-                           # shard_method=self.jit_init_data
-                           )
+
         # input_ids_pad, pad_attention, position_ids,cache=self.jit_init_data((input_ids_pad, pad_attention, position_ids,cache))
 
         logits, cache = self.jit_infer_prefill({'params': self.params}, input_ids=input_ids_pad,
                                                position_ids=position_ids,
-                                               attention_mask=pad_attention, cache=cache)
+                                               attention_mask=pad_attention, cache=cache,true_length=true_length-1)
+
+
+        next_token_predict = jnp.argmax(logits, axis=1)
         print(max_length,true_length)
         cache, input_ids_pad, pad_attention, position_ids = self.prepare_from_prefill_to_decode(cache, input_ids_pad,
                                                                                                 pad_attention,
                                                                                                 true_length,
                                                                                                 max_length=max_length)
-
-        next_token_predict = jnp.argmax(logits[:, true_length - 1], axis=1)
-
+        # next_token_predict = jnp.argmax(logits[:, true_length - 1], axis=1)
         # next_token_predict = jnp.argmax(logits[:, - 1], axis=1)
-
         input_ids_pad = input_ids_pad.at[:, true_length].set(next_token_predict)
         sample_state = create_sample_state(input_ids_pad=input_ids_pad, position_ids=position_ids, cache=cache,
                                            pad_attention=pad_attention, true_length=true_length,

@@ -95,8 +95,8 @@ def get_params(model_path):
 
 def get_model(mesh, max_cache_length=8192):
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
-    # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
-    model_path = 'Qwen/Qwen2.5-32B-Instruct'
+    model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
+    # model_path = 'Qwen/Qwen2.5-32B-Instruct'
     # model_path = 'Qwen/Qwen2.5-14B-Instruct'
     # model_path = 'Qwen/QwQ-32B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'

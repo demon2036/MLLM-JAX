@@ -298,7 +298,7 @@ class Sampler:
 
         print(self.jit_init_data)
         cache = init_cache(self.model.config, len(prompt), max_cache_length=prefill_length, dtype=dtype,
-                           shard_method=self.jit_init_data
+                           # shard_method=self.jit_init_data
                            )
 
 

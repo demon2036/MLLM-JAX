@@ -92,18 +92,15 @@ async def generate_stream_response(chat_request: ChatRequest):
             joined = "".join(part.get("text", "") for part in msg["content"])
             msg["content"] = joined
 
-    final_message = chat_request.messages.pop()
+
 
     sampler=app.sampler
     prompt = sampler.tokenizer.apply_chat_template(
         chat_request.messages,
         tokenize=False,
-        add_generation_prompt=True,
+        add_generation_prompt=False,
 
-    )+ final_message['content']
-    temp = app.sampler.tokenizer.encode(prompt)
-    temp.append(151649)
-    prompt=app.sampler.tokenizer.decode(temp)
+    )
     print(prompt)
 
     res_tokens=[]

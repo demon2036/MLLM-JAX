@@ -101,6 +101,9 @@ async def generate_stream_response(chat_request: ChatRequest):
         add_generation_prompt=True,
 
     )+ final_message['content']
+    temp = app.sampler.tokenizer.encode(prompt)
+    temp.append(151649)
+    prompt=app.sampler.tokenizer.decode(temp)
     print(prompt)
 
     res_tokens=[]

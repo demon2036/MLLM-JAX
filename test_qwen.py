@@ -367,7 +367,7 @@ class Sampler:
 
 
 async def test_qwen2_fast_jit_sample2():
-    max_cache_length = 128
+    max_cache_length = 1024
     mesh = get_jax_mesh2("1,1,-1")
     model, params, tokenizer, cache = get_model(mesh, max_cache_length=max_cache_length)
     exit_token_ids = tokenizer.eos_token_id

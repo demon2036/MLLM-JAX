@@ -381,7 +381,7 @@ async def test_qwen2_fast_jit_sample2():
         messages,
         tokenize=False,
         add_generation_prompt=True,
-        enable_thinking=False  # Switches between thinking and non-thinking modes. Default is True.
+        enable_thinking=True  # Switches between thinking and non-thinking modes. Default is True.
     )
 
     sampler = Sampler(model, params, tokenizer,mesh=mesh)

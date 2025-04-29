@@ -930,8 +930,8 @@ def convert_torch_to_flax_llama(state_dict):
         if f'model.layers.{i}.self_attn.q_norm.weight' in state_dict:
             params[f'model.layers.{i}.self_attn.q_norm.scale'] = state_dict[
                 f'model.layers.{i}.self_attn.q_norm.weight']
-            params[f'model.layers.{i}.self_attn.v_norm.scale'] = state_dict[
-                f'model.layers.{i}.self_attn.v_norm.weight']
+            params[f'model.layers.{i}.self_attn.k_norm.scale'] = state_dict[
+                f'model.layers.{i}.self_attn.k_norm.weight']
 
 
         i += 1

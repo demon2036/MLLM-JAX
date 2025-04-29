@@ -236,7 +236,7 @@ class Qwen3Model(nn.Module):
 
 
 class Qwen3ForCausalLM(nn.Module):
-    config: Qwen2Config
+    config: Qwen3Config
     jax_config: Any = None
 
     def setup(self) -> None:
@@ -244,7 +244,7 @@ class Qwen3ForCausalLM(nn.Module):
         param_dtype=self.jax_config.param_dtype
         # self.model = Qwen2Model(self.config, jax_config=self.jax_config)
         # self.lm_head = nn.Dense(self.config.vocab_size, use_bias=False)
-        self.model = nn.remat(Qwen2Model)(self.config, jax_config=self.jax_config)
+        self.model = nn.remat(Qwen3Model)(self.config, jax_config=self.jax_config)
         self.lm_head = nn.remat(nn.Dense)(self.config.vocab_size, use_bias=False,dtype=dtype,param_dtype=param_dtype)
 
 

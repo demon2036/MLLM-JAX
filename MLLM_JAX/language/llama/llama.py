@@ -933,6 +933,8 @@ def convert_torch_to_flax_llama(state_dict):
             params[f'model.layers.{i}.self_attn.k_norm.scale'] = state_dict[
                 f'model.layers.{i}.self_attn.k_norm.weight']
 
+            print( params[f'model.layers.{i}.self_attn.q_norm.scale'].shape)
+
 
         i += 1
     params['model.norm.scale'] = state_dict['model.norm.weight']

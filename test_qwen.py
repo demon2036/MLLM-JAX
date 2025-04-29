@@ -18,6 +18,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from MLLM_JAX.language.llama.llama import convert_torch_to_flax_llama, LlamaJaxConfig
 from MLLM_JAX.language.qwen2.configuration_qwen2 import Qwen2Config, init_cache, pad_cache
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
+from MLLM_JAX.language.qwen3.modular_qwen3 import Qwen3ForCausalLM
 from MLLM_JAX.sample.sanple_utils import _temperature_sampling
 from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama, get_jax_mesh2
 import os
@@ -96,7 +97,7 @@ def get_params(model_path):
 def get_model(mesh, max_cache_length=8192):
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
-    model_path = 'Qwen/Qwen2.5-14B-Instruct'
+    model_path = 'Qwen/Qwen3-14B'
     # model_path = 'Qwen/Qwen2.5-14B-Instruct'
     # model_path = 'Qwen/QwQ-32B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
@@ -110,7 +111,7 @@ def get_model(mesh, max_cache_length=8192):
 
     params = get_params(model_path)
     jax_config = LlamaJaxConfig(mesh=mesh)
-    model = Qwen2ForCausalLM(config, jax_config)
+    model = Qwen3ForCausalLM(config, jax_config)
 
     def init_fn(params):
         return params

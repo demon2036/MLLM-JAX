@@ -151,7 +151,7 @@ async def generate_stream_response(chat_request: ChatRequest):
     #     print('this is not r1 model')
 
     l = sampler.tokenizer(prompt, return_tensors="jax", )['input_ids'].shape[1]
-    max_length=min(sampler.find_ceil(l)*2,int(16384*1.5))
+    max_length=min(sampler.find_ceil(l)*2,int(16384*2))
 
 
     async for token in sampler.generate_prefill_auto_regressive(prompt,max_length=max_length,stream=True):

@@ -99,6 +99,7 @@ async def generate_stream_response(chat_request: ChatRequest):
         chat_request.messages,
         tokenize=False,
         add_generation_prompt=True,
+        enable_thinking=True
 
     )
     print(prompt)

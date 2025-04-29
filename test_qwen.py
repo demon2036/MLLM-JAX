@@ -372,11 +372,20 @@ async def test_qwen2_fast_jit_sample2():
     model, params, tokenizer, cache = get_model(mesh, max_cache_length=max_cache_length)
     exit_token_ids = tokenizer.eos_token_id
     print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False,
-                                           add_generation_prompt=True)
+
+    prompt = "Give me a short introduction to large language model."
+    messages = [
+        {"role": "user", "content": prompt}
+    ]
+    prompt = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=True  # Switches between thinking and non-thinking modes. Default is True.
+    )
 
     sampler = Sampler(model, params, tokenizer,mesh=mesh)
-    print('hi hi')
+    print(prompt)
     async for _ in sampler.generate_prefill_auto_regressive(prompt,max_length=max_cache_length):
         pass
 

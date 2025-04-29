@@ -373,10 +373,10 @@ async def test_qwen2_fast_jit_sample2():
     exit_token_ids = tokenizer.eos_token_id
     print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')
 
-    prompt = "Who are you?"
-    messages = [
-        {"role": "user", "content": prompt}
-    ]
+    # prompt = "Who are you?"
+    # messages = [
+    #     {"role": "user", "content": prompt}
+    # ]
     prompt = tokenizer.apply_chat_template(
         messages,
         tokenize=False,

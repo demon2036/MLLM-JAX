@@ -50,6 +50,9 @@ class Qwen3Attention(LlamaAttention):
         self.v_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=self.config.attention_bias,dtype=dtype,param_dtype=param_dtype)
         self.o_proj = nn.Dense(self.hidden_size, use_bias=self.config.attention_bias,dtype=dtype,param_dtype=param_dtype)
 
+        self.q_norm = LlamaRMSNorm(eps=config.rms_norm_eps)  # unlike olmo, only on the head dim!
+        self.k_norm = LlamaRMSNorm(eps=config.rms_norm_eps)  # thus post q_norm does not need reshape
+
     def __call__(
             self,
             x: jax.Array,
@@ -67,6 +70,9 @@ class Qwen3Attention(LlamaAttention):
         query_states = einops.rearrange(query_states, 'b n (h d)->b h n  d ', d=self.head_dim)
         key_states = einops.rearrange(key_states, 'b n (h d)->b h n  d ', d=self.head_dim)
         value_states = einops.rearrange(value_states, 'b n (h d)->b h n  d ', d=self.head_dim)
+
+        query_states=self.q_norm(query_states)
+        key_states=self.k_norm(key_states)
 
         dtype = x.dtype
         cos, sin = position_embeddings

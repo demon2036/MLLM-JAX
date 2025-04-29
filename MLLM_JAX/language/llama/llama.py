@@ -927,6 +927,13 @@ def convert_torch_to_flax_llama(state_dict):
             params[f'model.layers_{i}.self_attn.v_proj.bias'] = state_dict[
                 f'model.layers.{i}.self_attn.v_proj.bias']
 
+        if f'model.layers.{i}.self_attn.q_norm.scale' in state_dict:
+            params[f'model.layers.{i}.self_attn.q_norm.scale'] = state_dict[
+                f'model.layers.{i}.self_attn.q_norm.scale']
+            params[f'model.layers.{i}.self_attn.v_norm.scale'] = state_dict[
+                f'model.layers.{i}.self_attn.v_norm.scale']
+
+
         i += 1
     params['model.norm.scale'] = state_dict['model.norm.weight']
     params['model.embed_tokens.embedding'] = state_dict['model.embed_tokens.weight']  #.transpose(1,0)

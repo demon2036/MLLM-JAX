@@ -373,7 +373,7 @@ async def test_qwen2_fast_jit_sample2():
     exit_token_ids = tokenizer.eos_token_id
     print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')
 
-    prompt = "Give me a short introduction to large language model."
+    prompt = "Who are you?"
     messages = [
         {"role": "user", "content": prompt}
     ]
@@ -381,7 +381,7 @@ async def test_qwen2_fast_jit_sample2():
         messages,
         tokenize=False,
         add_generation_prompt=True,
-        enable_thinking=True  # Switches between thinking and non-thinking modes. Default is True.
+        enable_thinking=False  # Switches between thinking and non-thinking modes. Default is True.
     )
 
     sampler = Sampler(model, params, tokenizer,mesh=mesh)

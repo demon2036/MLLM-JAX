@@ -346,6 +346,13 @@ class Sampler:
             sample_state = self.jit_infer_step(sample_state, self.params)
             select_ids = sample_state.next_token_buffer
             res.append(select_ids)
+
+            output = \
+                    self.tokenizer.batch_decode(np.array(res).reshape(1, -1), skip_special_tokens=False,
+                                                clean_up_tokenization_spaces=False)[
+                        0]
+                print(output)
+
             if select_ids[0] == exit_token_ids:
                 output = \
                     self.tokenizer.batch_decode(np.array(res).reshape(1, -1), skip_special_tokens=False,

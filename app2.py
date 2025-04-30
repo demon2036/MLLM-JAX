@@ -54,6 +54,7 @@ class ChatRequest(BaseModel):
 # 在应用启动时加载模型及相关资源（仅加载一次）
 @app.on_event("startup")
 async def startup_event():
+    jax.distributed.initialize()
     local_devices=jax.local_devices(process_index=jax.process_index())
 
     print(local_devices,jax.devices())

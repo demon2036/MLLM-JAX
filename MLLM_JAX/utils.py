@@ -278,9 +278,8 @@ def get_jax_mesh(axis_dims, names,devices=None):
     assert len(dims) == len(names)
 
     if devices is not None:
-        if devices is not None:
-            mesh_shape = np.arange(len(devices)).reshape(dims).shape
-            physical_mesh = mesh_utils.create_device_mesh(mesh_shape=mesh_shape, devices=devices)
+        mesh_shape = np.arange(len(devices)).reshape(dims).shape
+        physical_mesh = mesh_utils.create_device_mesh(mesh_shape=mesh_shape, devices=devices)
     else:
         mesh_shape = np.arange(jax.device_count()).reshape(dims).shape
         if mesh_axis_splitting:

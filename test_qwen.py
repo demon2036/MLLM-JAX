@@ -112,7 +112,7 @@ def get_model(mesh, max_cache_length=8192):
 
     params = get_params(model_path)
     jax_config = LlamaJaxConfig(mesh=mesh)
-    model = Qwen3ForCausalLM(config, jax_config)
+    model = Qwen2ForCausalLM(config, jax_config)
 
     def init_fn(params):
         return params

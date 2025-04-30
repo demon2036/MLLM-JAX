@@ -254,7 +254,7 @@ def get_partition_rules_llama():
 
 
 
-def get_jax_mesh(axis_dims, names):
+def get_jax_mesh(axis_dims, names,devices=None):
     if axis_dims.startswith('!'):
         # Allow splitting a physical mesh axis if needed
         mesh_axis_splitting = True
@@ -276,7 +276,11 @@ def get_jax_mesh(axis_dims, names):
         dims = [int(x) for x in axis_dims.split(',')]
         dim_names = names
     assert len(dims) == len(names)
-    mesh_shape = np.arange(jax.device_count()).reshape(dims).shape
+
+    if devices is not None:
+        mesh_shape = np.arange(devices).reshape(dims).shape
+    else:
+        mesh_shape = np.arange(jax.device_count()).reshape(dims).shape
     if mesh_axis_splitting:
         physical_mesh = np.array(jax.devices()).reshape(mesh_shape)
     else:
@@ -284,8 +288,8 @@ def get_jax_mesh(axis_dims, names):
     return Mesh(physical_mesh, dim_names)
 
 # mesh_dim='dp:2,fsdp:-1,mp:1'
-def get_jax_mesh2(axis_dims):
-    return get_jax_mesh(axis_dims, ('dp', 'fsdp', 'tp'))
+def get_jax_mesh2(axis_dims,devices=None):
+    return get_jax_mesh(axis_dims, ('dp', 'fsdp', 'tp') ,devices=devices )
 
 
 

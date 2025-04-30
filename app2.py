@@ -54,11 +54,10 @@ class ChatRequest(BaseModel):
 # 在应用启动时加载模型及相关资源（仅加载一次）
 @app.on_event("startup")
 async def startup_event():
-
-
+    local_devices=jax.local_devices(process_index=jax.process_index())
     max_cache_length = 1024
     # 根据实际情况修改 mesh 参数
-    mesh = get_jax_mesh2("1,1,-1")
+    mesh = get_jax_mesh2("1,1,-1",devices=local_devices)
     model, params, tokenizer, init_cache = get_model(mesh, max_cache_length=max_cache_length)
     del init_cache
     print(mesh)
@@ -217,6 +216,13 @@ async def chat(chat_request: ChatRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
+
+
 
 
 

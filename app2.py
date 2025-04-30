@@ -55,6 +55,9 @@ class ChatRequest(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     local_devices=jax.local_devices(process_index=jax.process_index())
+
+    print(local_devices,jax.devices())
+
     max_cache_length = 1024
     # 根据实际情况修改 mesh 参数
     mesh = get_jax_mesh2("1,1,-1",devices=local_devices)

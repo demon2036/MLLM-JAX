@@ -249,6 +249,7 @@ async def chat_completions(chat_request: ChatRequest):
             # 假设服务器在同一主机上运行
             # 使用相对URL或根据实际情况修改URL
             internal_url = f"{base_url}/api/chat"
+            print(internal_url)
 
             # 转发请求体并获取响应
             response = await client.post(

@@ -248,7 +248,7 @@ async def chat_completions(chat_request: ChatRequest):
         async with httpx.AsyncClient() as client:
             # 假设服务器在同一主机上运行
             # 使用相对URL或根据实际情况修改URL
-            internal_url = f"{base_url}api/chat"
+            internal_url = f"{base_url}/api/chat"
 
             # 转发请求体并获取响应
             response = await client.post(

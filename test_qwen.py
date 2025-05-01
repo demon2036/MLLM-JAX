@@ -284,8 +284,8 @@ class Sampler:
         exit_token_ids = self.tokenizer.eos_token_id
         res = [next_token_predict]
 
-        if stream:
-            yield next_token_predict
+        # if stream:
+        #     yield next_token_predict
         print(time.time() - start)
 
         for i in tqdm(range(max_length - true_length)  ,):

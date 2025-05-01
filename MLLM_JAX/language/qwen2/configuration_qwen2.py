@@ -237,6 +237,7 @@ def init_cache(
 def pad_cache(cache, prefill_length, max_cache_length, true_length):
     # 如果尺寸相同，只更新end_index即可
     if max_cache_length == prefill_length:
+        print('match_size')
         for i in range(len(cache)):
             cache[f'layer_{i}']['end_index'] = jnp.zeros((cache[f'layer_{i}']['k'].shape[0],),
                                                          dtype=jnp.int32) + true_length

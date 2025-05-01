@@ -284,21 +284,8 @@ class Sampler:
         exit_token_ids = self.tokenizer.eos_token_id
         res = [next_token_predict]
 
-        # 8. 关键优化：如果是流式模式，提前准备好第一个token
-        first_token = next_token_predict.block_until_ready()
-        first_token_ready_time = time.time() - start
-        print(f'First token ready in {first_token_ready_time:.4f}s')
-
-        # 9. 流式输出第一个token（经过优化，减少延迟）
         if stream:
-            # 预先执行一些必要的操作，减少yield时的延迟
-            first_token_np = np.array(first_token)  # 提前转换为numpy数组
-            # 在某些环境中，第一次转换可能会触发额外的初始化
-            _ = first_token_np.copy()  # 强制触发任何可能的延迟操作
-
-            yield first_token
-        # if stream:
-        #     yield next_token_predict
+            yield next_token_predict
         print(time.time() - start)
 
         for i in tqdm(range(max_length - true_length)  ,):

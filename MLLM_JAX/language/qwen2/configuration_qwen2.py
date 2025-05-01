@@ -192,46 +192,100 @@ class Qwen2Config:
         #     tie_word_embeddings=tie_word_embeddings,
         #     **kwargs,
         # )
+# def init_cache(
+#         config,
+#         batch_size: int,
+#         max_cache_length:int=1024,
+#         dtype: jnp.dtype = jnp.bfloat16,
+#         shard_method=None
+# ):
+#     from .modular_qwen2 import Qwen2Attention
+#     """Initializes a new Transformer cache."""
+#
+#     config=getattr(config,"text_config",config)
+#     head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+#     print(f'{shard_method=}')
+#
+#     if shard_method is not None:
+#         cache = {
+#             f'layer_{i}':
+#                 Qwen2Attention.init_cache(
+#                     max_cache_length,
+#                     config.num_key_value_heads,
+#                     head_dim,
+#                     batch_size,
+#                     dtype,
+#                     shard_method=shard_method
+#             )
+#             for i in range(config.num_hidden_layers)
+#         }
+#     else:
+#         cache = {
+#             f'layer_{i}': Qwen2Attention.init_cache(
+#                 max_cache_length,
+#                 config.num_key_value_heads,
+#                 head_dim,
+#                 batch_size,
+#                 dtype,
+#             )
+#             for i in range(config.num_hidden_layers)
+#         }
+#
+#     return cache
+
+
 def init_cache(
         config,
         batch_size: int,
-        max_cache_length:int=1024,
+        max_cache_length: int = 1024,
         dtype: jnp.dtype = jnp.bfloat16,
         shard_method=None
 ):
+    """优化的cache初始化函数"""
     from .modular_qwen2 import Qwen2Attention
-    """Initializes a new Transformer cache."""
 
-    config=getattr(config,"text_config",config)
+    config = getattr(config, "text_config", config)
     head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
-    print(f'{shard_method=}')
+    num_layers = config.num_hidden_layers
 
+    # 只创建一次形状模板
+    k_shape = (batch_size, config.num_key_value_heads, max_cache_length, head_dim)
+    v_shape = k_shape  # 相同形状
+
+    # 仅创建一次数组，然后复制给所有层
     if shard_method is not None:
+        # 创建并分片一次基础数组
+        k_zeros = shard_method(jnp.zeros(k_shape, dtype=dtype))
+        v_zeros = shard_method(jnp.zeros(v_shape, dtype=dtype))
+        end_index = jnp.zeros((batch_size,), dtype=jnp.int32)
+
+        # 通过字典推导式快速构建多层缓存
         cache = {
-            f'layer_{i}':
-                Qwen2Attention.init_cache(
-                    max_cache_length,
-                    config.num_key_value_heads,
-                    head_dim,
-                    batch_size,
-                    dtype,
-                    shard_method=shard_method
-            )
-            for i in range(config.num_hidden_layers)
+            f'layer_{i}': {
+                'k': k_zeros,  # 重用相同的分片数组引用
+                'v': v_zeros,  # 重用相同的分片数组引用
+                'end_index': end_index  # 重用相同的索引数组
+            }
+            for i in range(num_layers)
         }
     else:
+        # 非分片版本
+        k_zeros = jnp.zeros(k_shape, dtype=dtype)
+        v_zeros = jnp.zeros(v_shape, dtype=dtype)
+        end_index = jnp.zeros((batch_size,), dtype=jnp.int32)
+
         cache = {
-            f'layer_{i}': Qwen2Attention.init_cache(
-                max_cache_length,
-                config.num_key_value_heads,
-                head_dim,
-                batch_size,
-                dtype,
-            )
-            for i in range(config.num_hidden_layers)
+            f'layer_{i}': {
+                'k': k_zeros,
+                'v': v_zeros,
+                'end_index': end_index
+            }
+            for i in range(num_layers)
         }
 
     return cache
+
+
 
 
 def pad_cache(cache, prefill_length, max_cache_length, true_length):

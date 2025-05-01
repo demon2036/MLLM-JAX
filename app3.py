@@ -104,41 +104,41 @@ async def chat(chat_request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/chat/completions")
-async def chat_completions(chat_request: ChatRequest):
-    """
-    FastAPI 端点，作为中转代理，将请求转发给 /api/chat 并返回响应。
-    """
-
-    endpoint=app.tpu_endpoints_queue.get()
-
-    app.tpu_endpoints_queue.put(endpoint)
-    ip=endpoint['ipAddress']
-    base_url=f'http://{  ip}:8000'
-    print(base_url)
-
-    try:
-        # 创建一个内部请求，转发到 /api/chat
-        async with httpx.AsyncClient() as client:
-            # 假设服务器在同一主机上运行
-            # 使用相对URL或根据实际情况修改URL
-            internal_url = f"{base_url}/api/chat"
-            print(internal_url)
-
-            # 转发请求体并获取响应
-            response = await client.post(
-                internal_url,
-                json=chat_request.dict(),
-                headers={"Content-Type": "application/json"}
-            )
-            # 直接将流式响应返回给客户端
-            return StreamingResponse(
-                response.aiter_bytes(),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache"}
-            )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# @app.post("/chat/completions")
+# async def chat_completions(chat_request: ChatRequest):
+#     """
+#     FastAPI 端点，作为中转代理，将请求转发给 /api/chat 并返回响应。
+#     """
+#
+#     endpoint=app.tpu_endpoints_queue.get()
+#
+#     app.tpu_endpoints_queue.put(endpoint)
+#     ip=endpoint['ipAddress']
+#     base_url=f'http://{  ip}:8000'
+#     print(base_url)
+#
+#     try:
+#         # 创建一个内部请求，转发到 /api/chat
+#         async with httpx.AsyncClient() as client:
+#             # 假设服务器在同一主机上运行
+#             # 使用相对URL或根据实际情况修改URL
+#             internal_url = f"{base_url}/api/chat"
+#             print(internal_url)
+#
+#             # 转发请求体并获取响应
+#             response = await client.post(
+#                 internal_url,
+#                 json=chat_request.dict(),
+#                 headers={"Content-Type": "application/json"}
+#             )
+#             # 直接将流式响应返回给客户端
+#             return StreamingResponse(
+#                 response.aiter_bytes(),
+#                 media_type="text/event-stream",
+#                 headers={"Cache-Control": "no-cache"}
+#             )
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
 

@@ -266,7 +266,7 @@ class Sampler:
                                                attention_mask=pad_attention, cache=cache,true_length=true_length-1)
 
 
-        next_token_predict = jnp.argmax(logits, axis=1)
+        next_token_predict = jnp.argmax(logits.block_until_ready(), axis=1)
         print(max_length,true_length,time.time()-start)
         cache, input_ids_pad, pad_attention, position_ids = self.prepare_from_prefill_to_decode(cache, input_ids_pad,
                                                                                                 pad_attention,
@@ -284,8 +284,8 @@ class Sampler:
         exit_token_ids = self.tokenizer.eos_token_id
         res = [next_token_predict]
 
-        # if stream:
-        #     yield next_token_predict
+        if stream:
+            yield next_token_predict
         print(time.time() - start)
 
         for i in tqdm(range(max_length - true_length)  ,):

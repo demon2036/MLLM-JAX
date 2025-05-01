@@ -225,6 +225,9 @@ class Sampler:
 
     def prepare_from_prefill_to_decode(self, cache, input_ids_pad, pad_attention, true_length, max_length=8192):
         b, prefill_length = input_ids_pad.shape
+
+        print(max_length,prefill_length,max_length>prefill_length)
+
         cache = pad_cache(cache, prefill_length, max_length, true_length=true_length)
         # 只有当max_length > prefill_length时才进行padding
         if max_length > prefill_length:

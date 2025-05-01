@@ -168,7 +168,7 @@ if __name__ == "__main__":
 
     # 启动服务器
     uvicorn.run(
-        "app:app",  # 使用当前文件名:app实例
+        "app3:app",  # 使用当前文件名:app实例
         host=host,
         port=port,
         reload=False,  # 生产环境建议设为False

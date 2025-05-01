@@ -42,9 +42,9 @@ pip install einops gcsfs tensorflow tpu-info
 #pip install "flax[all]"
 
 #pip install -U flax
+# ==4.50.0
 
-
-pip3 install -q "overrides" "ml_collections" "einops~=0.7" "sentencepiece" transformers==4.50.0 datasets kaggle kagglehub
+pip3 install -q "overrides" "ml_collections" "einops~=0.7" "sentencepiece" transformers datasets kaggle kagglehub
 pip install httpx
 
 

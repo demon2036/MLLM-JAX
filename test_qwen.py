@@ -98,8 +98,8 @@ def get_params(model_path):
 def get_model(mesh, max_cache_length=8192):
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
-    # model_path = 'Qwen/Qwen3-4B'
-    model_path = 'Qwen/Qwen2.5-7B-Instruct'
+    model_path = 'Qwen/Qwen3-8B'
+    # model_path = 'Qwen/Qwen2.5-14B-Instruct'
     # model_path = 'Qwen/QwQ-32B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
 
@@ -112,7 +112,11 @@ def get_model(mesh, max_cache_length=8192):
 
     params = get_params(model_path)
     jax_config = LlamaJaxConfig(mesh=mesh)
-    model = Qwen2ForCausalLM(config, jax_config)
+
+    if 'Qwen3' in model_path:
+        model = Qwen3ForCausalLM(config, jax_config)
+    else:
+        model = Qwen2ForCausalLM(config, jax_config)
 
     def init_fn(params):
         return params
@@ -193,7 +197,7 @@ class Sampler:
         self.cache = cache
         self.jit_infer_prefill = jax.jit(self.model.apply)
         self.jit_infer_step = jax.jit(self.infer)
-        self.sample_fn=functools.partial(_temperature_sampling,t=0.6)
+        self.sample_fn=functools.partial(_temperature_sampling,t=0.7)
         self.prefill_bucket = [
             128, 256, 512, 1024, 2048, 4096,8192,16384,int(16384*1.5),16384*2-1024,16384*2
         ]

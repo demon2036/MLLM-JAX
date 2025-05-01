@@ -33,7 +33,7 @@ tpu_name='node-2'
 
 
 def tpu_endpoints_queue():
-    tpu_name ='node-2' if  os.getenv('TPU_NAME') is None else os.getenv('TPU_NAME')
+    tpu_name ='node-1' if  os.getenv('TPU_NAME') is None else os.getenv('TPU_NAME')
     print(f"机器名称: {tpu_name}")
     # 初始化TPU客户端
     # tpu_name = 'node-2'
@@ -88,7 +88,7 @@ async def startup_event():
     print(mesh)
     app.sampler=Sampler(model, params, tokenizer,mesh=mesh)
 
-    app.tpu_endpoints_queue=tpu_endpoints_queue()
+    # app.tpu_endpoints_queue=tpu_endpoints_queue()
     print('go')
 
 
@@ -125,7 +125,7 @@ async def generate_stream_response(chat_request: ChatRequest):
         chat_request.messages,
         tokenize=False,
         add_generation_prompt=True,
-        enable_thinking=True
+        enable_thinking=False
     )
     print(prompt)
 
@@ -149,24 +149,25 @@ async def generate_stream_response(chat_request: ChatRequest):
         #       },
         #       "done": False,
         #     }
+        return chunk
 
-        return      {
-          "id": "chatcmpl-935",
-          "object": "chat.completion.chunk",
-          "created": 1745666537,
-          "model": "qwen2.5:7b-instruct",
-          "system_fingerprint": "fp_ollama",
-          "choices": [
-            {
-              "index": 0,
-              "delta": {
-                "role": "assistant",
-                "content": chunk
-              },
-              "finish_reason": None
-            }
-          ]
-        }
+        # return      {
+        #   "id": "chatcmpl-935",
+        #   "object": "chat.completion.chunk",
+        #   "created": 1745666537,
+        #   "model": "qwen2.5:7b-instruct",
+        #   "system_fingerprint": "fp_ollama",
+        #   "choices": [
+        #     {
+        #       "index": 0,
+        #       "delta": {
+        #         "role": "assistant",
+        #         "content": chunk
+        #       },
+        #       "finish_reason": None
+        #     }
+        #   ]
+        # }
 
 
 
@@ -188,12 +189,14 @@ async def generate_stream_response(chat_request: ChatRequest):
             print(new_text_chunk)
             data=handle_msg(new_text_chunk)
             # yield f"{json.dumps(data, ensure_ascii=False)}\n"
-            yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+            yield data
+            # yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     if final_chunk := decoder.end():
         print(final_chunk)
         data = handle_msg(final_chunk)
-        yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+        yield data
+        # yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
         # data = handle_msg(final_chunk)
         # yield f"{json.dumps(data, ensure_ascii=False)}\n"
         # data={
@@ -208,7 +211,7 @@ async def generate_stream_response(chat_request: ChatRequest):
         #     "done": True,
         # }
         # yield f"{json.dumps(data, ensure_ascii=False)}\n"
-    yield 'data: [DONE]\n\n'
+    # yield 'data: [DONE]\n\n'
 
 
 
@@ -257,7 +260,6 @@ async def chat_completions(chat_request: ChatRequest):
                 json=chat_request.dict(),
                 headers={"Content-Type": "application/json"}
             )
-
             # 直接将流式响应返回给客户端
             return StreamingResponse(
                 response.aiter_bytes(),

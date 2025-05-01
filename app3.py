@@ -156,3 +156,22 @@ async def chat(chat_request: ChatRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# 添加 uvicorn 启动代码
+if __name__ == "__main__":
+    import uvicorn
+
+    # 配置 uvicorn 启动参数
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", 8000))
+
+    # 启动服务器
+    uvicorn.run(
+        "app:app",  # 使用当前文件名:app实例
+        host=host,
+        port=port,
+        reload=False,  # 生产环境建议设为False
+        workers=1,  # 对于JAX模型，通常使用单个worker
+        log_level="info"
+    )

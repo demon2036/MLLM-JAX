@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import random
+import time
 from typing import Any
 
 import random
@@ -249,7 +250,7 @@ class Sampler:
 
 
     async def generate_prefill_auto_regressive(self, prompt, prefill_length=20, max_length=8192, stream=False):
-
+        start=time.time()
         print(self.jit_init_data,len(prompt))
         input_ids_pad, pad_attention, position_ids, true_length, prefill_length = self.preprocess_prompt_prefill(prompt,
                                                                                                                  prefill_length)
@@ -258,24 +259,27 @@ class Sampler:
         cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,
                            shard_method=self.jit_init_data)
 
-        print(f'{prefill_length=}')
+        print(f'{prefill_length=}   {time.time()-start}')
         logits, cache = self.jit_infer_prefill({'params': self.params}, input_ids=input_ids_pad,
                                                position_ids=position_ids,
                                                attention_mask=pad_attention, cache=cache,true_length=true_length-1)
 
 
         next_token_predict = jnp.argmax(logits, axis=1)
-        print(max_length,true_length)
+        print(max_length,true_length,time.time()-start)
         cache, input_ids_pad, pad_attention, position_ids = self.prepare_from_prefill_to_decode(cache, input_ids_pad,
                                                                                                 pad_attention,
                                                                                                 true_length,
                                                                                                 max_length=max_length)
+
+        print(time.time()-start)
+
         input_ids_pad = input_ids_pad.at[:, true_length].set(next_token_predict)
         sample_state = create_sample_state(input_ids_pad=input_ids_pad, position_ids=position_ids, cache=cache,
                                            pad_attention=pad_attention, true_length=true_length,
                                            decoding_step=true_length)
 
-
+        print(time.time()-start)
         exit_token_ids = self.tokenizer.eos_token_id
 
         if stream:

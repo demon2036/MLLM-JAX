@@ -285,7 +285,7 @@ class Sampler:
         res = [next_token_predict]
 
         # 8. 关键优化：如果是流式模式，提前准备好第一个token
-        first_token = next_token_predict
+        first_token = next_token_predict.block_until_ready()
         first_token_ready_time = time.time() - start
         print(f'First token ready in {first_token_ready_time:.4f}s')
 

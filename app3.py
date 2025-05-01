@@ -142,7 +142,8 @@ async def chat(chat_request: ChatRequest):
 
 
 
-@app.post("/v1/chat/completions")
+# @app.post("/v1/chat/completions")
+@app.post("/chat/completions")
 async def chat(chat_request: ChatRequest):
     """
     FastAPI 端点，根据请求参数调用模型生成，并返回流式响应。

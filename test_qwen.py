@@ -285,7 +285,7 @@ class Sampler:
 
         if stream:
             yield next_token_predict
-
+        print(time.time() - start)
         res = [next_token_predict]
         for i in tqdm(range(max_length - true_length)  ,):
             sample_state = self.jit_infer_step(sample_state, self.params)

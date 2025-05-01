@@ -41,7 +41,7 @@ class ChatRequest(BaseModel):
     temperature: float = 0.7
     max_tokens: int|None = None
     stream: bool = True
-    enable_thinking: bool = False  # 添加enable_thinking参数，默认为False
+    enable_thinking: bool = True  # 添加enable_thinking参数，默认为False
 
 
 # 在应用启动时加载模型及相关资源（仅加载一次）

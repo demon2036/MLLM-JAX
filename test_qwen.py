@@ -226,8 +226,6 @@ class Sampler:
     def prepare_from_prefill_to_decode(self, cache, input_ids_pad, pad_attention, true_length, max_length=8192):
         b, prefill_length = input_ids_pad.shape
 
-        print(max_length,prefill_length,max_length>prefill_length)
-
         cache = pad_cache(cache, prefill_length, max_length, true_length=true_length)
         # 只有当max_length > prefill_length时才进行padding
         if max_length > prefill_length:
@@ -258,7 +256,7 @@ class Sampler:
         input_ids_pad, pad_attention, position_ids, true_length, prefill_length = self.preprocess_prompt_prefill(prompt,
                                                                                                                  prefill_length)
 
-
+        print(f'start init cache   {time.time() - start}')
         cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,
                            shard_method=self.jit_init_data)
 
@@ -292,12 +290,7 @@ class Sampler:
         for i in tqdm(range(max_length - true_length)  ,):
             sample_state = self.jit_infer_step(sample_state, self.params)
             select_ids = sample_state.next_token_buffer
-            # res.append(select_ids)
-            # output = \
-            #         self.tokenizer.batch_decode(np.array(res).reshape(1, -1), skip_special_tokens=False,
-            #                                     clean_up_tokenization_spaces=False)[
-            #             0]
-            # print(output)
+
 
             if select_ids[0] == exit_token_ids:
                 output = \
@@ -308,6 +301,14 @@ class Sampler:
                 break
             if stream:
                 yield select_ids
+
+
+            # res.append(select_ids)
+            # output = \
+            #         self.tokenizer.batch_decode(np.array(res).reshape(1, -1), skip_special_tokens=False,
+            #                                     clean_up_tokenization_spaces=False)[
+            #             0]
+            # print(output)
 
 
 

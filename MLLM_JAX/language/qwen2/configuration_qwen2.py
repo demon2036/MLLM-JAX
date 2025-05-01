@@ -234,23 +234,28 @@ def init_cache(
     return cache
 
 
+def pad_cache(cache, prefill_length, max_cache_length, true_length):
+    # 如果尺寸相同，只更新end_index即可
+    if max_cache_length == prefill_length:
+        for i in range(len(cache)):
+            cache[f'layer_{i}']['end_index'] = jnp.zeros((cache[f'layer_{i}']['k'].shape[0],),
+                                                         dtype=jnp.int32) + true_length
+        return cache
 
-
-
-def pad_cache(
-        cache,
-        prefill_length,
-        max_cache_length,
-        true_length,
-):
-    print(max_cache_length,prefill_length)
-
+    # 需要填充的情况
     for i in range(len(cache)):
-        cache[f'layer_{i}']['k']=jnp.pad(cache[f'layer_{i}']['k'], pad_width=((0, 0), (0, 0), (0, max_cache_length-prefill_length), (0, 0)),  # 只在 cache_size 维度上填充,
-                constant_values=0)
-        cache[f'layer_{i}']['v']=jnp.pad(cache[f'layer_{i}']['v'], pad_width=((0, 0), (0, 0), (0, max_cache_length-prefill_length), (0, 0)),  # 只在 cache_size 维度上填充,
-                constant_values=0)
-        cache[f'layer_{i}']['end_index']=jnp.zeros((cache[f'layer_{i}']['k'].shape[0],), dtype=jnp.int32)+true_length
+        cache[f'layer_{i}']['k'] = jnp.pad(
+            cache[f'layer_{i}']['k'],
+            ((0, 0), (0, 0), (0, max_cache_length - prefill_length), (0, 0)),
+            constant_values=0
+        )
+        cache[f'layer_{i}']['v'] = jnp.pad(
+            cache[f'layer_{i}']['v'],
+            ((0, 0), (0, 0), (0, max_cache_length - prefill_length), (0, 0)),
+            constant_values=0
+        )
+        cache[f'layer_{i}']['end_index'] = jnp.zeros((cache[f'layer_{i}']['k'].shape[0],),
+                                                     dtype=jnp.int32) + true_length
 
     return cache
 

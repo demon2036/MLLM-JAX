@@ -23,35 +23,6 @@ import cloud_tpu_client
 from MLLM_JAX.utils import get_jax_mesh2
 from safe_decode import  TextStreamer
 
-tpu_name='node-2'
-
-# ctc=cloud_tpu_client.client.Client(tpu_name)
-# endpoints=ctc.network_endpoints()
-# print(endpoints)
-
-
-
-
-def tpu_endpoints_queue():
-    tpu_name ='node-1' if  os.getenv('TPU_NAME') is None else os.getenv('TPU_NAME')
-    print(f"机器名称: {tpu_name}")
-    # 初始化TPU客户端
-    # tpu_name = 'node-2'
-    ctc = cloud_tpu_client.client.Client(tpu_name)
-    endpoints = ctc.network_endpoints()
-    print(f"获取到TPU端点: {endpoints}")
-    # 创建端点队列
-    endpoints_queue = queue.Queue()
-    # 将所有端点加入队列
-    for endpoint in endpoints:
-        endpoints_queue.put(endpoint)
-    # 打印队列大小确认
-    print(f"队列大小: {endpoints_queue.qsize()}")
-    return endpoints_queue
-
-
-
-
 app = FastAPI()
 
 # 允许跨域请求
@@ -77,9 +48,7 @@ class ChatRequest(BaseModel):
 async def startup_event():
     jax.distributed.initialize()
     local_devices=jax.local_devices(process_index=jax.process_index())
-
     print(local_devices,jax.devices())
-
     max_cache_length = 1024
     # 根据实际情况修改 mesh 参数
     mesh = get_jax_mesh2("1,1,-1",devices=local_devices)
@@ -87,37 +56,14 @@ async def startup_event():
     del init_cache
     print(mesh)
     app.sampler=Sampler(model, params, tokenizer,mesh=mesh)
-
-    # app.tpu_endpoints_queue=tpu_endpoints_queue()
     print('go')
 
 
-    # max_cache_length = 4096
-    # # # 根据实际情况修改 mesh 参数
-    # mesh = get_jax_mesh2("1,1,-1")
-    # model_path = 'Qwen/Qwen2.5-7B-Instruct'
-    # model, params, tokenizer = get_model(mesh, model_path=model_path, )
-    # sampler = Sampler(model, tokenizer,mesh=mesh,)
-    # app.sampler=sampler
-    # app.params=params
-
-
-# 检查是否生成结束 token
-# data = {
-#     "model": "qwen2.5:7b-instruct",
-#     "created_at": datetime.utcnow().isoformat() + "Z",
-#     "response": f" {current_text}",
-#     "done": "False"
-# }
-
-
 async def generate_stream_response(chat_request: ChatRequest):
-    # print(chat_request)
     for msg in chat_request.messages:
         if isinstance(msg["content"], list):
             joined = "".join(part.get("text", "") for part in msg["content"])
             msg["content"] = joined
-
 
 
     sampler=app.sampler
@@ -128,94 +74,19 @@ async def generate_stream_response(chat_request: ChatRequest):
         enable_thinking=False
     )
     print(prompt)
-
-    res_tokens=[]
-
     generated_token_ids=[]
-    all_decoded_text: str = ""  #
-    decoded_text_offset=0
     decoder=TextStreamer(tokenizer=sampler.tokenizer)
-
-
-    def handle_msg(chunk):
-        # return {
-        #       "model": "qwen2.5:7b-instruct",
-        #       "created_at":datetime.utcnow().isoformat() + "Z",
-        #       "message": {
-        #         "role": "assistant",
-        #         "content": f"{chunk}",
-        #         "images": None,
-        #         "tool_calls": []
-        #       },
-        #       "done": False,
-        #     }
-        return chunk
-
-        # return      {
-        #   "id": "chatcmpl-935",
-        #   "object": "chat.completion.chunk",
-        #   "created": 1745666537,
-        #   "model": "qwen2.5:7b-instruct",
-        #   "system_fingerprint": "fp_ollama",
-        #   "choices": [
-        #     {
-        #       "index": 0,
-        #       "delta": {
-        #         "role": "assistant",
-        #         "content": chunk
-        #       },
-        #       "finish_reason": None
-        #     }
-        #   ]
-        # }
-
-
-
-    # if "r1" in chat_request.model:
-    #     data= handle_msg('<think>')
-    #     yield f"{json.dumps(data, ensure_ascii=False)}\n"
-    # else:
-    #     print('this is not r1 model')
-
     l = sampler.tokenizer(prompt, return_tensors="jax", )['input_ids'].shape[1]
     max_length=min(sampler.find_ceil(l)*2,int(16384*2))
-
 
     async for token in sampler.generate_prefill_auto_regressive(prompt,max_length=max_length,stream=True):
         generated_token_ids.append( int(token[0]))
         token=int(token[0])
         new_text_chunk = decoder.put(np.array([token]))
         if new_text_chunk is not None:
-            print(new_text_chunk)
-            data=handle_msg(new_text_chunk)
-            # yield f"{json.dumps(data, ensure_ascii=False)}\n"
-            yield data
-            # yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-
+            yield new_text_chunk
     if final_chunk := decoder.end():
-        print(final_chunk)
-        data = handle_msg(final_chunk)
-        yield data
-        # yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-        # data = handle_msg(final_chunk)
-        # yield f"{json.dumps(data, ensure_ascii=False)}\n"
-        # data={
-        #     "model": "qwen2.5:7b-instruct",
-        #     "created_at": datetime.utcnow().isoformat() + "Z",
-        #     "message": {
-        #         "role": "assistant",
-        #         "content": f"{final_chunk}",
-        #         "images": None,
-        #         "tool_calls": []
-        #     },
-        #     "done": True,
-        # }
-        # yield f"{json.dumps(data, ensure_ascii=False)}\n"
-    # yield 'data: [DONE]\n\n'
-
-
-
-
+        yield final_chunk
 
 
 @app.post("/api/chat")
@@ -268,13 +139,6 @@ async def chat_completions(chat_request: ChatRequest):
             )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-
-
-
-
-
 
 
 

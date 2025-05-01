@@ -26,58 +26,6 @@ import os
 from jax.sharding import PartitionSpec as P
 
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-# content="""已经知道有model，请你用JAX写一个top-p默认=0.95的采样"""
-
-# content="""这里的问题在于无法jit,如何修正
-#     def apply_top_p(probs, top_p):
-#         # 按概率降序排列
-#         sorted_probs = jnp.sort(probs)[::-1]
-#         cumulative_probs = jnp.cumsum(sorted_probs)
-#         # 找到累积概率超过top_p的最小阈值
-#         cutoff_mask = cumulative_probs < top_p
-#         # 保留至少一个token（避免全mask）
-#         cutoff = jnp.max(jnp.where(cutoff_mask, jnp.arange(len(probs)), -1)) + 1
-#         cutoff = jnp.maximum(cutoff, 1)  # 保证至少选1个
-#         # 获取保留的probs对应的原始索引
-#         sorted_indices = jnp.argsort(probs)[::-1][:cutoff]
-#         kept_probs = probs[sorted_indices]
-#         # 重新归一化概率
-#         kept_probs = kept_probs / jnp.sum(kept_probs)
-#         return sorted_indices, kept_probs
-#
-#     def sample_fn(logits_batch, top_p=0.95):
-#     probs = jax.nn.softmax(logits_batch, axis=-1)
-#     sorted_indices, kept_probs = apply_top_p(probs, top_p)
-#     # 从保留的token中采样
-#     return jax.random.choice(
-#         key2, sorted_indices, p=kept_probs
-#     )"""
-
-# content="""写出一个可以jax jit的top p 采样,注意要定长，static，这是关键，认真思考"""
-
-# content="""写出一个可以jax jit的top p 采样,注意要定长，static，这是关键，认真思考.
-#     def static_top_p_sampling(logits, key, top_p=0.95):
-#         # 确保所有操作保持静态形状
-#         sorted_indices = jnp.argsort(-logits)  # 降序排列
-#         sorted_logits = logits[sorted_indices]
-#
-#         # 计算排序后的概率分布
-#         sorted_probs = jax.nn.softmax(sorted_logits)
-#
-#         # 计算累积概率（使用双精度提升数值稳定性）
-#         cum_probs = jnp.cumsum(sorted_probs)  # .astype(sorted_probs.dtype)
-# """
-
-
-# content="""who are you
-# """
-
-
-#
-# content = """1+1=2 1+2=?
-# """
-
-# content="""python如何找到一个数字离他最近的2的n次方，向上取整，比如7,就是8,9就是16这样子"""
 
 dtype = jnp.bfloat16
 
@@ -134,7 +82,7 @@ def get_model(mesh, max_cache_length=8192):
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     cache = init_cache(config, 1, max_cache_length=max_cache_length, dtype=dtype)
 
-    return model, params, tokenizer, cache,
+    return model, params, tokenizer, cache
 
 
 messages = [
@@ -199,7 +147,7 @@ class Sampler:
         self.jit_infer_step = jax.jit(self.infer)
         self.sample_fn=functools.partial(_temperature_sampling,t=0.7)
         self.prefill_bucket = [
-            128, 256, 512, 1024, 2048, 4096,8192,16384,int(16384*1.5),16384*2-1024,16384*2
+            128, 256, 512, 1024, 2048, 4096,8192,16384,int(16384*1.5),16384*2
         ]
 
 
@@ -275,22 +223,22 @@ class Sampler:
         return input_ids_pad, pad_attention, pad_position_ids, true_length, prefill_length
 
     def prepare_from_prefill_to_decode(self, cache, input_ids_pad, pad_attention, true_length, max_length=8192):
-
         b, prefill_length = input_ids_pad.shape
-
         cache = pad_cache(cache, prefill_length, max_length, true_length=true_length)
-        input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length - prefill_length)),
-                                constant_values=self.tokenizer.eos_token_id)
+        # 只有当max_length > prefill_length时才进行padding
+        if max_length > prefill_length:
+            input_ids_pad = jnp.pad(input_ids_pad, ((0, 0), (0, max_length - prefill_length)),
+                                    constant_values=self.tokenizer.eos_token_id)
+            pad_attention = jnp.pad(pad_attention, ((0, 0), (0, max_length - prefill_length)),
+                                    constant_values=0)
 
-        pad_attention = jnp.pad(pad_attention, ((0, 0), (0, max_length - prefill_length)),
-                                constant_values=0)
-
+        # 无论是否padding，都需要设置下一个token的attention mask和position ids
         pad_attention = pad_attention.at[:, true_length].set(1)
         position_ids = jnp.arange(true_length, true_length + 1)[None, ...]
+
         return cache, input_ids_pad, pad_attention, position_ids
 
-    def prefill(self):
-        pass
+
 
     def find_ceil(self, input ):
 
@@ -303,24 +251,14 @@ class Sampler:
     async def generate_prefill_auto_regressive(self, prompt, prefill_length=20, max_length=8192, stream=False):
 
         print(self.jit_init_data,len(prompt))
-
-
-
         input_ids_pad, pad_attention, position_ids, true_length, prefill_length = self.preprocess_prompt_prefill(prompt,
                                                                                                                  prefill_length)
 
 
         cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=dtype,
-                           shard_method=self.jit_init_data
-                           )
+                           shard_method=self.jit_init_data)
 
         print(f'{prefill_length=}')
-
-        # max_length=max(8192,prefill_length*2)
-        # cache = init_cache(self.model.config, 1, max_cache_length=prefill_length, dtype=dtype)
-
-        # input_ids_pad, pad_attention, position_ids,cache=self.jit_init_data((input_ids_pad, pad_attention, position_ids,cache))
-
         logits, cache = self.jit_infer_prefill({'params': self.params}, input_ids=input_ids_pad,
                                                position_ids=position_ids,
                                                attention_mask=pad_attention, cache=cache,true_length=true_length-1)
@@ -332,8 +270,6 @@ class Sampler:
                                                                                                 pad_attention,
                                                                                                 true_length,
                                                                                                 max_length=max_length)
-        # next_token_predict = jnp.argmax(logits[:, true_length - 1], axis=1)
-        # next_token_predict = jnp.argmax(logits[:, - 1], axis=1)
         input_ids_pad = input_ids_pad.at[:, true_length].set(next_token_predict)
         sample_state = create_sample_state(input_ids_pad=input_ids_pad, position_ids=position_ids, cache=cache,
                                            pad_attention=pad_attention, true_length=true_length,
@@ -349,13 +285,12 @@ class Sampler:
         for i in tqdm(range(max_length - true_length)  ,):
             sample_state = self.jit_infer_step(sample_state, self.params)
             select_ids = sample_state.next_token_buffer
-            res.append(select_ids)
-
-            output = \
-                    self.tokenizer.batch_decode(np.array(res).reshape(1, -1), skip_special_tokens=False,
-                                                clean_up_tokenization_spaces=False)[
-                        0]
-            print(output)
+            # res.append(select_ids)
+            # output = \
+            #         self.tokenizer.batch_decode(np.array(res).reshape(1, -1), skip_special_tokens=False,
+            #                                     clean_up_tokenization_spaces=False)[
+            #             0]
+            # print(output)
 
             if select_ids[0] == exit_token_ids:
                 output = \
@@ -367,7 +302,6 @@ class Sampler:
             if stream:
                 yield select_ids
 
-        # return None
 
 
 async def test_qwen2_fast_jit_sample2():

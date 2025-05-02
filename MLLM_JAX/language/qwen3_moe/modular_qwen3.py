@@ -392,7 +392,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         up_pspec=P("tp", None, None)
         down_pspec = P("tp", None, None)
 
-        out_specs=P('dp',None,'tp')
+        out_specs=P('dp',None,None)
         # out_specs=P('dp',None,None)
 
 
@@ -424,7 +424,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 # Note: Reducing buffer increase the risk of token dropping under unbalanced distribution.
                 buffer_size = int(
                     self.get_expert_parallelism_size()
-                    *1
+                    *0.25
                     # * self.config.per_device_batch_size
                     # * self.config.max_target_length
                     *sequence_length

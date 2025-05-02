@@ -416,7 +416,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                     *1
                     # * self.config.per_device_batch_size
                     # * self.config.max_target_length
-                    *128
+                    *sequence_length
                     * self.config.num_experts_per_tok
                 )
                 output_shape = jnp.zeros((buffer_size, self.config.hidden_size), dtype=x.dtype)

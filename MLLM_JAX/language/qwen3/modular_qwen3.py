@@ -136,7 +136,7 @@ class Qwen3Attention(LlamaAttention):
                     mask=multi_head_mask,
                     head_shards=1,
                     q_seq_shards=1,
-                    # block_sizes=block_sizes
+                    block_sizes=block_sizes
                 )
 
                 attn_output = jax.vmap(splash_kernel)(query_states , key_states, value_states)

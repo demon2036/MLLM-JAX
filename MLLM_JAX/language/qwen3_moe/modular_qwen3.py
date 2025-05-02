@@ -59,7 +59,7 @@ def get_all_to_all_params(all_shards_group_sizes, local_expert_size, num_expert_
 
 def local_permute(inputs, global_group_sizes, local_expert_size):
     """Sort inputs by expert within each shard."""
-    local_id = jax.lax.axis_index("expert")
+    local_id = jax.lax.axis_index("exp")
     local_sizes = jax.lax.dynamic_slice_in_dim(
         global_group_sizes, local_id * local_expert_size, local_expert_size, axis=1
     ).reshape(-1)

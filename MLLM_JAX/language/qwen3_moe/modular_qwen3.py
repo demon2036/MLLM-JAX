@@ -74,6 +74,7 @@ def local_permute(inputs, global_group_sizes, local_expert_size):
 
 
 def gmm(inputs, kernel, group_sizes):
+        tile_size = (512, 1024, 1024)  # (m, k, n)
         hs_shape = inputs.shape
         # pad length is the 1st dimension of tiling size in gmm call
         pad_length = 512

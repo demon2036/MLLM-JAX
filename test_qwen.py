@@ -317,12 +317,12 @@ class Sampler:
                 yield select_ids
 
 
-            res.append(select_ids)
-            output = \
-                    self.tokenizer.batch_decode(np.array(res).reshape(1, -1), skip_special_tokens=False,
-                                                clean_up_tokenization_spaces=False)[
-                        0]
-            print(output)
+            # res.append(select_ids)
+            # output = \
+            #         self.tokenizer.batch_decode(np.array(res).reshape(1, -1), skip_special_tokens=False,
+            #                                     clean_up_tokenization_spaces=False)[
+            #             0]
+            # print(output)
 
 
 

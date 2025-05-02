@@ -306,19 +306,30 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             # self.weight_dtype,
         )
 
-    def get_topk(self, hidden_states):
-        batch_size, sequence_length, hidden_dim = hidden_states.shape
-        hidden_states = hidden_states.reshape(-1, hidden_dim)
+    # def get_topk(self, hidden_states):
+    #     batch_size, sequence_length, hidden_dim = hidden_states.shape
+    #     hidden_states = hidden_states.reshape(-1, hidden_dim)
+    #
+    #     # router_logits: (batch * sequence_length, n_experts)
+    #     router_logits = self.gate(hidden_states)
+    #
+    #     # In JAX, we use softmax with specific dtype
+    #     routing_weights = jax.nn.softmax(router_logits, axis=1)
+    #
+    #     # Get top-k experts and their weights
+    #     routing_weights, selected_experts = jax.lax.top_k(routing_weights, self.top_k)
+    #
+    #     if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
+    #         routing_weights = routing_weights / jnp.sum(routing_weights, axis=-1, keepdims=True)
+    #     return routing_weights, selected_experts
 
-        # router_logits: (batch * sequence_length, n_experts)
-        router_logits = self.gate(hidden_states)
 
+    def get_topk(self, gate_logits):
+        router_logits = gate_logits
         # In JAX, we use softmax with specific dtype
         routing_weights = jax.nn.softmax(router_logits, axis=1)
-
         # Get top-k experts and their weights
         routing_weights, selected_experts = jax.lax.top_k(routing_weights, self.top_k)
-
         if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
             routing_weights = routing_weights / jnp.sum(routing_weights, axis=-1, keepdims=True)
         return routing_weights, selected_experts

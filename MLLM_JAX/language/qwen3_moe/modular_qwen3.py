@@ -51,7 +51,8 @@ def get_all_to_all_params(all_shards_group_sizes, local_expert_size, num_expert_
         else:
             raise ValueError(f"Unknown tranform array strategy: {strategy}")
 
-    local_id = jax.lax.axis_index("exp")
+    # local_id = jax.lax.axis_index("exp")
+    local_id = jax.lax.axis_index("tp")
     input_offsets = transform_array(all_shards_group_sizes, local_id, TransformStrategy.INPUT_OFFSET)
     send_sizes = transform_array(all_shards_group_sizes, local_id, TransformStrategy.SEND_SIZE)
     output_offsets = transform_array(all_shards_group_sizes, local_id, TransformStrategy.OUTPUT_OFFSET)
@@ -61,7 +62,8 @@ def get_all_to_all_params(all_shards_group_sizes, local_expert_size, num_expert_
 
 def local_permute(inputs, global_group_sizes, local_expert_size):
     """Sort inputs by expert within each shard."""
-    local_id = jax.lax.axis_index("exp")
+    # local_id = jax.lax.axis_index("exp")
+    local_id = jax.lax.axis_index("tp")
     local_sizes = jax.lax.dynamic_slice_in_dim(
         global_group_sizes, local_id * local_expert_size, local_expert_size, axis=1
     ).reshape(-1)
@@ -74,10 +76,10 @@ def local_permute(inputs, global_group_sizes, local_expert_size):
 
 
 def gmm(inputs, kernel, group_sizes):
-        tile_size = (128, 1024, 1024)  # (m, k, n)
+        tile_size = (8, 1024, 1024)  # (m, k, n)
         hs_shape = inputs.shape
         # pad length is the 1st dimension of tiling size in gmm call
-        pad_length = 128
+        pad_length = 8
         if hs_shape[0] % pad_length:
             pad_length = pad_length - hs_shape[0] % pad_length
             inputs = jax.lax.pad(inputs.astype(jnp.float32), 0.0, [(0, pad_length, 0), (0, 0, 0)])
@@ -364,7 +366,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         return output.reshape(batch_size, sequence_length, -1)#.astype(self.dtype)
 
     def get_expert_parallelism_size(self):
-        return self.jax_config.mesh.shape["exp"]
+        return self.jax_config.mesh.shape["tp"]
+        # return self.jax_config.mesh.shape["exp"]
 
     def get_tensor_parallelism_size(self):
         return self.jax_config.mesh.shape["tp"]
@@ -378,10 +381,16 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             pass
 
         input_partition_pspec=P('dp',None)
-        gate_pspec=P("exp", None, 'tp')
-        up_pspec=P("exp", None, 'tp')
-        down_pspec = P("exp", 'tp', None)
+        # gate_pspec=P("exp", None, 'tp')
+        # up_pspec=P("exp", None, 'tp')
+        # down_pspec = P("exp", 'tp', None)
+
+        gate_pspec=P("tp", None, None)
+        up_pspec=P("tp", None, None)
+        down_pspec = P("tp", None, None)
+
         out_specs=P('dp',None,'tp')
+        # out_specs=P('dp',None,'tp')
 
 
 
@@ -399,7 +408,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
 
 
             if self.get_expert_parallelism_size() > 1:
-                axis_name = "exp"
+                # axis_name = "exp"
+                axis_name = "tp"
                 # get group sizes for all shards
                 local_expert_size = self.config.num_experts // self.get_expert_parallelism_size()
                 reshaped_group_sizes = jnp.sum(group_sizes.reshape(-1, local_expert_size), axis=1)
@@ -446,7 +456,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                                                            tiled=True)
 
             if self.get_expert_parallelism_size() > 1:
-                axis_name = "exp"
+                # axis_name = "exp"
+                axis_name = "tp"
                 # locally unpermute back to the original order
                 local_output = jnp.take(intermediate_output, indices=jnp.argsort(local_sorted_indices), axis=0)
                 original_inputs_first_dim = batch_size * sequence_length * self.config.num_experts_per_tok

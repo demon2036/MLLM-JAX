@@ -41,7 +41,10 @@ def get_params(model_path):
     # params=jax.tree_util.tree_map(lambda x: x.cpu(), state_dict)
     # params = convert_torch_to_flax_llama(state_dict)
     params = convert_torch_to_flax_qwen3_moe(state_dict)
-    params = jax.tree_util.tree_map(lambda x: np.array(x), params)
+    del state_dict
+    del  model
+
+    params = jax.tree_util.tree_map(lambda x: np.asarray(x), params)
     return params
 
 

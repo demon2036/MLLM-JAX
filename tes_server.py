@@ -243,6 +243,8 @@ def get_partition_rules_moe():
         # ('.*/mlp/up_proj', PS('exp','tp', 'fsdp')),
         # ('.*/mlp/down_proj', PS('exp','fsdp', 'tp')),
 
+        ('.*/mlp/gate/kernel', PS('tp', None,)),
+
         ('.*/mlp/gate_proj', PS('tp', None, 'fsdp')),
         ('.*/mlp/up_proj', PS( 'tp','exp', 'fsdp')),
         ('.*/mlp/down_proj', PS('tp','exp', 'fsdp', )),

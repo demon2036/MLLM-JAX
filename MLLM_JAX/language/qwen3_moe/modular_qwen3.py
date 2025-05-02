@@ -323,13 +323,13 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             routing_weights = routing_weights / jnp.sum(routing_weights, axis=-1, keepdims=True)
         return routing_weights, selected_experts
 
-    def permute(self, inputs):
+    def permute(self, inputs,gate_logits):
         """Permute tokens to group by expert to fit gmm call."""
         # reshape inputs (batch, sequence, emb) to (batch * sequence, emb)
         inputs_shape = inputs.shape
         bsz_times_seq_len = inputs_shape[0] * inputs_shape[1]
         inputs_2d = jnp.reshape(inputs, (bsz_times_seq_len, inputs_shape[2]))
-        routing_weights, selected_experts = self.get_topk(inputs)
+        routing_weights, selected_experts = self.get_topk(gate_logits)
 
         flatten_selected_experts = jnp.ravel(selected_experts)
         sorted_selected_experts = jnp.argsort(flatten_selected_experts)
@@ -338,6 +338,29 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         sorted_inputs = jnp.take(inputs_2d, indices=sorted_indices, axis=0).astype(jnp.bfloat16)
         group_size = jnp.bincount(flatten_selected_experts, length=self.num_experts)
         return sorted_inputs, sorted_selected_experts, routing_weights, group_size
+
+    # def permute(self, inputs, gate_logits, pre_bias_logits):
+    #     """Permute tokens to group by expert to fit gmm call."""
+    #     # reshape inputs (batch, sequence, emb) to (batch * sequence, emb)
+    #     inputs_shape = inputs.shape
+    #     bsz_times_seq_len = inputs_shape[0] * inputs_shape[1]
+    #     inputs_2d = jnp.reshape(inputs, (bsz_times_seq_len, inputs_shape[2]))
+    #     weights, selected_experts = self.get_topk(gate_logits, pre_bias_logits)
+    #
+    #     if self.config.decoder_block == common_types.DecoderBlockType.LLAMA4:
+    #         # weights will be of shape (batch_size, seq_len, num_experts_per_tok)
+    #         router_scores = jax.nn.sigmoid(weights.astype(jnp.float32))  # weights are top_k_weights here
+    #         # Squeeze router_scores to (batch_size * seq_len, num_experts_per_tok)
+    #         inputs_2d = inputs_2d * router_scores.reshape(bsz_times_seq_len, -1)
+    #
+    #     flatten_selected_experts = jnp.ravel(selected_experts)
+    #     sorted_selected_experts = jnp.argsort(flatten_selected_experts)
+    #     sorted_indices = sorted_selected_experts // self.num_experts_per_tok
+    #     # sort inputs for number of selected experts
+    #     sorted_inputs = jnp.take(inputs_2d, indices=sorted_indices, axis=0).astype(self.dtype)
+    #     group_size = jnp.bincount(flatten_selected_experts, length=self.num_experts)
+    #     return sorted_inputs, sorted_selected_experts, weights, group_size
+
 
     def unpermute(self, intermediate, sorted_selected_experts, weights, batch_size, sequence_length):
         """Unpermute tokens to original order and combine weights."""
@@ -374,6 +397,10 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
     def __call__(self, hidden_states):
         # print(f'{hidden_states.shape=}')
         batch_size, sequence_length, _ = hidden_states.shape
+
+
+
+
         # x, sorted_selected_experts, weights, group_sizes = self.permute(hidden_states)
 
         if self.get_expert_parallelism_size() > 1:
@@ -396,13 +423,13 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         @functools.partial(
             shard_map,
             mesh=self.jax_config.mesh,
-            in_specs=(input_partition_pspec,  gate_pspec, up_pspec, down_pspec ),
+            in_specs=(input_partition_pspec, input_partition_pspec, gate_pspec, up_pspec, down_pspec ),
             out_specs=out_specs,
             check_rep=False,
         )
-        def wrapper(hidden_states, gate_proj, up_proj, down_proj  ):
+        def wrapper(hidden_states,gate_logits, gate_proj, up_proj, down_proj  ):
 
-            x, sorted_selected_experts, weights, group_sizes = self.permute(hidden_states)
+            x, sorted_selected_experts, weights, group_sizes = self.permute(hidden_states,gate_logits)
             if self.get_expert_parallelism_size() > 1:
                 # axis_name = "exp"
                 axis_name = "tp"
@@ -478,9 +505,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
 
             return output
 
-
-
-        return  wrapper(hidden_states, self.gate_proj, self.up_proj, self.down_proj)
+        gate_logits=self.gate(hidden_states)
+        return  wrapper(hidden_states, gate_logits,  self.gate_proj, self.up_proj, self.down_proj)
 
 
 

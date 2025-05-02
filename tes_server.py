@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 import flax
@@ -5,53 +6,21 @@ import numpy as np
 import torch
 from transformers import AutoConfig
 
+from MLLM_JAX.language.llama.llama import LlamaJaxConfig
 from MLLM_JAX.language.qwen3_moe.configuration_qwen3 import Qwen3MoeConfig
+from MLLM_JAX.language.qwen3_moe.modular_qwen3 import Qwen3MoeSparseMoeBlock
 from MLLM_JAX.language.qwen3_moe.qwen3_torch import Qwen3MoeSparseMoeBlock as Qwen3MoeSparseMoeBlockTorch
 from flax.traverse_util import unflatten_dict,flatten_dict
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
-jax.config.update('jax_platform_name', 'cpu')
 
-def get_activation_fn(activation_name):
-    if activation_name == 'gelu':
-        return lambda x: jax.nn.gelu(x)
-    elif activation_name == 'relu':
-        return jax.nn.relu
-    elif activation_name == 'silu' or activation_name == 'swish':
-        return jax.nn.silu
-    else:
-        raise ValueError(f"Activation function {activation_name} not supported")
+from MLLM_JAX.utils import get_jax_mesh2, match_partition_rules
+from jax.sharding import Mesh,PartitionSpec as PS
+# os.environ["XLA_FLAGS"] = '--xla_force_host_platform_device_count=8'
+# jax.config.update('jax_platform_name', 'cpu')
 
-
-# class Qwen3MoeMLP(nn.Module):
-#     config: Any
-#     intermediate_size: Optional[int] = None
-#
-#     def setup(self):
-#         self.hidden_size = self.config.hidden_size
-#         self._intermediate_size = self.intermediate_size if self.intermediate_size is not None else self.config.intermediate_size
-#         self.gate_proj = nn.Dense(
-#             features=self._intermediate_size,
-#             use_bias=False,
-#             name="gate_proj"
-#         )
-#         self.up_proj = nn.Dense(
-#             features=self._intermediate_size,
-#             use_bias=False,
-#             name="up_proj"
-#         )
-#         self.down_proj = nn.Dense(
-#             features=self.hidden_size,
-#             use_bias=False,
-#             name="down_proj"
-#         )
-#         self.act_fn = get_activation_fn(self.config.hidden_act)
-#
-#     def __call__(self, x):
-#         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-
-
+"""
 class Qwen3MoeSparseMoeBlock(nn.Module):
     config: Qwen3MoeConfig
 
@@ -111,7 +80,6 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         return routing_weights, selected_experts
 
     def permute(self, inputs):
-        """Permute tokens to group by expert to fit gmm call."""
         # reshape inputs (batch, sequence, emb) to (batch * sequence, emb)
         inputs_shape = inputs.shape
         bsz_times_seq_len = inputs_shape[0] * inputs_shape[1]
@@ -127,7 +95,6 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         return sorted_inputs, sorted_selected_experts, routing_weights, group_size
 
     def unpermute(self, intermediate, sorted_selected_experts, weights, batch_size, sequence_length):
-        """Unpermute tokens to original order and combine weights."""
 
         unsort_intermediate = jnp.take(intermediate, indices=jnp.argsort(sorted_selected_experts), axis=0)
         print(f'{unsort_intermediate.shape=}')
@@ -159,7 +126,6 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         x, sorted_selected_experts, weights, group_sizes = self.permute(hidden_states)
 
         def gmm(inputs, kernel, group_sizes):
-            print(f'{inputs.shape=}')
             hs_shape = inputs.shape
             # pad length is the 1st dimension of tiling size in gmm call
             pad_length = 512
@@ -202,14 +168,13 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         intermediate_layer = jnp.multiply(layer_act, layer_w1)
         intermediate_output = gmm(intermediate_layer, self.down_proj, group_sizes)
 
-        print(layer_w0.shape,intermediate_layer.shape,intermediate_output.shape)
 
         output = self.unpermute(
             intermediate_output, sorted_selected_experts, weights, batch_size=batch_size,
             sequence_length=sequence_length
         )
         return output
-
+"""
 
 
 
@@ -242,32 +207,90 @@ def convert_torch_to_flax_sparse_moe_block(state_dict):
 
 
 
-config=AutoConfig.from_pretrained('Qwen/Qwen3-30B-A3B')
-config.num_experts=16
-model_torch=Qwen3MoeSparseMoeBlockTorch(config=config)
-state_dict=model_torch.state_dict()
-flatten_state_dict=unflatten_dict(state_dict,sep='.')
-print(flatten_state_dict.keys())
-print(flatten_state_dict['experts'].keys())
-print(state_dict['gate.weight'].shape)
-print(state_dict.keys())
 
-b,n,d=shape=(1,128,2048)
-x=jnp.ones(shape,dtype=jnp.float32)
+def get_model(mesh):
+    config=AutoConfig.from_pretrained('Qwen/Qwen3-30B-A3B')
+    config.num_experts=16
+    model_torch=Qwen3MoeSparseMoeBlockTorch(config=config)
+    state_dict=model_torch.state_dict()
+    # flatten_state_dict=unflatten_dict(state_dict,sep='.')
+    # print(flatten_state_dict.keys())
+    # print(flatten_state_dict['experts'].keys())
+    # print(state_dict['gate.weight'].shape)
+    # print(state_dict.keys())
 
-x_torch=torch.from_numpy(np.array(x))
+    jax_config = LlamaJaxConfig(mesh=mesh)
+    model_jax=Qwen3MoeSparseMoeBlock(config=config,jax_config=jax_config)
+    params = convert_torch_to_flax_sparse_moe_block(jax.tree_util.tree_map(lambda x: x.numpy(), state_dict))
 
-rng=jax.random.PRNGKey(1)
-model_jax=Qwen3MoeSparseMoeBlock(config=config)
+    return model_torch,model_jax,params
 
-params=jax.jit(model_jax.init)(rng,x)['params']
-# print(params['down_proj'].shape)
 
-params=convert_torch_to_flax_sparse_moe_block(jax.tree_util.tree_map( lambda x:x.numpy(),    state_dict))
-# print(params['down_proj'].shape)
-output=model_jax.apply({'params':params},x)
-# print(routing_weights.shape,selected_experts)
-output_torch=model_torch(x_torch)
-print(output_torch.detach().numpy()-np.array(output))
-"""
-"""
+
+
+
+
+
+
+def get_partition_rules_moe():
+    return (
+        ('.*/self_attn/q_proj/kernel', PS('fsdp', 'tp')),
+        ('.*/self_attn/k_proj/kernel', PS('fsdp', 'tp')),
+        ('.*/self_attn/v_proj/kernel', PS('fsdp', 'tp')),
+        ('.*/self_attn/o_proj/kernel', PS( 'tp', 'fsdp', )),
+
+        ('.*/mlp/gate_proj', PS( 'ep','tp', 'fsdp')),
+        ('.*/mlp/up_proj', PS('ep','tp', 'fsdp')),
+        ('.*/mlp/down_proj', PS('ep','fsdp', 'tp')),
+
+        ('embed_tokens/embedding', PS('fsdp', 'tp')),
+        ('lm_head/kernel', PS('fsdp', 'tp')),
+        ('scale',PS('tp')),
+
+        ('.*', PS(None)),
+    )
+
+
+
+
+def init_params(mesh,params):
+    def init_fn(params):
+        return params
+
+    state_shapes = jax.eval_shape(init_fn, params, )
+
+    train_state_partition = match_partition_rules(get_partition_rules_moe(), state_shapes)
+    train_state_sharding = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh, x), train_state_partition)
+    dtype=jnp.float32
+    params = jax.tree_util.tree_map(lambda x, d: jnp.asarray(x, dtype=dtype, device=d), params, train_state_sharding)
+
+    params = jax.jit(init_fn,
+                     # donate_argnums=(0,),
+                     out_shardings=train_state_sharding)(params)
+    return params
+
+
+
+
+def test_model(model_torch,model_jax,params):
+
+
+
+    b,n,d=shape=(1,128,2048)
+    x=jnp.ones(shape,dtype=jnp.float32)
+    x_torch=torch.from_numpy(np.array(x))
+
+    # params=jax.jit(model_jax.init)(rng,x)['params']
+    # print(params['down_proj'].shape)
+    output=model_jax.apply({'params':params},x)
+    output_torch=model_torch(x_torch)
+    print(output_torch.detach().numpy()-np.array(output))
+    """ """
+
+
+if __name__=='__main__':
+    mesh = get_jax_mesh2("1,1,1, -1",axis_names=('dp','fsdp','tp','exp') )
+    model_torch, model_jax, params=get_model(mesh)
+    params=init_params(mesh,params)
+    print(mesh)
+    test_model(model_torch,model_jax, params)

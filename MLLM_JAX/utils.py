@@ -289,8 +289,8 @@ def get_jax_mesh(axis_dims, names,devices=None):
     return Mesh(physical_mesh, dim_names)
 
 # mesh_dim='dp:2,fsdp:-1,mp:1'
-def get_jax_mesh2(axis_dims,devices=None):
-    return get_jax_mesh(axis_dims, ('dp', 'fsdp', 'tp') ,devices=devices )
+def get_jax_mesh2(axis_dims, axis_names=   ('dp', 'fsdp', 'tp') ,devices=None):
+    return get_jax_mesh(axis_dims, axis_names ,devices=devices )
 
 
 

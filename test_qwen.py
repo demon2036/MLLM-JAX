@@ -82,6 +82,13 @@ def get_model(mesh, max_cache_length=8192):
     train_state_partition = match_partition_rules(get_partition_rules_moe(), state_shapes)
     train_state_sharding = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh, x), train_state_partition)
 
+
+    def test(p,x):
+        print(p,x)
+
+    jax.tree_util.tree_map_with_path(test, train_state_sharding)
+
+
     print('start put on device')
     params = jax.tree_util.tree_map(lambda x, d: jnp.asarray(x, dtype=dtype, device=d), params, train_state_sharding)
 
@@ -326,7 +333,7 @@ class Sampler:
 async def test_qwen2_fast_jit_sample2():
     max_cache_length = 1024
     # mesh = get_jax_mesh2("1,1,-1")
-    mesh = get_jax_mesh2("1,1,1, -1", axis_names=('dp', 'fsdp', 'tp', 'exp'))
+    mesh = get_jax_mesh2("1,1,-1, 1", axis_names=('dp', 'fsdp', 'tp', 'exp'))
     model, params, tokenizer = get_model(mesh, max_cache_length=max_cache_length)
     exit_token_ids = tokenizer.eos_token_id
     print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')

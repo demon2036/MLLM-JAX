@@ -89,8 +89,12 @@ def gmm(inputs, kernel, group_sizes):
         lhs_quantize_dtype, rhs_quantize_dtype = None, None
         megablox=True
 
+
+
+
         if megablox:
             m, k, n = inputs.shape[0], inputs.shape[1], kernel.shape[2]
+            print((min(tile_size[0], m), min(tile_size[1], k), min(tile_size[2], n)))
             output = mblx.gmm(
                 lhs=inputs,
                 rhs=kernel,

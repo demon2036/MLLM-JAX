@@ -376,7 +376,6 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             pass
 
         input_partition_pspec=P('dp',None)
-        gate_logits_pspec=P('dp',None,)
         gate_pspec=P("exp", None, 'tp')
         up_pspec=P("exp", None, 'tp')
         down_pspec = P("exp", 'tp', None)

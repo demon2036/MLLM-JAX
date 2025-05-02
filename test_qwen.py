@@ -56,17 +56,13 @@ def get_model(mesh, max_cache_length=8192):
     # model_path = 'Qwen/QwQ-32B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
     model_path='Qwen/Qwen3-30B-A3B'
-
-
     snapshot_download(model_path,max_workers=32)
-
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     print(config)
     # Load the base model with adapters on top
-
     params = get_params(model_path)
-    jax_config = LlamaJaxConfig(mesh=mesh)
 
+    jax_config = LlamaJaxConfig(mesh=mesh)
 
     if 'Qwen/Qwen3-30B-A3B' in model_path:
         model = Qwen3MoeForCausalLM(config, jax_config)
@@ -83,15 +79,17 @@ def get_model(mesh, max_cache_length=8192):
     train_state_partition = match_partition_rules(get_partition_rules_llama(), state_shapes)
     train_state_sharding = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh, x), train_state_partition)
 
+    print('start put on device')
     params = jax.tree_util.tree_map(lambda x, d: jnp.asarray(x, dtype=dtype, device=d), params, train_state_sharding)
 
     params = jax.jit(init_fn,
                      # donate_argnums=(0,),
                      out_shardings=train_state_sharding)(params)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    cache = init_cache(config, 1, max_cache_length=max_cache_length, dtype=dtype)
 
-    return model, params, tokenizer, cache
+    print('end put on device')
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    return model, params, tokenizer
 
 
 messages = [
@@ -325,8 +323,8 @@ class Sampler:
 async def test_qwen2_fast_jit_sample2():
     max_cache_length = 1024
     # mesh = get_jax_mesh2("1,1,-1")
-    mesh = get_jax_mesh2("1,1,1, -1", axis_names=('dp', 'fsdp', 'tp', 'exp'))
-    model, params, tokenizer, cache = get_model(mesh, max_cache_length=max_cache_length)
+    mesh = get_jax_mesh2("1,1,-1, 1", axis_names=('dp', 'fsdp', 'tp', 'exp'))
+    model, params, tokenizer = get_model(mesh, max_cache_length=max_cache_length)
     exit_token_ids = tokenizer.eos_token_id
     print(f'{tokenizer.eos_token=} ,{tokenizer.eos_token_id=}, {exit_token_ids=}')
 

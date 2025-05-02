@@ -93,7 +93,7 @@ def gmm(inputs, kernel, group_sizes):
 
         if megablox:
             m, k, n = inputs.shape[0], inputs.shape[1], kernel.shape[2]
-            print((min(tile_size[0], m), min(tile_size[1], k), min(tile_size[2], n)))
+            # print((min(tile_size[0], m), min(tile_size[1], k), min(tile_size[2], n)))
             output = mblx.gmm(
                 lhs=inputs,
                 rhs=kernel,
@@ -481,7 +481,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 sequence_length=sequence_length
             )
 
-            print(output.shape)
+            # print(output.shape)
             return output
 
 

@@ -239,9 +239,14 @@ def get_partition_rules_moe():
         ('.*/self_attn/v_proj/kernel', PS('fsdp', 'tp')),
         ('.*/self_attn/o_proj/kernel', PS( 'tp', 'fsdp', )),
 
-        ('.*/mlp/gate_proj', PS( 'exp','tp', 'fsdp')),
-        ('.*/mlp/up_proj', PS('exp','tp', 'fsdp')),
-        ('.*/mlp/down_proj', PS('exp','fsdp', 'tp')),
+        # ('.*/mlp/gate_proj', PS( 'exp','tp', 'fsdp')),
+        # ('.*/mlp/up_proj', PS('exp','tp', 'fsdp')),
+        # ('.*/mlp/down_proj', PS('exp','fsdp', 'tp')),
+
+        ('.*/mlp/gate_proj', PS('tp', None, 'fsdp')),
+        ('.*/mlp/up_proj', PS( 'tp','exp', 'fsdp')),
+        ('.*/mlp/down_proj', PS('tp','exp', 'fsdp', )),
+
 
         ('embed_tokens/embedding', PS('fsdp', 'tp')),
         ('lm_head/kernel', PS('fsdp', 'tp')),
@@ -289,7 +294,7 @@ def test_model(model_torch,model_jax,params):
 
 
 if __name__=='__main__':
-    mesh = get_jax_mesh2("1,1,1, -1",axis_names=('dp','fsdp','tp','exp') )
+    mesh = get_jax_mesh2("1,1,-1, 1",axis_names=('dp','fsdp','tp','exp') )
     model_torch, model_jax, params=get_model(mesh)
     params=init_params(mesh,params)
     print(mesh)

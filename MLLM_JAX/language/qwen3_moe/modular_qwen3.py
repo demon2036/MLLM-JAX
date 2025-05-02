@@ -393,8 +393,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         up_pspec=P("tp", None, None)
         down_pspec = P("tp", None, None)
 
-        out_specs=P('dp',None,'tp')
         # out_specs=P('dp',None,'tp')
+        out_specs=P('dp',None,None)
 
 
 
@@ -408,9 +408,6 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         def wrapper(hidden_states, gate_proj, up_proj, down_proj  ):
 
             x, sorted_selected_experts, weights, group_sizes = self.permute(hidden_states)
-
-
-
             if self.get_expert_parallelism_size() > 1:
                 # axis_name = "exp"
                 axis_name = "tp"
@@ -484,7 +481,11 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 intermediate_output, sorted_selected_experts, weights, batch_size=batch_size,
                 sequence_length=sequence_length
             )
+
+            print(output.shape)
             return output
+
+
 
         return  wrapper(hidden_states, self.gate_proj, self.up_proj, self.down_proj)
 

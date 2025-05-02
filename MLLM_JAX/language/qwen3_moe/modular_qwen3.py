@@ -614,27 +614,6 @@ class Qwen3MoeForCausalLM(nn.Module):
 
 
 
-def convert_torch_to_flax_sparse_moe_block(state_dict):
-    params = dict()
-    params['gate.kernel']=state_dict['gate.weight'].transpose(1, 0)
-
-    j=0
-    gate_proj_experts=[]
-    up_proj_experts=[]
-    down_proj_experts=[]
-    while f'experts.{j}.gate_proj.weight' in state_dict:
-        gate_proj_experts.append(state_dict[f'experts.{j}.gate_proj.weight'].transpose(1, 0))
-        up_proj_experts.append(state_dict[f'experts.{j}.up_proj.weight'].transpose(1, 0))
-        down_proj_experts.append(state_dict[f'experts.{j}.down_proj.weight'].transpose(1, 0))
-        j+=1
-
-    gate_proj_experts=np.asarray(gate_proj_experts)
-    up_proj_experts=np.asarray(up_proj_experts)
-    down_proj_experts=np.asarray(down_proj_experts)
-    params['gate_proj'] = gate_proj_experts
-    params['up_proj'] = up_proj_experts
-    params['down_proj']=down_proj_experts
-    return flax.traverse_util.unflatten_dict(params, sep='.')
 
 
 

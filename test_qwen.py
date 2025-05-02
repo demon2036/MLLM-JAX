@@ -21,6 +21,7 @@ from MLLM_JAX.language.llama.llama import convert_torch_to_flax_llama, LlamaJaxC
 from MLLM_JAX.language.qwen2.configuration_qwen2 import Qwen2Config, init_cache, pad_cache
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
 from MLLM_JAX.language.qwen3.modular_qwen3 import Qwen3ForCausalLM
+from MLLM_JAX.language.qwen3_moe.modular_qwen3 import Qwen3MoeForCausalLM, convert_torch_to_flax_qwen3_moe
 from MLLM_JAX.sample.sanple_utils import _temperature_sampling
 from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama, get_jax_mesh2
 import os
@@ -37,20 +38,21 @@ def get_params(model_path):
         torch_dtype=torch.float32,
     )
     state_dict = model.state_dict()
-    params = convert_torch_to_flax_llama(state_dict)
-    # params = jax.tree_util.tree_map(lambda x: jnp.asarray(np.array(x), dtype=dtype), params)
+    # params=jax.tree_util.tree_map(lambda x: x.cpu(), state_dict)
+    # params = convert_torch_to_flax_llama(state_dict)
+    params = convert_torch_to_flax_qwen3_moe(state_dict)
     params = jax.tree_util.tree_map(lambda x: np.array(x), params)
-
     return params
 
 
 def get_model(mesh, max_cache_length=8192):
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
-    model_path = 'Qwen/Qwen3-8B'
+    # model_path = 'Qwen/Qwen3-8B'
     # model_path = 'Qwen/Qwen2.5-14B-Instruct'
     # model_path = 'Qwen/QwQ-32B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
+    model_path='Qwen/Qwen3-30B-A3B'
 
 
     snapshot_download(model_path,max_workers=32)
@@ -62,7 +64,10 @@ def get_model(mesh, max_cache_length=8192):
     params = get_params(model_path)
     jax_config = LlamaJaxConfig(mesh=mesh)
 
-    if 'Qwen3' in model_path:
+
+    if 'Qwen/Qwen3-30B-A3B' in model_path:
+        model = Qwen3MoeForCausalLM(config, jax_config)
+    elif 'Qwen3' in model_path:
         model = Qwen3ForCausalLM(config, jax_config)
     else:
         model = Qwen2ForCausalLM(config, jax_config)

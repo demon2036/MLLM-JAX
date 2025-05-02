@@ -516,7 +516,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
 
             return output
 
-        gate_logits=self.gate(hidden_states)
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        gate_logits=self.gate(hidden_states.reshape(-1, hidden_dim))
         return  wrapper(hidden_states, gate_logits,  self.gate_proj, self.up_proj, self.down_proj)
 
 

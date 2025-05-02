@@ -84,8 +84,8 @@ def gmm(inputs, kernel, group_sizes):
             pad_length = pad_length - hs_shape[0] % pad_length
             inputs = jax.lax.pad(inputs.astype(jnp.float32), 0.0, [(0, pad_length, 0), (0, 0, 0)])
 
-        # inputs = inputs.astype(self.dtype)
-        # kernel = kernel.astype(self.dtype)
+        inputs = inputs.astype(jnp.bfloat16)
+        kernel = kernel.astype(jnp.bfloat16)
         lhs_quantize_dtype, rhs_quantize_dtype = None, None
         megablox=True
 
@@ -340,7 +340,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         sorted_selected_experts = jnp.argsort(flatten_selected_experts)
         sorted_indices = sorted_selected_experts // self.top_k
         # sort inputs for number of selected experts
-        sorted_inputs = jnp.take(inputs_2d, indices=sorted_indices, axis=0)#.astype(self.dtype)
+        sorted_inputs = jnp.take(inputs_2d, indices=sorted_indices, axis=0).astype(jnp.bfloat16)
         group_size = jnp.bincount(flatten_selected_experts, length=self.num_experts)
         return sorted_inputs, sorted_selected_experts, routing_weights, group_size
 
@@ -367,7 +367,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 reshaped_weights.astype(jnp.float32),
                 precision=matmul_precision,
             )
-        return output.reshape(batch_size, sequence_length, -1)#.astype(self.dtype)
+        return output.reshape(batch_size, sequence_length, -1).astype(jnp.bfloat16)
 
     def get_expert_parallelism_size(self):
         return self.jax_config.mesh.shape["tp"]

@@ -83,11 +83,6 @@ def get_model(mesh, max_cache_length=8192):
     train_state_sharding = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh, x), train_state_partition)
 
 
-    def test(p,x):
-        print(p,x)
-
-    jax.tree_util.tree_map_with_path(test, train_state_sharding)
-
 
     print('start put on device')
     params = jax.tree_util.tree_map(lambda x, d: jnp.asarray(x, dtype=dtype, device=d), params, train_state_sharding)

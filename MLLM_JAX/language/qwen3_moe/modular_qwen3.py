@@ -17,6 +17,8 @@ from ..llama.llama import LlamaMLP, LlamaAttention, LlamaDecoderLayer, LlamaRMSN
     apply_rotary_pos_emb, repeat_kv
 from jax.sharding import PartitionSpec as P
 
+from MLLM_JAX.kernels import megablox as mblx
+
 
 def get_all_to_all_params(all_shards_group_sizes, local_expert_size, num_expert_shards):
     class TransformStrategy(Enum):
@@ -82,20 +84,19 @@ def gmm(inputs, kernel, group_sizes):
         # inputs = inputs.astype(self.dtype)
         # kernel = kernel.astype(self.dtype)
         lhs_quantize_dtype, rhs_quantize_dtype = None, None
-        megablox=False
+        megablox=True
 
         if megablox:
-            pass
-            # m, k, n = inputs.shape[0], inputs.shape[1], kernel.shape[2]
-            # output = mblx.gmm(
-            #     lhs=inputs,
-            #     rhs=kernel,
-            #     group_sizes=group_sizes,
-            #     preferred_element_type=jnp.bfloat16,
-            #     tiling=(min(tile_size[0], m), min(tile_size[1], k), min(tile_size[2], n)),
-            #     lhs_quantize_dtype=lhs_quantize_dtype,
-            #     rhs_quantize_dtype=rhs_quantize_dtype,
-            # )
+            m, k, n = inputs.shape[0], inputs.shape[1], kernel.shape[2]
+            output = mblx.gmm(
+                lhs=inputs,
+                rhs=kernel,
+                group_sizes=group_sizes,
+                preferred_element_type=jnp.bfloat16,
+                tiling=(min(tile_size[0], m), min(tile_size[1], k), min(tile_size[2], n)),
+                lhs_quantize_dtype=lhs_quantize_dtype,
+                rhs_quantize_dtype=rhs_quantize_dtype,
+            )
         else:
             output = jax.lax.ragged_dot(
                 lhs=inputs,
@@ -340,7 +341,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         """Unpermute tokens to original order and combine weights."""
 
         unsort_intermediate = jnp.take(intermediate, indices=jnp.argsort(sorted_selected_experts), axis=0)
-        print(f'{unsort_intermediate.shape=}')
+        # print(f'{unsort_intermediate.shape=}')
 
         reshaped_weights = jnp.reshape(weights, (-1, self.top_k))
         reshaped_intermediate = jnp.reshape(
@@ -368,7 +369,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         return self.jax_config.mesh.shape["tp"]
 
     def __call__(self, hidden_states):
-        print(f'{hidden_states.shape=}')
+        # print(f'{hidden_states.shape=}')
         batch_size, sequence_length, _ = hidden_states.shape
         # x, sorted_selected_experts, weights, group_sizes = self.permute(hidden_states)
 

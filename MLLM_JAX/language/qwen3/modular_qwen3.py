@@ -121,6 +121,17 @@ class Qwen3Attention(LlamaAttention):
                 mask = splash_attention_mask.CausalMask(shape=(key_states.shape[2], key_states.shape[2]))
                 multi_head_mask = splash_attention_mask.MultiHeadMask(masks=(mask,) * value_states.shape[1])
 
+                # block_sizes = splash_attention_kernel.BlockSizes(
+                #     block_q=min(512, query_states.shape[2]),
+                #     block_kv_compute=min(512, key_states.shape[2]),
+                #     block_kv=min(512, key_states.shape[2]),
+                #     block_q_dkv=min(512, query_states.shape[2]),
+                #     block_kv_dkv=min(512, key_states.shape[2]),
+                #     block_kv_dkv_compute=min(512, query_states.shape[2]),
+                #     block_q_dq=min(512, query_states.shape[2]),
+                #     block_kv_dq=min(512, query_states.shape[2]),
+                # )
+
                 block_sizes = splash_attention_kernel.BlockSizes(
                     block_q=min(512, query_states.shape[2]),
                     block_kv_compute=min(512, key_states.shape[2]),

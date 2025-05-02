@@ -349,7 +349,8 @@ async def test_qwen2_fast_jit_sample2():
     async for _ in sampler.generate_prefill_auto_regressive(prompt,max_length=max_cache_length):
         pass
 
-
+    async for _ in sampler.generate_prefill_auto_regressive(prompt,max_length=max_cache_length):
+        pass
 
 
 

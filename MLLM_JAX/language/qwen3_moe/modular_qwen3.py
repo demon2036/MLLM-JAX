@@ -392,8 +392,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         up_pspec=P("tp", None, None)
         down_pspec = P("tp", None, None)
 
-        # out_specs=P('dp',None,'tp')
-        out_specs=P('dp',None,None)
+        out_specs=P('dp',None,'tp')
+        # out_specs=P('dp',None,None)
 
 
 
@@ -440,7 +440,6 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                     recv_sizes,
                     axis_name=axis_name,
                 )
-                print(f'{x.shape=} {output_shape.shape=}')
                 global_group_sizes = jax.lax.all_gather(group_sizes, axis_name=axis_name)
                 x, local_sorted_indices, group_sizes = local_permute(x, global_group_sizes, local_expert_size)
 
@@ -481,7 +480,6 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 sequence_length=sequence_length
             )
 
-            # print(output.shape)
             return output
 
 

@@ -93,7 +93,6 @@ def gmm(inputs, kernel, group_sizes):
 
         if megablox:
             m, k, n = inputs.shape[0], inputs.shape[1], kernel.shape[2]
-            # print((min(tile_size[0], m), min(tile_size[1], k), min(tile_size[2], n)))
             output = mblx.gmm(
                 lhs=inputs,
                 rhs=kernel,
@@ -424,7 +423,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 # Note: Reducing buffer increase the risk of token dropping under unbalanced distribution.
                 buffer_size = int(
                     self.get_expert_parallelism_size()
-                    *0.25
+                    *1
                     # * self.config.per_device_batch_size
                     # * self.config.max_target_length
                     *sequence_length

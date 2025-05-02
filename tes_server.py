@@ -239,9 +239,9 @@ def get_partition_rules_moe():
         ('.*/self_attn/v_proj/kernel', PS('fsdp', 'tp')),
         ('.*/self_attn/o_proj/kernel', PS( 'tp', 'fsdp', )),
 
-        ('.*/mlp/gate_proj', PS( 'ep','tp', 'fsdp')),
-        ('.*/mlp/up_proj', PS('ep','tp', 'fsdp')),
-        ('.*/mlp/down_proj', PS('ep','fsdp', 'tp')),
+        ('.*/mlp/gate_proj', PS( 'exp','tp', 'fsdp')),
+        ('.*/mlp/up_proj', PS('exp','tp', 'fsdp')),
+        ('.*/mlp/down_proj', PS('exp','fsdp', 'tp')),
 
         ('embed_tokens/embedding', PS('fsdp', 'tp')),
         ('lm_head/kernel', PS('fsdp', 'tp')),

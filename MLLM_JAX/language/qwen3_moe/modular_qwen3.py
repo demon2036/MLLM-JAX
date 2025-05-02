@@ -451,9 +451,9 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             intermediate_layer = jnp.multiply(layer_act, layer_w1)
             intermediate_output = gmm(intermediate_layer, down_proj, group_sizes)
 
-            if self.get_tensor_parallelism_size() > 1:
-                intermediate_output = jax.lax.psum_scatter(intermediate_output, "tp", scatter_dimension=1,
-                                                           tiled=True)
+            # if self.get_tensor_parallelism_size() > 1:
+            #     intermediate_output = jax.lax.psum_scatter(intermediate_output, "tp", scatter_dimension=1,
+            #                                                tiled=True)
 
             if self.get_expert_parallelism_size() > 1:
                 # axis_name = "exp"

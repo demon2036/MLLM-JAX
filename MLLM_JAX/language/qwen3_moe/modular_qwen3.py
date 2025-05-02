@@ -429,9 +429,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                     recv_sizes,
                     axis_name=axis_name,
                 )
-
                 print(f'{x.shape=} {output_shape.shape=}')
-
                 global_group_sizes = jax.lax.all_gather(group_sizes, axis_name=axis_name)
                 x, local_sorted_indices, group_sizes = local_permute(x, global_group_sizes, local_expert_size)
 
@@ -613,3 +611,87 @@ class Qwen3MoeForCausalLM(nn.Module):
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
         logits = self.lm_head(hidden_states)
         return logits, cache
+
+
+
+def convert_torch_to_flax_sparse_moe_block(state_dict):
+    params = dict()
+    params['gate.kernel']=state_dict['gate.weight'].transpose(1, 0)
+
+    j=0
+    gate_proj_experts=[]
+    up_proj_experts=[]
+    down_proj_experts=[]
+    while f'experts.{j}.gate_proj.weight' in state_dict:
+        gate_proj_experts.append(state_dict[f'experts.{j}.gate_proj.weight'].transpose(1, 0))
+        up_proj_experts.append(state_dict[f'experts.{j}.up_proj.weight'].transpose(1, 0))
+        down_proj_experts.append(state_dict[f'experts.{j}.down_proj.weight'].transpose(1, 0))
+        j+=1
+
+    gate_proj_experts=np.asarray(gate_proj_experts)
+    up_proj_experts=np.asarray(up_proj_experts)
+    down_proj_experts=np.asarray(down_proj_experts)
+    params['gate_proj'] = gate_proj_experts
+    params['up_proj'] = up_proj_experts
+    params['down_proj']=down_proj_experts
+    return flax.traverse_util.unflatten_dict(params, sep='.')
+
+
+
+def convert_torch_to_flax_qwen3_moe(state_dict):
+    params = {}
+    i = 0
+    while f'model.layers.{i}.self_attn.q_proj.weight' in state_dict:
+        params[f'model.layers_{i}.input_layernorm.scale'] = state_dict[f'model.layers.{i}.input_layernorm.weight']
+
+        params[f'model.layers_{i}.mlp.gate.kernel'] = state_dict[
+            f'model.layers.{i}.mlp.gate.weight'].transpose(1, 0)
+
+        j = 0
+        gate_proj_experts = []
+        up_proj_experts = []
+        down_proj_experts = []
+        while f'model.layers.{i}.mlp.experts.{j}.gate_proj.weight' in state_dict:
+            gate_proj_experts.append(state_dict[f'model.layers.{i}.mlp.experts.{j}.gate_proj.weight'].transpose(1, 0))
+            up_proj_experts.append(state_dict[f'model.layers.{i}.mlp.experts.{j}.up_proj.weight'].transpose(1, 0))
+            down_proj_experts.append(state_dict[f'model.layers.{i}.mlp.experts.{j}.down_proj.weight'].transpose(1, 0))
+            j += 1
+
+        params[f'model.layers_{i}.mlp.gate_proj'] =  np.asarray(gate_proj_experts)
+        params[f'model.layers_{i}.mlp.up_proj'] = np.asarray(up_proj_experts)
+        params[f'model.layers_{i}.mlp.down_proj'] = np.asarray(down_proj_experts)
+
+
+        params[f'model.layers_{i}.post_attention_layernorm.scale'] = state_dict[
+            f'model.layers.{i}.post_attention_layernorm.weight']
+        params[f'model.layers_{i}.self_attn.q_proj.kernel'] = state_dict[
+            f'model.layers.{i}.self_attn.q_proj.weight'].transpose(1, 0)
+        params[f'model.layers_{i}.self_attn.k_proj.kernel'] = state_dict[
+            f'model.layers.{i}.self_attn.k_proj.weight'].transpose(1, 0)
+        params[f'model.layers_{i}.self_attn.v_proj.kernel'] = state_dict[
+            f'model.layers.{i}.self_attn.v_proj.weight'].transpose(1, 0)
+        params[f'model.layers_{i}.self_attn.o_proj.kernel'] = state_dict[
+            f'model.layers.{i}.self_attn.o_proj.weight'].transpose(1, 0)
+
+        if f'model.layers.{i}.self_attn.q_proj.bias' in state_dict:
+            params[f'model.layers_{i}.self_attn.q_proj.bias'] = state_dict[
+                f'model.layers.{i}.self_attn.q_proj.bias']
+            params[f'model.layers_{i}.self_attn.k_proj.bias'] = state_dict[
+                f'model.layers.{i}.self_attn.k_proj.bias']
+            params[f'model.layers_{i}.self_attn.v_proj.bias'] = state_dict[
+                f'model.layers.{i}.self_attn.v_proj.bias']
+
+        if f'model.layers.{i}.self_attn.q_norm.weight' in state_dict:
+            params[f'model.layers_{i}.self_attn.q_norm.scale'] = state_dict[
+                f'model.layers.{i}.self_attn.q_norm.weight']
+            params[f'model.layers_{i}.self_attn.k_norm.scale'] = state_dict[
+                f'model.layers.{i}.self_attn.k_norm.weight']
+
+
+        i += 1
+    params['model.norm.scale'] = state_dict['model.norm.weight']
+    params['model.embed_tokens.embedding'] = state_dict['model.embed_tokens.weight']  #.transpose(1,0)
+    # params['lm_head.kernel'] = params['model.embed_tokens.embedding'].transpose(1, 0)
+    params['lm_head.kernel'] = state_dict['lm_head.weight'].transpose(1, 0)
+
+    return flax.traverse_util.unflatten_dict(params, sep='.')

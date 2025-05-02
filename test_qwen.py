@@ -305,12 +305,12 @@ class Sampler:
                 yield select_ids
 
 
-            # res.append(select_ids)
-            # output = \
-            #         self.tokenizer.batch_decode(np.array(res).reshape(1, -1), skip_special_tokens=False,
-            #                                     clean_up_tokenization_spaces=False)[
-            #             0]
-            # print(output)
+            res.append(select_ids)
+            output = \
+                    self.tokenizer.batch_decode(np.array(res).reshape(1, -1), skip_special_tokens=False,
+                                                clean_up_tokenization_spaces=False)[
+                        0]
+            print(output)
 
 
 
@@ -329,7 +329,7 @@ async def test_qwen2_fast_jit_sample2():
         messages,
         tokenize=False,
         add_generation_prompt=True,
-        enable_thinking=True  # Switches between thinking and non-thinking modes. Default is True.
+        enable_thinking=False  # Switches between thinking and non-thinking modes. Default is True.
     )
 
     sampler = Sampler(model, params, tokenizer,mesh=mesh)

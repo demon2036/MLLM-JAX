@@ -41,6 +41,7 @@ class ChatRequest(BaseModel):
     temperature: float = 0.7
     max_tokens: int|None = None
     stream: bool = True
+    enable_thinking:bool=True
 
 
 # 在应用启动时加载模型及相关资源（仅加载一次）
@@ -69,7 +70,7 @@ async def generate_stream_response(chat_request: ChatRequest):
         chat_request.messages,
         tokenize=False,
         add_generation_prompt=True,
-        enable_thinking=False
+        enable_thinking=chat_request.enable_thinking
     )
     print(prompt)
     generated_token_ids=[]

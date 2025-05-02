@@ -52,8 +52,7 @@ async def startup_event():
     max_cache_length = 1024
     # 根据实际情况修改 mesh 参数
     mesh = get_jax_mesh2("1,1,-1",devices=local_devices)
-    model, params, tokenizer, init_cache = get_model(mesh, max_cache_length=max_cache_length)
-    del init_cache
+    model, params, tokenizer = get_model(mesh, max_cache_length=max_cache_length)
     print(mesh)
     app.sampler=Sampler(model, params, tokenizer,mesh=mesh)
     print('go')

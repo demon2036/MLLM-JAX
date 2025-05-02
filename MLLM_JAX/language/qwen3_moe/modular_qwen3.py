@@ -76,10 +76,10 @@ def local_permute(inputs, global_group_sizes, local_expert_size):
 
 
 def gmm(inputs, kernel, group_sizes):
-        tile_size = (2048, 1024, 1024)  # (m, k, n)
+        tile_size = (1024, 1024, 1024)  # (m, k, n)
         hs_shape = inputs.shape
         # pad length is the 1st dimension of tiling size in gmm call
-        pad_length = 2048
+        pad_length = 1024
         if hs_shape[0] % pad_length:
             pad_length = pad_length - hs_shape[0] % pad_length
             inputs = jax.lax.pad(inputs.astype(jnp.float32), 0.0, [(0, pad_length, 0), (0, 0, 0)])

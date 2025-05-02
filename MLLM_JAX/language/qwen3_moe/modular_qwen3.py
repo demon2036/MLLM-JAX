@@ -448,7 +448,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 # locally unpermute back to the original order
                 local_output = jnp.take(intermediate_output, indices=jnp.argsort(local_sorted_indices), axis=0)
                 original_inputs_first_dim = batch_size * sequence_length * self.config.num_experts_per_tok
-                output_shape = jnp.zeros((original_inputs_first_dim, self.config.emb_dim), dtype=local_output.dtype)
+                output_shape = jnp.zeros((original_inputs_first_dim, self.config.hidden_size), dtype=local_output.dtype)
                 input_offsets, send_sizes, output_offsets, recv_sizes = get_all_to_all_params(
                     jnp.transpose(all_shards_group_sizes), local_expert_size, self.get_expert_parallelism_size()
                 )

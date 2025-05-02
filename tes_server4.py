@@ -90,7 +90,6 @@ async def chat_completions(request: Request):
 
 
 
-
     # 构建内部API请求
     chat_request = {
         "model": model,
@@ -101,7 +100,9 @@ async def chat_completions(request: Request):
         "enable_thinking":extra_body.get('enable_thinking',True)
     }
 
-    print(chat_request)
+    print(bobody.keys())
+
+
 
     # 从队列中获取一个 TPU 端点
     endpoint = app.tpu_endpoints_queue.get()

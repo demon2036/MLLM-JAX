@@ -76,10 +76,10 @@ def local_permute(inputs, global_group_sizes, local_expert_size):
 
 
 def gmm(inputs, kernel, group_sizes):
-        tile_size = (8, 1024, 1024)  # (m, k, n)
+        tile_size = (512, 1024, 1024)  # (m, k, n)
         hs_shape = inputs.shape
         # pad length is the 1st dimension of tiling size in gmm call
-        pad_length = 8
+        pad_length = 512
         if hs_shape[0] % pad_length:
             pad_length = pad_length - hs_shape[0] % pad_length
             inputs = jax.lax.pad(inputs.astype(jnp.float32), 0.0, [(0, pad_length, 0), (0, 0, 0)])
@@ -88,9 +88,6 @@ def gmm(inputs, kernel, group_sizes):
         kernel = kernel.astype(jnp.bfloat16)
         lhs_quantize_dtype, rhs_quantize_dtype = None, None
         megablox=True
-
-
-
         if megablox:
             m, k, n = inputs.shape[0], inputs.shape[1], kernel.shape[2]
             output = mblx.gmm(
@@ -240,7 +237,7 @@ class Qwen3Attention(LlamaAttention):
                     mask=multi_head_mask,
                     head_shards=1,
                     q_seq_shards=1,
-                    # block_sizes=block_sizes
+                    block_sizes=block_sizes
                 )
 
                 attn_output = jax.vmap(splash_kernel)(query_states , key_states, value_states)

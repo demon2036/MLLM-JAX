@@ -180,7 +180,7 @@ async def chat_completions(request: Request):
         "stream": stream,
         "enable_thinking":enable_thinking
     }
-    print(body.keys(),body.get('tools',True))
+    print(body.keys(),body.get('tools',True),chat_request['stream'])
 
 
 

@@ -99,7 +99,7 @@ async def chat_completions(request: Request):
         "stream": stream,
         "enable_thinking":enable_thinking
     }
-    print(body.keys())
+    print(body.keys(),body.get('tools',True))
 
 
 

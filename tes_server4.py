@@ -60,6 +60,78 @@ async def shutdown_event():
     print('FastAPI服务已关闭')
 
 # @app.post("/v1/chat/completions")
+def create_response_data(completion_id, created, model, content=None, function_call=None, finish_reason="stop",
+                         is_delta=False):
+    """
+    创建统一格式的响应数据
+
+    Args:
+        completion_id: 完成ID
+        created: 创建时间戳
+        model: 模型名称
+        content: 响应内容，可以为None
+        function_call: 函数调用数据，可以为None
+        finish_reason: 完成原因
+        is_delta: 是否为流式响应的delta格式
+
+    Returns:
+        dict: 格式化的响应数据
+    """
+    if is_delta:
+        # 流式响应格式
+        data = {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": finish_reason if finish_reason != "stop" or function_call is None else None
+                }
+            ]
+        }
+
+        # 添加内容或函数调用到delta
+        if content is not None:
+            data["choices"][0]["delta"]["content"] = content
+        if function_call is not None:
+            data["choices"][0]["delta"]["tool_calls"] = function_call
+            # 如果是最后一个函数调用块，则设置finish_reason
+            if finish_reason == "function_call":
+                data["choices"][0]["finish_reason"] = "tool_calls"
+    else:
+        # 非流式响应格式
+        data = {
+            "id": completion_id,
+            "object": "chat.completion",
+            "created": created,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": content
+                    },
+                    "finish_reason": finish_reason
+                }
+            ]
+        }
+
+        # 如果有函数调用，添加到消息中
+        if function_call is not None:
+            data["choices"][0]["message"]["function_call"] = function_call
+
+    return data
+
+
+
+
+
+
+
 @app.post("/chat/completions")
 async def chat_completions(request: Request):
     """以更宽松的方式处理聊天完成请求并转发给TPU端点"""
@@ -81,7 +153,7 @@ async def chat_completions(request: Request):
     max_tokens = body.get("max_tokens", None)
     stream = body.get("stream", True)
     enable_thinking=body.get('enable_thinking',True)
-    tools = body.get('tools', None)
+    tools=body.get('tools',None)
 
     # 获取消息
     messages = body.get("messages", [])
@@ -99,9 +171,10 @@ async def chat_completions(request: Request):
         "max_tokens": max_tokens,
         "stream": stream,
         "enable_thinking":enable_thinking,
-        "tools": tools
+
+        "tools":tools
     }
-    print(body.keys(),body.get('tools',True))
+    print(body.keys(),body.get('tools',True),chat_request['stream'])
 
 
 
@@ -124,12 +197,10 @@ async def chat_completions(request: Request):
             # 创建流式转发生成器
             async def forward_stream():
                 http_client2 = httpx.AsyncClient(timeout=httpx.Timeout(timeout=None))
-                # 创建唯一ID
                 completion_id = f"chatcmpl-{uuid.uuid4()}"
                 created = int(time.time())
 
                 try:
-                    # 使用应用级别的HTTP客户端
                     async with http_client2.stream(
                             'POST',
                             internal_url,
@@ -137,7 +208,6 @@ async def chat_completions(request: Request):
                             headers={"Content-Type": "application/json"}
                     ) as response:
                         if response.status_code != 200:
-                            # 如果内部API返回错误，生成错误响应
                             error_data = {
                                 "error": {
                                     "message": f"内部服务错误: {response.status_code}",
@@ -150,59 +220,119 @@ async def chat_completions(request: Request):
                             return
 
                         # 发送起始部分
-                        start_data = {
-                            "id": completion_id,
-                            "object": "chat.completion.chunk",
-                            "created": created,
-                            "model": model,
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {"role": "assistant"},
-                                    "finish_reason": None
-                                }
-                            ]
-                        }
-                        # yield f"data: {json.dumps(start_data)}\n\n"
+                        start_data = create_response_data(
+                            completion_id=completion_id,
+                            created=created,
+                            model=model,
+                            is_delta=True
+                        )
+                        start_data["choices"][0]["delta"]["role"] = "assistant"
+                        yield f"data: {json.dumps(start_data)}\n\n"
 
                         # 处理响应流
                         accumulated_text = ""
+                        in_tool_call = False
+                        tool_call_content = ""
+
                         async for chunk in response.aiter_text():
                             if chunk:
-                                # 处理内部响应
                                 print(f"收到响应块: {chunk}")
 
-                                # 构建OpenAI格式的响应块
-                                data = {
-                                    "id": completion_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": created,
-                                    "model": model,
-                                    "choices": [
-                                        {
-                                            "index": 0,
-                                            "delta": {"content": chunk},
-                                            "finish_reason": None
-                                        }
-                                    ]
-                                }
-                                yield f"data: {json.dumps(data)}\n\n"
-                                accumulated_text += chunk
+                                # 检查是否是工具调用的开始或结束
+                                if "<tool_call>" in chunk:
+                                    in_tool_call = True
+                                    # 分割处理前面的正常内容
+                                    normal_content = chunk.split("<tool_call>")[0]
+                                    if normal_content:
+                                        data = create_response_data(
+                                            completion_id=completion_id,
+                                            created=created,
+                                            model=model,
+                                            content=normal_content,
+                                            is_delta=True
+                                        )
+                                        yield f"data: {json.dumps(data)}\n\n"
+                                        accumulated_text += normal_content
+
+                                    # 开始收集工具调用内容
+                                    tool_call_content = chunk.split("<tool_call>")[1]
+                                    continue
+
+                                if in_tool_call and "</tool_call>" in chunk:
+                                    in_tool_call = False
+                                    # 添加结束前的内容
+                                    tool_call_content += chunk.split("</tool_call>")[0]
+
+                                    try:
+                                        # 直接解析JSON对象
+                                        tool_call_data = json.loads(tool_call_content.strip())
+
+                                        if not isinstance(tool_call_data, list):
+                                            # 如果不是列表，将其转换为列表中的一项
+                                            tool_call_list = [{
+                                                "id": tool_call_data.get("id", f"call_{uuid.uuid4()}"),
+                                                "type": tool_call_data.get("type", "function"),
+                                                "index": 0,
+                                                "function": {
+                                                    "name": tool_call_data.get("name", ""),
+                                                    "arguments": tool_call_data.get("arguments", "")
+                                                }
+                                            }]
+
+
+                                        # 发送函数调用格式的 delta
+                                        tool_call_data = create_response_data(
+                                            completion_id=completion_id,
+                                            created=created,
+                                            model=model,
+                                            function_call=tool_call_list,
+                                            finish_reason="function_call",
+                                            is_delta=True
+                                        )
+                                        print(tool_call_data)
+                                        yield f"data: {json.dumps(tool_call_data)}\n\n"
+
+                                        # 继续处理结束标签后的内容
+                                        if "</tool_call>" in chunk:
+                                            remaining_content = chunk.split("</tool_call>")[1]
+                                            if remaining_content:
+                                                data = create_response_data(
+                                                    completion_id=completion_id,
+                                                    created=created,
+                                                    model=model,
+                                                    content=remaining_content,
+                                                    is_delta=True
+                                                )
+                                                yield f"data: {json.dumps(data)}\n\n"
+                                                accumulated_text += remaining_content
+                                    except Exception as e:
+                                        print(f"解析工具调用时出错: {str(e)}")
+                                    continue
+
+                                if in_tool_call:
+                                    # 收集工具调用内容
+                                    tool_call_content += chunk
+                                else:
+                                    # 正常内容处理
+                                    data = create_response_data(
+                                        completion_id=completion_id,
+                                        created=created,
+                                        model=model,
+                                        content=chunk,
+                                        is_delta=True
+                                    )
+                                    yield f"data: {json.dumps(data)}\n\n"
+                                    accumulated_text += chunk
 
                         # 发送结束标记
-                        end_data = {
-                            "id": completion_id,
-                            "object": "chat.completion.chunk",
-                            "created": created,
-                            "model": model,
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {},
-                                    "finish_reason": "stop"
-                                }
-                            ]
-                        }
+                        finish_reason = "function_call" if in_tool_call else "stop"
+                        end_data = create_response_data(
+                            completion_id=completion_id,
+                            created=created,
+                            model=model,
+                            finish_reason=finish_reason,
+                            is_delta=True
+                        )
                         yield f"data: {json.dumps(end_data)}\n\n"
 
                         # 发送流结束标记
@@ -288,6 +418,11 @@ async def chat_completions(request: Request):
                 }
             }
         )
+
+
+    # finally:
+    #     await http_client.aclose()
+    #     print('FastAPI服务已关闭')
 
 
     # finally:

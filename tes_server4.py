@@ -88,19 +88,31 @@ def create_response_data(completion_id, created, model, content=None, function_c
                 {
                     "index": 0,
                     "delta": {},
-                    "finish_reason": finish_reason if finish_reason != "stop" or function_call is None else None
+                    "finish_reason": None  # 开始时设为None，根据情况更新
                 }
             ]
         }
 
-        # 添加内容或函数调用到delta
+        # 添加内容到delta
         if content is not None:
             data["choices"][0]["delta"]["content"] = content
+
+        # 添加工具调用到delta
         if function_call is not None:
+            # 确保tool_calls是列表
+            if not isinstance(function_call, list):
+                function_call = [function_call]
+
+            # 工具调用使用tool_calls字段
             data["choices"][0]["delta"]["tool_calls"] = function_call
-            # 如果是最后一个函数调用块，则设置finish_reason
+
+            # 如果是最后一个工具调用块，则设置finish_reason
             if finish_reason == "function_call":
-                data["choices"][0]["finish_reason"] = "tool_calls"
+                data["choices"][0]["finish_reason"] = "tool_call"
+
+        # 如果不是工具调用且明确指定finish_reason，则设置它
+        elif finish_reason != "stop":
+            data["choices"][0]["finish_reason"] = finish_reason
     else:
         # 非流式响应格式
         data = {
@@ -113,19 +125,26 @@ def create_response_data(completion_id, created, model, content=None, function_c
                     "index": 0,
                     "message": {
                         "role": "assistant",
-                        "content": content
+                        "content": content if content is not None else None
                     },
                     "finish_reason": finish_reason
                 }
             ]
         }
 
-        # 如果有函数调用，添加到消息中
+        # 如果有工具调用，添加到消息中
         if function_call is not None:
-            data["choices"][0]["message"]["function_call"] = function_call
+            # 确保tool_calls是列表
+            if not isinstance(function_call, list):
+                function_call = [function_call]
+
+            # 非流式响应中使用tool_calls字段
+            data["choices"][0]["message"]["tool_calls"] = function_call
+            # 设置finish_reason
+            if finish_reason == "function_call":
+                data["choices"][0]["finish_reason"] = "tool_call"
 
     return data
-
 
 
 
@@ -268,6 +287,10 @@ async def chat_completions(request: Request):
                                         tool_call_data = json.loads(tool_call_content.strip())
 
                                         if not isinstance(tool_call_data, list):
+                                            function_args = tool_call_data.get("arguments", "")
+                                            if not isinstance(function_args, str):
+                                                function_args = json.dumps(function_args,ensure_ascii=False)
+
                                             # 如果不是列表，将其转换为列表中的一项
                                             tool_call_list = [{
                                                 "id": tool_call_data.get("id", f"call_{uuid.uuid4()}"),
@@ -275,7 +298,7 @@ async def chat_completions(request: Request):
                                                 "index": 0,
                                                 "function": {
                                                     "name": tool_call_data.get("name", ""),
-                                                    "arguments": tool_call_data.get("arguments", "")
+                                                    "arguments": function_args
                                                 }
                                             }]
 
@@ -290,7 +313,7 @@ async def chat_completions(request: Request):
                                             is_delta=True
                                         )
                                         print(tool_call_data)
-                                        yield f"data: {json.dumps(tool_call_data)}\n\n"
+                                        yield f"data: {json.dumps(tool_call_data,ensure_ascii=False)}\n\n"
 
                                         # 继续处理结束标签后的内容
                                         if "</tool_call>" in chunk:
@@ -303,7 +326,7 @@ async def chat_completions(request: Request):
                                                     content=remaining_content,
                                                     is_delta=True
                                                 )
-                                                yield f"data: {json.dumps(data)}\n\n"
+                                                yield f"data: {json.dumps(data,ensure_ascii=False)}\n\n"
                                                 accumulated_text += remaining_content
                                     except Exception as e:
                                         print(f"解析工具调用时出错: {str(e)}")
@@ -321,7 +344,7 @@ async def chat_completions(request: Request):
                                         content=chunk,
                                         is_delta=True
                                     )
-                                    yield f"data: {json.dumps(data)}\n\n"
+                                    yield f"data: {json.dumps(data,ensure_ascii=False)}\n\n"
                                     accumulated_text += chunk
 
                         # 发送结束标记

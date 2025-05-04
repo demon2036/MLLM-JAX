@@ -2,6 +2,7 @@ import json
 import os
 import time
 import uuid
+from typing import Any
 
 import httpx
 import jax
@@ -37,6 +38,7 @@ class ChatRequest(BaseModel):
     max_tokens: int|None = None
     stream: bool = True
     enable_thinking:bool=True
+    tools:Any=None
 
 
 # 在应用启动时加载模型及相关资源（仅加载一次）
@@ -70,7 +72,8 @@ async def generate_stream_response(chat_request: ChatRequest):
         chat_request.messages,
         tokenize=False,
         add_generation_prompt=True,
-        enable_thinking=chat_request.enable_thinking
+        enable_thinking=chat_request.enable_thinking,
+        tools=chat_request.tools
     )
     print(prompt)
     generated_token_ids=[]

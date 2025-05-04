@@ -81,6 +81,7 @@ async def chat_completions(request: Request):
     max_tokens = body.get("max_tokens", None)
     stream = body.get("stream", True)
     enable_thinking=body.get('enable_thinking',True)
+    tools = body.get('tools', None)
 
     # 获取消息
     messages = body.get("messages", [])
@@ -97,7 +98,8 @@ async def chat_completions(request: Request):
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": stream,
-        "enable_thinking":enable_thinking
+        "enable_thinking":enable_thinking,
+        "tools": tools
     }
     print(body.keys(),body.get('tools',True))
 

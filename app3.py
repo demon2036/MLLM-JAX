@@ -86,6 +86,11 @@ async def generate_stream_response(chat_request: ChatRequest):
         token=int(token[0])
         new_text_chunk = decoder.put(np.array([token]))
         if new_text_chunk is not None:
+
+            if "<tool_call>" in new_text_chunk:
+                print(new_text_chunk,token)
+
+
             yield new_text_chunk
     if final_chunk := decoder.end():
         yield final_chunk

@@ -85,9 +85,15 @@ async def generate_stream_response(chat_request: ChatRequest):
         generated_token_ids.append( int(token[0]))
         token=int(token[0])
         new_text_chunk = decoder.put(np.array([token]))
+
+
+        if token==151657 or token==151658:
+            print(new_text_chunk)
+
+
         if new_text_chunk is not None:
 
-            if "<tool_call>" in new_text_chunk:
+            if "<tool_call>"  or "</tool_call>"  in new_text_chunk:
                 print(new_text_chunk,token)
 
 

@@ -76,9 +76,9 @@ async def generate_stream_response(chat_request: ChatRequest):
             joined = "".join(part.get("text", "") for part in msg["content"])
             msg["content"] = joined
         msg['content']=remove_thinking_content(msg['content'])
-        if msg['role']=='developer':
-            msg['role']='system'
-            msg['content']=f'system:'+msg['content']
+        # if msg['role']=='developer':
+        #     msg['role']='system'
+        #     msg['content']=f'system:'+msg['content']
 
 
 

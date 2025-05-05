@@ -3,6 +3,7 @@ import os
 import time
 import uuid
 from typing import Any
+import re
 
 import httpx
 import jax
@@ -60,11 +61,21 @@ async def startup_event():
     print('go')
 
 
+
+def remove_thinking_content(text):
+    # Pattern to match <think> tags and their content
+    pattern = r'<think>[\s\S]*?</think>'
+    # Replace with empty string
+    cleaned_text = re.sub(pattern, '', text)
+    return cleaned_text
+
+
 async def generate_stream_response(chat_request: ChatRequest):
     for msg in chat_request.messages:
         if isinstance(msg["content"], list):
             joined = "".join(part.get("text", "") for part in msg["content"])
             msg["content"] = joined
+        msg['content']=remove_thinking_content(msg['content'])
 
 
     sampler=app.sampler

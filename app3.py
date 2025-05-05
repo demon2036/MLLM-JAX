@@ -81,8 +81,6 @@ async def generate_stream_response(chat_request: ChatRequest):
             msg['content']=f'system:'+msg['content']
 
 
-    print(chat_request.messages)
-    print('\n'*5)
 
 
     sampler=app.sampler

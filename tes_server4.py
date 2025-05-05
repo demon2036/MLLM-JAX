@@ -193,7 +193,9 @@ async def chat_completions(request: Request):
 
         "tools":tools
     }
+
     print(body.keys(),body.get('tools',True),chat_request['stream'])
+
 
 
 

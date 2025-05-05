@@ -78,6 +78,10 @@ async def generate_stream_response(chat_request: ChatRequest):
         msg['content']=remove_thinking_content(msg['content'])
 
 
+    print(chat_request.messages)
+    print('\n'*5)
+
+
     sampler=app.sampler
     prompt = sampler.tokenizer.apply_chat_template(
         chat_request.messages,

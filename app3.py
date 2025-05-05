@@ -64,9 +64,14 @@ async def startup_event():
 
 def remove_thinking_content(text):
     # Pattern to match <think> tags and their content
-    pattern = r'<think>[\s\S]*?</think>'
-    # Replace with empty string
-    cleaned_text = re.sub(pattern, '', text)
+    # pattern = r'<think>[\s\S]*?</think>'
+    # # Replace with empty string
+    # cleaned_text = re.sub(pattern, '', text)
+
+    cleaned_text = text.replace('<think>', '')
+    # Replace closing tag with empty string
+    cleaned_text = cleaned_text.replace('</think>', '')
+
     return cleaned_text
 
 

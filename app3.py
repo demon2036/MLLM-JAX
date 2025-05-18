@@ -79,6 +79,9 @@ def remove_thinking_content(text):
 async def generate_stream_response(chat_request: ChatRequest):
     chat_request.messages.insert(0, {"role": "system", "content": system})
     for msg in chat_request.messages:
+
+        print(msg)
+
         if isinstance(msg["content"], list):
             joined = "".join(part.get("text", "") for part in msg["content"])
             msg["content"] = joined
@@ -88,7 +91,6 @@ async def generate_stream_response(chat_request: ChatRequest):
         #     msg['content']=f'system:'+msg['content']
 
 
-    print(chat_request.tools)
 
     for result in chat_request.tools:
         if not isinstance(result, dict):

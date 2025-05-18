@@ -4,7 +4,7 @@ import time
 import uuid
 from typing import Any
 import re
-import prompt
+
 
 import httpx
 import jax
@@ -20,7 +20,7 @@ from safe_decode import TextStreamer
 from tes_server4 import tpu_endpoints_queue
 # 假设以下函数和类在 test_qwen 中定义好
 from test_qwen import get_model, Sampler
-
+from prompt import system
 app = FastAPI()
 
 # 允许跨域请求
@@ -77,12 +77,12 @@ def remove_thinking_content(text):
 
 
 async def generate_stream_response(chat_request: ChatRequest):
-    chat_request.messages.insert(0, {"role": "system", "content": prompt.system})
+    chat_request.messages.insert(0, {"role": "system", "content": system})
     for msg in chat_request.messages:
         if isinstance(msg["content"], list):
             joined = "".join(part.get("text", "") for part in msg["content"])
             msg["content"] = joined
-        msg['content']=remove_thinking_content(msg['content'])
+        msg['content']=remove_thinking_content(msg['content'])fr
         # if msg['role']=='developer':
         #     msg['role']='system'
         #     msg['content']=f'system:'+msg['content']

@@ -4,6 +4,7 @@ import time
 import uuid
 from typing import Any
 import re
+import prompt
 
 import httpx
 import jax
@@ -76,6 +77,7 @@ def remove_thinking_content(text):
 
 
 async def generate_stream_response(chat_request: ChatRequest):
+    chat_request.messages.insert(0, {"role": "system", "content": prompt.system})
     for msg in chat_request.messages:
         if isinstance(msg["content"], list):
             joined = "".join(part.get("text", "") for part in msg["content"])

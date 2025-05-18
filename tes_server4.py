@@ -13,10 +13,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
-from prompt import system
+from prompt import system_prompt
 
 # TPU名称设置
 tpu_name = 'node-1' if os.getenv('TPU_NAME') is None else os.getenv('TPU_NAME')
+print(tpu_name)
 
 
 def tpu_endpoints_queue():
@@ -184,7 +185,7 @@ async def chat_completions(request: Request):
 
 
 
-    messages.insert(0, {"role": "system", "content": system})
+    messages.insert(0, {"role": "system", "content": system_prompt})
     for msg in messages:
         if msg['role']=='tool':
             content=json.loads(msg['content'])

@@ -20,7 +20,6 @@ from safe_decode import TextStreamer
 from tes_server4 import tpu_endpoints_queue
 # 假设以下函数和类在 test_qwen 中定义好
 from test_qwen import get_model, Sampler
-from prompt import system
 app = FastAPI()
 
 # 允许跨域请求

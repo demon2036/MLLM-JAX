@@ -80,7 +80,11 @@ async def generate_stream_response(chat_request: ChatRequest):
     chat_request.messages.insert(0, {"role": "system", "content": system})
     for msg in chat_request.messages:
 
-        print(msg)
+        if msg['role']=='tool':
+            print(msg)
+            for result in msg:
+                if 'thumbnail' in result:
+                    del result['thumbnail']
 
         if isinstance(msg["content"], list):
             joined = "".join(part.get("text", "") for part in msg["content"])
@@ -91,13 +95,6 @@ async def generate_stream_response(chat_request: ChatRequest):
         #     msg['content']=f'system:'+msg['content']
 
 
-
-    for result in chat_request.tools:
-        if not isinstance(result, dict):
-            print(f"Warning: Skipping non-dictionary item in list: {result}")
-            continue
-        if 'thumbnail' in result:
-            del result['thumbnail']
 
     sampler=app.sampler
     prompt = sampler.tokenizer.apply_chat_template(

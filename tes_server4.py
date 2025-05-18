@@ -180,7 +180,10 @@ async def chat_completions(request: Request):
         # 如果使用了prompt字段，转换为消息格式
         messages = [{"role": "user", "content": body["prompt"]}]
 
-    print(messages)
+
+
+
+    # print(messages)
 
     # 构建内部API请求
     chat_request = {

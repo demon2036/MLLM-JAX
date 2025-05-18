@@ -97,7 +97,7 @@ async def generate_stream_response(chat_request: ChatRequest):
         enable_thinking=chat_request.enable_thinking,
         tools=chat_request.tools
     )
-    # print(prompt)
+    print(prompt)
     generated_token_ids=[]
     decoder=TextStreamer(tokenizer=sampler.tokenizer)
     l = sampler.tokenizer(prompt, return_tensors="jax", )['input_ids'].shape[1]

@@ -184,7 +184,7 @@ async def chat_completions(request: Request):
 
 
 
-    chat_request.messages.insert(0, {"role": "system", "content": system})
+    messages.insert(0, {"role": "system", "content": system})
     for msg in messages:
         if msg['role']=='tool':
             content=json.loads(msg['content'])

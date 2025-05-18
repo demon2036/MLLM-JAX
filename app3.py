@@ -80,11 +80,16 @@ async def generate_stream_response(chat_request: ChatRequest):
     chat_request.messages.insert(0, {"role": "system", "content": system})
     for msg in chat_request.messages:
 
+        print(msg['role'])
+
         if msg['role']=='tool':
             print(msg)
             for result in msg:
                 if 'thumbnail' in result:
+
                     del result['thumbnail']
+
+                print(result)
 
         if isinstance(msg["content"], list):
             joined = "".join(part.get("text", "") for part in msg["content"])
@@ -104,7 +109,7 @@ async def generate_stream_response(chat_request: ChatRequest):
         enable_thinking=chat_request.enable_thinking,
         tools=chat_request.tools
     )
-    print(prompt)
+    # print(prompt)
     generated_token_ids=[]
     decoder=TextStreamer(tokenizer=sampler.tokenizer)
     l = sampler.tokenizer(prompt, return_tensors="jax", )['input_ids'].shape[1]

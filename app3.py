@@ -87,8 +87,12 @@ async def generate_stream_response(chat_request: ChatRequest):
         #     msg['role']='system'
         #     msg['content']=f'system:'+msg['content']
 
-
-
+    for result in chat_request.tools:
+        if not isinstance(result, dict):
+            print(f"Warning: Skipping non-dictionary item in list: {result}")
+            continue
+        if 'thumbnail' in result:
+            del result['thumbnail']
 
     sampler=app.sampler
     prompt = sampler.tokenizer.apply_chat_template(

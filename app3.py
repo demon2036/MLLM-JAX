@@ -77,20 +77,8 @@ def remove_thinking_content(text):
 
 
 async def generate_stream_response(chat_request: ChatRequest):
-    chat_request.messages.insert(0, {"role": "system", "content": system})
+
     for msg in chat_request.messages:
-
-        print(msg['role'])
-
-        if msg['role']=='tool':
-            print(msg)
-            for result in msg:
-                if 'thumbnail' in result:
-
-                    del result['thumbnail']
-
-                print(result)
-
         if isinstance(msg["content"], list):
             joined = "".join(part.get("text", "") for part in msg["content"])
             msg["content"] = joined

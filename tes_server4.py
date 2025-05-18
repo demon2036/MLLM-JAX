@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
+from prompt import system
+
 # TPU名称设置
 tpu_name = 'node-1' if os.getenv('TPU_NAME') is None else os.getenv('TPU_NAME')
 
@@ -182,6 +184,14 @@ async def chat_completions(request: Request):
 
 
 
+    chat_request.messages.insert(0, {"role": "system", "content": system})
+    for msg in messages:
+        if msg['role']=='tool':
+            content=json.loads(msg['content'])
+            for result in content:
+                if 'thumbnail' in result:
+                    del result['thumbnail']
+            msg['content']=json.dumps(content,ensure_ascii=False)
 
     # print(messages)
 
@@ -192,8 +202,7 @@ async def chat_completions(request: Request):
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": stream,
-        "enable_thinking":enable_thinking,
-
+        "enable_thinking":False,
         "tools":tools
     }
 

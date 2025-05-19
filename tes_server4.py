@@ -185,7 +185,7 @@ async def chat_completions(request: Request):
 
 
 
-    messages.insert(0, {"role": "system", "content": system_prompt})
+    # messages.insert(0, {"role": "system", "content": system_prompt})
     for msg in messages:
         if msg['role']=='tool':
             content=json.loads(msg['content'])

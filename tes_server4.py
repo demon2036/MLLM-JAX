@@ -203,7 +203,7 @@ async def chat_completions(request: Request):
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": stream,
-        "enable_thinking":False,
+        "enable_thinking":enable_thinking,
         "tools":tools
     }
 

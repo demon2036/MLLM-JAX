@@ -398,6 +398,8 @@ async def chat_completions(request: Request):
                     "X-Accel-Buffering": "no"  # 禁用 Nginx 缓冲
                 }
             )
+            # The modified non-stream handling section in the chat_completions function:
+
         else:
             http_client = httpx.AsyncClient(timeout=httpx.Timeout(timeout=None))
             # 非流式请求
@@ -407,15 +409,65 @@ async def chat_completions(request: Request):
                     json=chat_request,
                     headers={"Content-Type": "application/json"}
             ) as response:
-                text=''
+                text = ''
+                tool_call_data = None
+                in_tool_call = False
+                tool_call_content = ""
 
                 async for chunk in response.aiter_text():
                     if chunk:
-                        text+=chunk
+                        # 检查是否是工具调用的开始或结束
+                        if "<tool_call>" in chunk:
+                            in_tool_call = True
+                            # 分割处理前面的正常内容
+                            normal_content = chunk.split("<tool_call>")[0]
+                            if normal_content:
+                                text += normal_content
+                            # 开始收集工具调用内容
+                            tool_call_content = chunk.split("<tool_call>")[1]
+                            continue
 
+                        if in_tool_call and "</tool_call>" in chunk:
+                            in_tool_call = False
+                            # 添加结束前的内容
+                            tool_call_content += chunk.split("</tool_call>")[0]
 
-                # 获取响应内容并转换为OpenAI格式
-                response_data = text
+                            try:
+                                # 直接解析JSON对象
+                                tool_call_data = json.loads(tool_call_content.strip())
+
+                                if not isinstance(tool_call_data, list):
+                                    function_args = tool_call_data.get("arguments", "")
+                                    if not isinstance(function_args, str):
+                                        function_args = json.dumps(function_args, ensure_ascii=False)
+
+                                    # 如果不是列表，将其转换为列表中的一项
+                                    tool_call_data = [{
+                                        "id": tool_call_data.get("id", f"call_{uuid.uuid4()}"),
+                                        "type": tool_call_data.get("type", "function"),
+                                        "index": 0,
+                                        "function": {
+                                            "name": tool_call_data.get("name", ""),
+                                            "arguments": function_args
+                                        }
+                                    }]
+
+                            except Exception as e:
+                                print(f"解析工具调用时出错: {str(e)}")
+
+                            # 继续处理结束标签后的内容
+                            if "</tool_call>" in chunk:
+                                remaining_content = chunk.split("</tool_call>")[1]
+                                if remaining_content:
+                                    text += remaining_content
+                            continue
+
+                        if in_tool_call:
+                            # 收集工具调用内容
+                            tool_call_content += chunk
+                        else:
+                            # 正常内容处理
+                            text += chunk
 
                 # 转换为OpenAI格式的非流式响应
                 completion_id = f"chatcmpl-{uuid.uuid4()}"
@@ -429,17 +481,16 @@ async def chat_completions(request: Request):
                             "index": 0,
                             "message": {
                                 "role": "assistant",
-                                "content": response_data#response_data.get("response", "")
+                                "content": text if not tool_call_data else None
                             },
-                            "finish_reason": "stop"
+                            "finish_reason": "tool_call" if tool_call_data else "stop"
                         }
-                    ],
-                    # "usage": response_data.get("usage", {
-                    #     "prompt_tokens": 0,
-                    #     "completion_tokens": 0,
-                    #     "total_tokens": 0
-                    # })
+                    ]
                 }
+
+                # 如果有工具调用，添加到消息中
+                if tool_call_data:
+                    openai_response["choices"][0]["message"]["tool_calls"] = tool_call_data
 
                 return openai_response
 

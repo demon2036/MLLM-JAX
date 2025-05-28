@@ -50,7 +50,7 @@ def get_params(model_path):
     return params
 
 
-def get_model(mesh, max_cache_length=8192,model_path='Qwen/Qwen3-32B'):
+def get_model(mesh, max_cache_length=8192,model_path='Qwen/Qwen3-8B'):
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
     # model_path = 'Qwen/Qwen3-8B'

@@ -29,7 +29,7 @@ from jax.sharding import PartitionSpec as P
 
 from tes_server import get_partition_rules_moe
 
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+# os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 dtype = jnp.bfloat16
 

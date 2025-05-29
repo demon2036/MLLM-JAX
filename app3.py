@@ -100,7 +100,7 @@ async def generate_stream_response(chat_request: ChatRequest):
     generated_token_ids=[]
     decoder=TextStreamer(tokenizer=sampler.tokenizer)
     l = sampler.tokenizer(prompt, return_tensors="jax", )['input_ids'].shape[1]
-    max_length=min(sampler.find_ceil(l)*2,int(16384*1.5))
+    max_length=min(sampler.find_ceil(sampler.find_ceil(l) +1),int(16384*1.5))
 
     async for token in sampler.generate_prefill_auto_regressive(prompt,max_length=max_length,stream=True):
         generated_token_ids.append( int(token[0]))

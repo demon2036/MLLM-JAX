@@ -39,10 +39,7 @@ pip install -U flax optax chex
 #
 pip install -U webdataset timm wandb
 pip install einops gcsfs tensorflow tpu-info
-#pip install "flax[all]"
 
-#pip install -U flax
-# ==4.50.0
 
 pip3 install -q "overrides" "ml_collections" "einops~=0.7" "sentencepiece" transformers datasets kaggle kagglehub
 pip install httpx
@@ -51,6 +48,5 @@ pip install --upgrade transformers  aqtp
 
 
 pip install cloud_tpu_client fastapi uvicorn math_verify huggingface_hub[hf_transfer]
-
 
 

@@ -29,7 +29,7 @@ from jax.sharding import PartitionSpec as P
 
 from tes_server import get_partition_rules_moe
 
-# os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 dtype = jnp.bfloat16
 
@@ -59,7 +59,7 @@ def get_model(mesh, max_cache_length=8192,model_path='Qwen/Qwen3-32B'):
     # model_path = 'Qwen/QwQ-32B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
     # model_path='Qwen/Qwen3-30B-A3B'
-    snapshot_download(model_path,max_workers=32)
+    snapshot_download(model_path,max_workers=8)
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     print(config)
     # Load the base model with adapters on top

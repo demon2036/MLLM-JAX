@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from prompt import system_prompt
 
 # TPU名称设置
-tpu_name = 'node-1' if os.getenv('TPU_NAME') is None else os.getenv('TPU_NAME')
+tpu_name = 'node-2' if os.getenv('TPU_NAME') is None else os.getenv('TPU_NAME')
 print(tpu_name)
 
 

@@ -47,7 +47,11 @@ class ChatRequest(BaseModel):
 async def startup_event():
     jax.distributed.initialize()
     local_devices=jax.local_devices(process_index=jax.process_index())
-    print(local_devices,jax.devices())
+
+
+    print(local_devices,jax.process_index())
+
+    # print(local_devices,jax.devices())
     # 根据实际情况修改 mesh 参数
     mesh = get_jax_mesh2("1,1,-1, 1", axis_names=('dp', 'fsdp', 'tp', 'exp'))
     model, params, tokenizer = get_model(mesh, )

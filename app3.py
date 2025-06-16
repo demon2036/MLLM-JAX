@@ -53,7 +53,7 @@ async def startup_event():
 
     # print(local_devices,jax.devices())
     # 根据实际情况修改 mesh 参数
-    mesh = get_jax_mesh2("1,1,-1, 1", axis_names=('dp', 'fsdp', 'tp', 'exp'))
+    mesh = get_jax_mesh2("1,1,-1, 1", axis_names=('dp', 'fsdp', 'tp', 'exp'),devices=local_devices)
     model, params, tokenizer = get_model(mesh, )
     print(mesh)
     app.sampler=Sampler(model, params, tokenizer,mesh=mesh)

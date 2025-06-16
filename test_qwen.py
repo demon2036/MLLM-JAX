@@ -50,7 +50,7 @@ def get_params(model_path):
     return params
 
 
-def get_model(mesh, max_cache_length=8192,model_path='Qwen/Qwen3-14B'):
+def get_model(mesh, max_cache_length=8192,model_path='Qwen/Qwen3-32B'):
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
     # model_path = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
     # model_path = 'Qwen/Qwen3-8B'
@@ -160,7 +160,7 @@ class Sampler:
         self.jit_infer_step = jax.jit(self.infer)
         self.sample_fn=functools.partial(_temperature_sampling,t=0.7)
         self.prefill_bucket = [
-            512, 1024, 2048, 4096, 8192,8192+2048, 8192+4096,  16384, int(16384 * 1.5), 16384 * 2
+            512, 1024, 2048, 4096, 8192,8192,  16384, int(16384 * 1.5), int(16384 * 1.75),    16384 * 2
             # 128, 256, 512, 1024, 2048, 4096,8192,16384,int(16384*1.5),16384*2
         ]
 

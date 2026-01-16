@@ -1,7 +1,8 @@
 # MLLM-JAX 项目审阅（文件作用索引 + GRPO 训练调用路径）
 
 - 仓库路径：`/home/john/github/MLLM-JAX`
-- 对应提交：`af03f573b3bbc2c1ee78e11df8661a40cf474f2a`
+- 清理前完整快照：分支 `john`（commit：`6db7d36868943ffad4ce8537b3db2ce7b1cecf6e`）
+- 清理后训练分支：`main`（本分支将删除明显与训练无关的文件；清单见文末）
 - 文档目的：方便你“逐文件严格审阅”，并把 **GRPO 训练从入口到 loss 的完整调用链**写清楚（含关键数据结构）。
 
 ---
@@ -142,75 +143,23 @@
 说明：
 
 - “入口脚本”一般带 `if __name__ == "__main__":`。
-- `deprecated_*` 目录表示历史实验/旧实现（不代表完全不可用，但不在当前主训练链上）。
-- 本仓库目前 **把 `__pycache__/*.pyc` 也提交进了 git**：这些文件是 Python 自动生成的字节码缓存，通常应写入 `.gitignore`（你审阅时可以重点关注对应的 `.py` 源码）。
+- 本分支 `main` 已删除：`app*/`、`deprecated_*`、`MLLM_JAX/deprecated/`、`.idea/`、`__pycache__/`、`*.pyc` 等非训练主体文件；完整历史可切到 `john` 查看。
 
 ### 2.1 顶层（root）
 
-- `app.sh`：启动本地/单机服务的便捷脚本（设置 `LIBTPU_INIT_ARGS` 后运行 `python app3.py`）。
-- `app2.py`：FastAPI 服务（加载 JAX 模型并以 SSE 流式返回 OpenAI 风格 chunk）。
-- `app3.py`：FastAPI 服务（更偏“OpenAI 兼容 chat/completions”，支持 tools 字段与去除 `<think>` 内容；`__main__` 里用 uvicorn 启动）。
+- `answers/PROJECT_REVIEW.md`：项目审阅文档（本文件）。
 - `clean.sh`：清理脚本（循环参数；kill python、删除 `/tmp/libtpu_lockfile`、activate conda）。
 - `grpo_test.sh`：GRPO/训练启动脚本（见上文，实际运行 `test_jit9.py`）。
-- `prompt.py`：一个很长的 system prompt 文本（偏“网络检索研究员”指令集），供服务端注入。
-- `safe_decode.py`：从 HF `TextStreamer` 改写的流式解码工具（`TextStreamer.put/end` 返回增量文本片段）。
 - `setup.sh`：环境安装脚本（miniconda、jax[tpu]、flax/optax、fastapi/uvicorn、math_verify 等）。
-- `tes_server.py`：MoE block 的 torch→flax 参数转换与分片规则实验（含 `get_partition_rules_moe()`）。
-- `tes_server4.py`：FastAPI 代理/路由服务：获取 TPU endpoints 队列，把请求转发到实际推理服务并包装为 OpenAI 响应。
 - `test_jit8.py`：较早的 JAX 训练/采样实验脚本（包含奖励与优势计算雏形）。
 - `test_jit9.py`：**当前主 GRPO/PPO 训练脚本**（GSM8K；动态 advantage estimator；replay buffer）。
 - `test_jit10.py`：`test_jit9.py` 的变体（参数/逻辑略有不同，用于对比实验）。
 - `test_jit11.py`：`test_jit9.py` 的变体（参数/逻辑略有不同，用于对比实验）。
-- `test_qwen.py`：Qwen* 模型的 JAX 采样/推理实验（定义 `Sampler`、prefill/decode）。
 - `training2.py`：**训练组件模块**（`get_state/training_step/reward_* / get_advantages`；被 `test_jit9/10/11` 复用）。
-
-### 2.2 `app/`（服务端相关）
-
-- `app/app.py`：FastAPI（偏 multimodal/gemma3：调用 `MLLM_JAX/multinomial_sample.py` 的 `Sampler`）。
-- `app/app2.py`：FastAPI（旧版/半成品：startup 被注释，含死循环占位）。
-- `app/app_old.py`：FastAPI（旧版：依赖 `test_qwen` 的 `Sampler` 与 cloud_tpu_client endpoints）。
-- `app/test_qwen.py`：FastAPI（旧版：使用 `MLLM_JAX/multinomial_sample.py` 进行生成）。
 
 ### 2.3 `prompts/`（提示词模板）
 
 - `prompts/prompts.py`：训练/生成用 system prompt（要求输出 `<think>...</think>\\n<answer>...</answer>`），与 `reward_format/tag_count_reward` 配套。
-
-### 2.4 `deprecated_grpo/`（旧 GRPO 实验）
-
-- `deprecated_grpo/grpo.sh`：旧训练启动脚本（会跑 `bash preflight.sh PLATFORM=GKE && python -u test_jit3.py`）。
-- `deprecated_grpo/training.py`：旧版训练组件（类似 `training2.py`，但采样器用 `sample_state_right_padding.py`）。
-- `deprecated_grpo/test.py`：旧测试脚本（具体用途需结合内容审阅）。
-- `deprecated_grpo/test2.py`：旧测试脚本（具体用途需结合内容审阅）。
-- `deprecated_grpo/test_cpy.py`：旧测试脚本（具体用途需结合内容审阅）。
-- `deprecated_grpo/test_dapo.py`：旧测试脚本（具体用途需结合内容审阅）。
-- `deprecated_grpo/test_data.py`：Torch 侧 GSM8K prompt+generate 的数据/输出检查脚本。
-- `deprecated_grpo/test_gemma.py`：旧 Gemma 相关测试脚本。
-- `deprecated_grpo/test_gemma_text.py`：旧 Gemma 文本测试脚本。
-- `deprecated_grpo/test_grpo_gsm8k.py`：旧 GRPO/GSM8K 相关脚本（名字如此，但请按源码实际内容审阅）。
-- `deprecated_grpo/test_jit.py`：旧 JIT 训练脚本（导入 `TrainGRPOModule`）。
-- `deprecated_grpo/test_jit2.py`：旧 JIT 训练脚本。
-- `deprecated_grpo/test_jit3.py`：旧 JIT 训练脚本（被 `deprecated_grpo/grpo.sh` 调用）。
-- `deprecated_grpo/test_jit4.py`：旧 JIT 训练脚本。
-- `deprecated_grpo/test_jit5.py`：旧 JIT 训练脚本。
-- `deprecated_grpo/test_jit6.py`：旧 JIT 训练脚本。
-- `deprecated_grpo/test_jit7.py`：旧 JIT 训练脚本。
-
-### 2.5 `deprecated_huan/`（旧多模态/LLaVA 实验）
-
-- `deprecated_huan/huanhuan.json`：数据/配置样例（与该目录实验相关）。
-- `deprecated_huan/kaf.png`：图片样例。
-- `deprecated_huan/kane.jpg`：图片样例。
-- `deprecated_huan/test_llava.py`：旧 LLaVA 测试脚本。
-- `deprecated_huan/test_llava2.py`：旧 LLaVA 测试脚本。
-- `deprecated_huan/test_llava_jax.py`：LLaVA torch→flax/JAX 对齐与测试（包含 conversion、image features 等）。
-- `deprecated_huan/test_model.py`：旧模型测试脚本（`process_func`）。
-- `deprecated_huan/test_st.py`：旧 SigLIP/Gemma 测试脚本。
-- `deprecated_huan/test_st2.py`：旧加载模型与验证脚本。
-- `deprecated_huan/train.py`：旧训练脚本（`process_func`）。
-- `deprecated_huan/valid.py`：旧验证脚本。
-- `deprecated_huan/valid_2.py`：旧验证脚本。
-- `deprecated_huan/valid_qwen.py`：旧 Qwen 验证脚本。
-- `deprecated_huan/valid_qwen_grpo.py`：Torch 侧 Qwen 生成示例（文件名含 grpo，但内容是 generate/打印）。
 
 ### 2.6 `MLLM_JAX/`（核心库代码）
 
@@ -225,7 +174,6 @@
 - `MLLM_JAX/efficient3.py`：attention kernel 的另一版实验实现（不同并行维度语义）。
 - `MLLM_JAX/mask.py`：Gemma 风格 attention mask 工具（causal + bidirectional image tokens）。
 - `MLLM_JAX/multinomial_sample.py`：Gemma3 多模态采样/推理与 torch→flax 参数转换实验（定义 `SampleState`/`Sampler` 等）。
-- `MLLM_JAX/test_qwen.py`：包内的 Qwen 测试脚本（注意与 root `test_qwen.py` 区分）。
 - `MLLM_JAX/utils.py`：通用工具（mesh 构建、PartitionSpec 匹配、checkpoint 保存、数据收集等）。
 
 #### 2.6.2 `MLLM_JAX/train_modules/`
@@ -310,78 +258,13 @@
 - `MLLM_JAX/kernels/megablox/gmm.py`：GMM/grouped matmul 相关实现。
 - `MLLM_JAX/kernels/megablox/ops.py`：megablox 算子封装。
 
-#### 2.6.8 `MLLM_JAX/deprecated/`（包内旧代码）
-
-- `MLLM_JAX/deprecated/__init__.py`：子包初始化。
-- `MLLM_JAX/deprecated/infer.py`：旧推理脚本。
-- `MLLM_JAX/deprecated/load_weight.py`：旧权重加载/转换工具。
-- `MLLM_JAX/deprecated/main.py`：旧主入口/占位脚本。
-- `MLLM_JAX/deprecated/processing_paligemma.py`：PaliGemma processor（图片预处理、拼 prompt 等）。
-- `MLLM_JAX/deprecated/sampler.py`：旧 sampler 实现。
-- `MLLM_JAX/deprecated/sampler2.py`：旧 sampler 实现（第二版）。
-- `MLLM_JAX/deprecated/sampling.py`：旧 sampling 主程序（含 `main()`）。
-- `MLLM_JAX/deprecated/sampling2.py`：旧 sampling 脚本（当前文件存在语法错误，无法被 `ast.parse` 解析；审阅时以文本为准）。
-- `MLLM_JAX/deprecated/temp.py`：临时文件/占位。
-- `MLLM_JAX/deprecated/test_llama.py`：旧 LLaMA 测试脚本。
-- `MLLM_JAX/deprecated/test_qwen.py`：旧 Qwen 测试脚本。
-- `MLLM_JAX/deprecated/test_qwen2.py`：旧 Qwen 测试脚本。
-- `MLLM_JAX/deprecated/utils.py`：包内旧版 utils（部分函数在新 `MLLM_JAX/utils.py` 里也有实现）。
-
 ---
 
-## 3. 仓库中提交的缓存/IDE 文件（供审阅时快速忽略）
+## 3. main 分支已删除内容（完整历史在 `john`）
 
-### 3.1 `.idea/`
+以下内容与“训练主路径（`test_jit9.py` + `training2.py` + `MLLM_JAX/*`）”无直接依赖，已从 `main` 移除：
 
-该目录为 JetBrains IDE 工程配置（与训练/推理逻辑无关）：
-
-- `.idea/.gitignore`
-- `.idea/misc.xml`
-- `.idea/modules.xml`
-- `.idea/test.iml`
-- `.idea/vcs.xml`
-- `.idea/inspectionProfiles/Project_Default.xml`
-- `.idea/inspectionProfiles/profiles_settings.xml`
-
-### 3.2 `__pycache__/` 与 `*.pyc`
-
-这些都是 Python 自动生成的字节码缓存；本仓库把它们纳入了版本控制（不推荐，但不影响你理解源码）：
-
-- `__pycache__/app_old.cpython-310.pyc`
-- `__pycache__/sample_state_left_padding.cpython-310.pyc`
-- `__pycache__/sanple_utils.cpython-310.pyc`
-- `__pycache__/test_qwen.cpython-310.pyc`
-- `MLLM_JAX/__pycache__/__init__.cpython-310.pyc`
-- `MLLM_JAX/__pycache__/activations.cpython-310.pyc`
-- `MLLM_JAX/__pycache__/mask.cpython-310.pyc`
-- `MLLM_JAX/__pycache__/multinomial_sample.cpython-310.pyc`
-- `MLLM_JAX/__pycache__/utils.cpython-310.pyc`
-- `MLLM_JAX/language/__pycache__/__init__.cpython-310.pyc`
-- `MLLM_JAX/language/gemma/__pycache__/__init__.cpython-310.pyc`
-- `MLLM_JAX/language/gemma/__pycache__/layers.cpython-310.pyc`
-- `MLLM_JAX/language/gemma/__pycache__/modules.cpython-310.pyc`
-- `MLLM_JAX/language/gemma/__pycache__/positional_embeddings.cpython-310.pyc`
-- `MLLM_JAX/language/gemma/__pycache__/transformer.cpython-310.pyc`
-- `MLLM_JAX/language/gemma3/__pycache__/__init__.cpython-310.pyc`
-- `MLLM_JAX/language/gemma3/__pycache__/configuration_gemma3.cpython-310.pyc`
-- `MLLM_JAX/language/gemma3/__pycache__/modeling_gemma3.cpython-310.pyc`
-- `MLLM_JAX/language/llama/__pycache__/__init__.cpython-310.pyc`
-- `MLLM_JAX/language/llama/__pycache__/configuration_llama.cpython-310.pyc`
-- `MLLM_JAX/language/llama/__pycache__/llama.cpython-310.pyc`
-- `MLLM_JAX/language/qwen2/__pycache__/__init__.cpython-310.pyc`
-- `MLLM_JAX/language/qwen2/__pycache__/configuration_qwen2.cpython-310.pyc`
-- `MLLM_JAX/language/qwen2/__pycache__/modular_qwen2.cpython-310.pyc`
-- `MLLM_JAX/mutinomial/__pycache__/__init__.cpython-310.pyc`
-- `MLLM_JAX/mutinomial/gemma3/__pycache__/__init__.cpython-310.pyc`
-- `MLLM_JAX/mutinomial/gemma3/__pycache__/configuration_gemma3.cpython-310.pyc`
-- `MLLM_JAX/mutinomial/gemma3/__pycache__/modeling_gemma3.cpython-310.pyc`
-- `MLLM_JAX/mutinomial/llava/__pycache__/__init__.cpython-310.pyc`
-- `MLLM_JAX/mutinomial/llava/__pycache__/configuration_llava.cpython-310.pyc`
-- `MLLM_JAX/mutinomial/llava/__pycache__/modeling_llava.cpython-310.pyc`
-- `MLLM_JAX/train_modules/__pycache__/__init__.cpython-310.pyc`
-- `MLLM_JAX/vision/__pycache__/__init__.cpython-310.pyc`
-- `MLLM_JAX/vision/clip/__pycache__/clip.cpython-310.pyc`
-- `MLLM_JAX/vision/clip/__pycache__/configuration_clip.cpython-310.pyc`
-- `MLLM_JAX/vision/siglip/__pycache__/configuration_siglip.cpython-310.pyc`
-- `MLLM_JAX/vision/siglip/__pycache__/modeling_siglip.cpython-310.pyc`
-- `MLLM_JAX/vision/siglip/__pycache__/vit_pali.cpython-310.pyc`
+- 推理/服务端与代理：`app/`、`app2.py`、`app3.py`、`app.sh`、`tes_server4.py`、`prompt.py`、`safe_decode.py`、`tes_server.py`
+- 历史实验：`deprecated_grpo/`、`deprecated_huan/`、`MLLM_JAX/deprecated/`
+- 缓存/IDE：`.idea/`、`__pycache__/`、`**/__pycache__/`、`*.pyc`
+- 额外推理测试：`test_qwen.py`、`MLLM_JAX/test_qwen.py`

@@ -1,0 +1,13 @@
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+
+# Experiment artifacts
+wandb/

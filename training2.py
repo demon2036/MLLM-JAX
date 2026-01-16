@@ -44,11 +44,18 @@ class TrainState(train_state.TrainState):
     ema_decay: float = 0.9998
 
 
-def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.5-3B',num_pre_q=16,max_lengths=None):
+def get_state(
+    mesh,
+    training_steps=100,
+    grad_accum_steps=1,
+    model_path='Qwen/Qwen2.5-3B',
+    num_pre_q=16,
+    max_lengths=None,
+    beta: float = 0.04,
+    create_sampler: bool = True,
+):
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
-    model_ref = get_model(mesh, model_path=model_path, only_model=True)
-
-    beta=0.04
+    model_ref = get_model(mesh, model_path=model_path, only_model=True) if beta != 0 else None
 
     train_module = flax.linen.remat(TrainGRPOModule,policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)(model=model,
                                    pad_token_id=tokenizer.pad_token_id,
@@ -102,7 +109,7 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
     train_state_sharding = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh, x), train_state_partition)
     state = jax.jit(init_fn, donate_argnums=(0,),out_shardings=train_state_sharding)(params)
 
-    sampler = Sampler(model, tokenizer,mesh=mesh,)
+    sampler = Sampler(model, tokenizer,mesh=mesh,) if create_sampler else None
 
 
     return state,sampler,train_state_sharding
@@ -113,7 +120,10 @@ def get_state(mesh,training_steps=100,grad_accum_steps=1,model_path='Qwen/Qwen2.
 def training_step(state: TrainState, inputs: ArrayTree) -> tuple[TrainState, ArrayTree]:
 
     def loss_fn(params: ArrayTree) -> ArrayTree:
-        metrics=state.apply_fn({'params': {'model':params,'ref_model':state.ref_params }, },inputs)
+        variables = {'params': {'model': params}}
+        if state.ref_params is not None:
+            variables['params']['ref_model'] = state.ref_params
+        metrics=state.apply_fn(variables,inputs)
         per_token_logps=metrics.pop('per_token_logps',None)
         metrics = jax.tree_util.tree_map(jnp.mean, metrics)
         return metrics["loss"], metrics |{'per_token_logps':per_token_logps}

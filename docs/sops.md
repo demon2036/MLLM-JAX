@@ -31,10 +31,10 @@
 ### Metadata
 
 - `docs/sops/codex-juice.md`
+- `docs/sops/prompt-detailed-plans.md`
 
 ## Search recipes (grep-first)
 
 - List SOP files: `find docs/sops -maxdepth 1 -type f -name '*.md' -print | sort`
 - Find SOP titles: `rg -n '^- \\*\\*Title\\*\\*:' docs/sops`
 - Find "juice": `rg -n '\\bjuice\\b' docs/sops`
-

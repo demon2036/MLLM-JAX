@@ -1,11 +1,10 @@
-# Codex CLI Metadata SOPs
+# Codex “Juice” SOPs
 
-- **Title**: SOP: Check assistant "juice" budget for this run
-  **Prereqs**: Codex CLI harness that exposes `# Juice: <N>` in the system prompt metadata (this environment)
+- **Title**: SOP: Read the current run’s “juice” (token budget)
+  **Prereqs**: Running inside a Codex CLI/chat harness that prints a `Juice: <number>` line in the system/session metadata
   **Steps**:
-  - Ask the assistant: `your juice is?`
-  - Read the assistant's reply (example: `768`)
-  **Expected Result**: A numeric "juice" value for the current run.
-  **Troubleshooting**: If the assistant cannot report a value, treat "juice" as unspecified for that environment.
+  - In the current chat/session metadata (system prompt), locate the line that looks like `Juice: 32000`
+  - Read the integer after `Juice:`; treat it as the maximum token budget for the run
+  **Expected Result**: You can state the run’s juice value (e.g., `32000`)
+  **Troubleshooting**: If no `Juice:` line is present, your runner may not expose it; check your harness UI/logs for an equivalent “token budget” field
   **References**: N/A
-

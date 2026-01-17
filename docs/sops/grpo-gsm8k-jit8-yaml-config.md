@@ -3,7 +3,7 @@
 - **Title**: SOP: Run `test_jit8.py` via YAML config
   **Prereqs**: Repo at `/home/john/github/MLLM-JAX`; PyYAML installed; (for training) JAX installed; (TPU) `gcloud` authenticated + a reachable TPU VM
   **Environment (verified)**:
-  - Local: Ubuntu 6.14.0-37-generic; Python 3.13.9; pyyaml 6.0.3; transformers 4.57.3; JAX not installed (print-config still works)
+  - Local: Ubuntu Linux; Python 3.12.2; pyyaml 6.0.3; JAX not installed (print-config + local schema test still work)
   - TPU VM: `v4-8` (`us-central2-b`), conda env `mllm-jax`; Python 3.12.12; JAX 0.8.2; libtpu 0.0.32; PyYAML 6.0.3
   - Git ref used on TPU: `a45be03d1d42cb39e56f9effd7d22e9d455dc474`
   **Steps**:
@@ -14,6 +14,10 @@
     - `python test_jit8.py --print-config`
   - Override config fields from CLI (repeatable `--set key=value`):
     - `python test_jit8.py --print-config --set training_steps=1 --set wandb_enabled=false`
+  - Enable runtime batch schema validation (useful while refactoring plugins):
+    - `python test_jit8.py --print-config --set validate_schema=true`
+  - Run the lightweight local regression test (no JAX required):
+    - `python tests/test_jit8_schema_and_cli.py`
   - Sync the repo to the TPU VM via Git (verified; see also `docs/sops/tpu-vm-repo-sync.md`):
     - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260117090531 --zone us-central2-b --project civil-rarity-482610-s5 --command 'set -euo pipefail; REPO_URL=https://github.com/demon2036/MLLM-JAX.git; REPO_DIR=/root/MLLM-JAX; if [ ! -d \"$REPO_DIR/.git\" ]; then git clone \"$REPO_URL\" \"$REPO_DIR\"; fi; cd \"$REPO_DIR\"; git fetch --all --prune; git checkout a45be03d1d42cb39e56f9effd7d22e9d455dc474; git status -sb'`
   - Run a 1-step TPU smoke training using YAML + CLI overrides (verified):

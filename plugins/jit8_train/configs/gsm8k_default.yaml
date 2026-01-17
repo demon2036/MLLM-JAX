@@ -26,3 +26,6 @@ wandb_name: test
 
 jax_compilation_cache_dir: null
 params_dtype: bfloat16
+
+# Debugging / safety
+validate_schema: false

@@ -6,18 +6,22 @@
 - Network checks: `docs/sops/network-checks.md`
 - Update repo via `git pull`: `docs/sops/git-pull-update.md`
 - Commit and push to GitHub: `docs/sops/github-push.md`
+- Backup `main` and switch to `john`: `docs/sops/git-main-copy-and-switch-to-john.md`
 - Reinstall Electerm (AppImage): `docs/sops/electerm-reinstall-appimage.md`
 - Slim repo (move unused code to `deprecated/`): `docs/sops/repo-slim-deprecated.md`
 - TPU alive check: `docs/sops/tpu-alive-check.md`
 - TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
 - TPU smoke GRPO train (3 steps): `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
 - jit8 GRPO/GSM8K YAML config: `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
+- Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
+- AReaL RL organization notes (for modularizing training): `docs/sops/areal-rl-organization.md`
 
 ## Browse by area (component-based)
 
 ### Git
 
 - `docs/sops/git-pull-update.md`
+- `docs/sops/git-main-copy-and-switch-to-john.md`
 - `docs/sops/git-worktrees.md`
 - `docs/sops/github-push.md`
 - `docs/sops/repo-slim-deprecated.md`
@@ -31,15 +35,18 @@
 - `docs/sops/tpu-vm-delete-all.md`
 - `docs/sops/tpu-vm-lifecycle.md`
 - `docs/sops/tpu-vm-repo-sync.md`
+- `docs/sops/tpu-vm-multihost-smoke-train.md`
 - `docs/sops/tpu-vm-runtime.md`
+
+### Training
+
+- `docs/sops/training-modularization-plan.md`
+- `docs/sops/areal-rl-organization.md`
+- `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 
 ### Docs
 
 - `docs/sops/docs-maintenance.md`
-
-### Training
-
-- `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 
 ### Workstation
 

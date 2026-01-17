@@ -40,6 +40,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # JAX knobs
     "jax_compilation_cache_dir": None,
     "params_dtype": "bfloat16",
+    # Debugging / safety
+    "validate_schema": False,
 }
 
 

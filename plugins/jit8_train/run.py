@@ -70,7 +70,10 @@ def run_training(cfg: dict[str, Any]) -> None:
     from datasets import load_dataset
     from jax.experimental.multihost_utils import process_allgather
 
+    from plugins.jit8_train.rewarding import compute_weighted_rewards
     from plugins.jit8_train.sampling import generate_answers_and_training_batch
+    from plugins.jit8_train.update import ppo_update
+    from plugins.training.api import BatchSchemaError, validate_grpo_batch
 
     from MLLM_JAX.utils import (
         _form_global_array,
@@ -148,6 +151,14 @@ def run_training(cfg: dict[str, Any]) -> None:
     mean_correct_length = float(max_length_sample)
 
     for step in range(int(cfg["training_steps"])):
+        def _validate(stage: str, batch: dict[str, Any]) -> None:
+            if not cfg.get("validate_schema"):
+                return
+            try:
+                validate_grpo_batch(batch, stage=stage)
+            except BatchSchemaError as e:
+                raise BatchSchemaError(f"GRPO batch schema invalid (step={step} stage={stage}): {e}") from e
+
         dp_params = to_dp_params(state.params)
         inputs = random.sample(qas, int(cfg["batch_size"]))
         repeated_inputs = repeat(inputs, int(cfg["num_pre_q"]))
@@ -162,18 +173,18 @@ def run_training(cfg: dict[str, Any]) -> None:
             max_length_sample=max_length_sample,
         )
 
-        rewards_per_func = np.zeros((len(reward_funcs), len(answers)))
-        for i, (reward_weight, reward_func) in enumerate(zip(reward_funcs_weights, reward_funcs)):
-            for j, (inp, a) in enumerate(zip(repeated_inputs, answers)):
-                try:
-                    rewards_per_func[i, j] = reward_weight * reward_func(inp, a)
-                except Exception as e:
-                    print(e)
-                    rewards_per_func[i, j] = -1
+        _validate("rollout", datas)
 
-        rewards = rewards_per_func.sum(axis=0)
+        rewards_per_func, rewards = compute_weighted_rewards(
+            reward_funcs=reward_funcs,
+            reward_weights=reward_funcs_weights,
+            inputs=repeated_inputs,
+            answers=answers,
+        )
         reward_corrects = rewards_per_func[0, :]
         datas["rewards"] = rewards
+
+        _validate("rewarded", datas)
 
         reward_corrects_global = process_allgather(reward_corrects)
         completion_ids_global = process_allgather(datas["labels"])
@@ -208,6 +219,8 @@ def run_training(cfg: dict[str, Any]) -> None:
         advantages = get_advantages_jit(datas["rewards"], int(cfg["num_pre_q"]), mean_global=mean_global, std_global=std_global)
         datas["advantages"] = advantages
 
+        _validate("advantaged", datas)
+
         metrics["advantages_max"] = float(advantages.max())
         metrics["advantages_min"] = float(advantages.min())
 
@@ -220,18 +233,24 @@ def run_training(cfg: dict[str, Any]) -> None:
         datas = jax.tree_util.tree_map_with_path(partial(_form_global_array, global_mesh=mesh_dp), datas)
         total_valid_token_count = datas["labels"][:, 1:].sum()
 
-        per_token_logps = []
-        for ppo_step in range(int(cfg["ppo_steps"])):
-            for j in range(int(cfg["grad_accum_steps"])):
-                local_data = jax.tree_util.tree_map(lambda x: slice_data(x, int(cfg["grad_accum_steps"]), j), datas)
-                local_data["total_valid_token_count"] = total_valid_token_count
-                state, meta_data = train_step(state, local_data)
-                if ppo_step == 0:
-                    per_token_logps.append(meta_data["per_token_logps"])
+        _validate("train_step", {**datas, "total_valid_token_count": total_valid_token_count})
 
-            if ppo_step == 0:
-                datas["old_per_token_logps"] = jnp.concat(per_token_logps)
-                metrics["entropy"] = float(meta_data["entropy"])
+        state, datas, _last_meta, entropy = ppo_update(
+            state=state,
+            datas=datas,
+            total_valid_token_count=total_valid_token_count,
+            train_step=train_step,
+            slice_data=slice_data,
+            grad_accum_steps=int(cfg["grad_accum_steps"]),
+            ppo_steps=int(cfg["ppo_steps"]),
+        )
+        if entropy is not None:
+            metrics["entropy"] = float(entropy)
+        if int(cfg["ppo_steps"]) > 0:
+            _validate(
+                "train_ready",
+                {**datas, "total_valid_token_count": total_valid_token_count},
+            )
 
         if wandb is not None and jax.process_index() == 0:
             wandb.log(metrics, step=step)

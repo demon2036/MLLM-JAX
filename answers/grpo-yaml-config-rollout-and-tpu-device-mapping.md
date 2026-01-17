@@ -12,17 +12,7 @@
 
 当前仓库里有两条训练入口路径：
 
-### 1.1 YAML 驱动（你之前那种风格，jit8 插件入口）
-
-- 入口：`test_jit8.py` → `plugins/jit8_train/run.py:cli_main`
-- 配置文件：`plugins/jit8_train/configs/gsm8k_default.yaml`
-- 加载逻辑：`plugins/jit8_train/config.py:load_config`
-- 用法（示例）：
-  - `python test_jit8.py --config plugins/jit8_train/configs/gsm8k_default.yaml --set training_steps=20 --set num_pre_q=8`
-
-这条路径是“老风格 YAML 配置 + --set 覆盖”的典型实现，依然保留（兼容）。
-
-### 1.2 training runner（新增）：同样支持 YAML 配置（并保留你之前的 env 方式）
+### 1.1 training runner（推荐）：YAML 配置 + `--set` 覆盖（并保留你之前的 env 方式）
 
 - 入口：`scripts/run_grpo_gsm8k_training.py`
 - 默认 YAML 配置：`plugins/training/configs/grpo_gsm8k_default.yaml`
@@ -37,7 +27,7 @@
 - 指定 config 并覆写少量字段：
   - `python scripts/run_grpo_gsm8k_training.py --config plugins/training/configs/grpo_gsm8k_default.yaml --set steps=20 --set num_pre_q=8`
 
-### 1.3 配置优先级（training runner）
+### 1.2 配置优先级（training runner）
 
 `scripts/run_grpo_gsm8k_training.py` 的实际合并/覆盖顺序是：
 
@@ -47,7 +37,7 @@
 4. 环境变量覆盖（为了兼容历史 SOP）：如 `STEPS/NUM_PRE_Q/...`（见 `scripts/run_grpo_gsm8k_training.py:_apply_env_overrides`）
 5. 派生默认：`max_length_total=None` 时会变成 `max_length_sample + 128`；`wandb_name=None` 时会自动生成（见 `scripts/run_grpo_gsm8k_training.py:_cfg_from_dict`）
 
-### 1.4 `.env` 的角色：只用于 secret（WANDB_API_KEY），不进 Git
+### 1.3 `.env` 的角色：只用于 secret（WANDB_API_KEY），不进 Git
 
 - `.env`（gitignored）用于放 `WANDB_API_KEY`：`.env.example`
 - entrypoint 会自动尝试加载：
@@ -55,6 +45,16 @@
   - `/root/.env`
   （见 `scripts/run_grpo_gsm8k_training.py:_load_dotenv_if_present`）
 - 同步到 2-host TPU 的方式：`scripts/sync_env_to_tpu_vm.sh`（worker=all）
+
+### 1.4 （兼容）jit8 YAML 配置入口（保留，但不是当前主训练入口）
+
+- 入口：`test_jit8.py` → `plugins/jit8_train/run.py:cli_main`
+- 配置文件：`plugins/jit8_train/configs/gsm8k_default.yaml`
+- 加载逻辑：`plugins/jit8_train/config.py:load_config`
+- 用法（示例）：
+  - `python test_jit8.py --config plugins/jit8_train/configs/gsm8k_default.yaml --set training_steps=20 --set num_pre_q=8`
+
+这条路径是“老风格 YAML 配置 + --set 覆盖”的实现，依然保留（兼容），但本次主线训练/TPU SOP 以 `plugins/training/` runner 为准。
 
 ---
 
@@ -178,4 +178,3 @@ Rollout 里把 host numpy / host jax tensor 放到 mesh 的关键函数是：
 
 - rollout/reward/adv/update 被拆成清晰模块（`plugins/training/grpo/*`），runner 只做编排（`plugins/training/runner/grpo_gsm8k.py`）。
 - advantages 不再依赖 `groups` reshape，而是显式 `group_ids`（见 `plugins/training/grpo/advantages.py`），避免配置错误导致 silent bug。
-

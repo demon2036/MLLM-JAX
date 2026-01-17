@@ -15,7 +15,10 @@
   - update（PPO/GRPO loop）：`plugins/training/grpo/update.py`
 - API/契约与 schema 校验：`plugins/training/api/interfaces.py`、`plugins/training/api/batch_schema.py`
 - 同步模块封装（把“四阶段”对象化）：`plugins/training/modules/grpo_sync.py`
-- TPU v4-16 + `.env` + W&B 20 steps 的**可复现命令**：`docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-20steps.md`
+- TPU v4-16 + `.env` + W&B 的**可复现命令**：
+  - 20 steps：`docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-20steps.md`
+  - 100 steps（含 eval）：`docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-100steps.md`
+- 我们建议打哪些 log（以及当前已实现哪些）：`answers/mllm-jax-logging-metrics-plan.md`
 
 ## 1) 设计目标与硬约束
 
@@ -210,16 +213,19 @@ runner：`plugins/training/runner/grpo_gsm8k.py`
 
 - `jax.process_index() == 0` 才 `wandb.init(...)` / `wandb.log(...)`，避免重复 run。
 
-## 10) 已验证的端到端运行（20 steps + W&B 在线）
+## 10) 已验证的端到端运行（TPU v4-16 + W&B 在线）
 
-可复现步骤与命令：`docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-20steps.md`
+可复现步骤与命令：
+
+- 20 steps：`docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-20steps.md`
+- 100 steps（含 eval，每 10 steps 跑 1 个 batch）：`docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-100steps.md`
 
 验证点（该 SOP 已记录）：
 
 - `process_count=2`（2-host）
 - `device_count=8`（v4-16 megacore）
-- 训练输出 `step=0..19` 并正常退出
-- W&B 项目 `mllm-jax-grpo-gsm8k` 有对应 run 与 metrics
+- 训练输出 `step=0..N`（`N=19/99`）并正常退出
+- W&B 项目 `mllm-jax-grpo-gsm8k` 有对应 run 与 metrics/timings（只由 process 0 打点）
 
 ## 11) 演进路线（对齐 AReaL，但保持最小侵入）
 
@@ -228,4 +234,3 @@ runner：`plugins/training/runner/grpo_gsm8k.py`
 1. **Workflow 对象化**（把 prompt 模板 + sampling + reward 组合成 `Workflow.collect(...)`，runner 只认接口）
 2. **异步 rollout**：引入 AReaL 风格的 `submit/wait/prepare_batch` + version/staleness（先把 `version` 写进 schema）
 3. **算法变体配置化**：把 advantage 归一化策略、clipping/kl/entropy 等做成 config toggles（避免复制 trainer）
-

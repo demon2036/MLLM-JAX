@@ -16,6 +16,7 @@
 - jit8 GRPO/GSM8K YAML config: `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
 - AReaL RL organization notes (for modularizing training): `docs/sops/areal-rl-organization.md`
+- AReaL logging system notes (StatsLogger/StatsTracker/PerfTracer): `docs/sops/areal-logging-system.md`
 
 ## Browse by area (component-based)
 
@@ -44,6 +45,7 @@
 
 - `docs/sops/training-modularization-plan.md`
 - `docs/sops/areal-rl-organization.md`
+- `docs/sops/areal-logging-system.md`
 - `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 
 ### Docs

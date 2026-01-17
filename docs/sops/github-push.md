@@ -2,7 +2,7 @@
 
 - **Title**: SOP: Commit and push local changes to GitHub
   **Prereqs**: `git` and (optional) `gh` configured to authenticate with GitHub (HTTPS or SSH)
-  **Environment (verified)**: Ubuntu 6.14; Python 3.12.2; git 2.48.1; gh 2.83.2
+  **Environment (verified)**: Ubuntu 6.14; Python 3.13.9; git 2.48.1; gh 2.83.2
   **Steps**:
   - `cd /home/john/github/MLLM-JAX`
   - (Optional) Confirm GitHub auth + remote:
@@ -11,7 +11,7 @@
   - Check working tree status:
     - `git status -sb`
   - Run local checks (if any):
-    - `python -m py_compile training2.py test_jit9.py`
+    - `python -m py_compile training2.py scripts/run_smoke_grpo_gsm8k_qwen25_7b.py scripts/run_smoke_train_qwen25_7b.py test_jit8.py`
   - Stage changes:
     - `git add -A`
   - Commit with a Conventional Commit message:

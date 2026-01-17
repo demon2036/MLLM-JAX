@@ -4,6 +4,7 @@
 - 清理前完整快照：分支 `john`（commit：`6db7d36868943ffad4ce8537b3db2ce7b1cecf6e`）
 - 清理后训练分支：`main`（本分支将删除明显与训练无关的文件；清单见文末）
 - 文档目的：方便你“逐文件严格审阅”，并把 **GRPO 训练从入口到 loss 的完整调用链**写清楚（含关键数据结构）。
+- 更新（2026-01-17）：为精简仓库，`test_jit9/10/11.py` 与 `grpo_test.sh` 已移动到 `deprecated/`；当前用于 TPU 验证的入口是 `scripts/run_smoke_grpo_gsm8k_qwen25_7b.py`（由 `scripts/run_grpo_gsm8k_qwen25_7b_3steps_on_tpu_vm.sh` 调用）。
 
 ---
 
@@ -11,8 +12,8 @@
 
 如果你的目标是“先跑起来/先看训练”，建议按这个顺序看：
 
-1. `test_jit9.py`：当前最完整的 **GSM8K +（GRPO 风格 advantage）+ PPO 更新**训练脚本（含采样→奖励→优势→PPO→日志）。
-2. `training2.py`：被 `test_jit9.py` 复用的训练组件（`get_state / training_step / reward_* / get_advantages`），**本文件没有 main**。
+1. `scripts/run_smoke_grpo_gsm8k_qwen25_7b.py`：当前用于 TPU 验证的 **GSM8K + GRPO + PPO 更新**最小可跑训练入口（3 step smoke-run）。
+2. `training2.py`：被 smoke-run 入口复用的训练组件（`get_state / training_step / reward_* / get_advantages`），**本文件没有 main**。
 3. `MLLM_JAX/train_modules/__init__.py`：`TrainGRPOModule`（PPO loss 的核心实现，按 token 计算 ratio+clip）。
 4. `MLLM_JAX/sample/sample_state_right_padding2.py`：Qwen2 的 **JAX 采样器**（prefill + decode loop）。
 5. `MLLM_JAX/language/qwen2/*` + `MLLM_JAX/language/llama/llama.py`：Qwen2 模型本体与权重转换/分片相关。
@@ -20,22 +21,22 @@
 
 ---
 
-## 1. GRPO 训练：完整调用路径（主路径：`test_jit9.py`）
+## 1. GRPO 训练：完整调用路径（历史脚本：`deprecated/tests/test_jit9.py`）
 
 这里把“从启动命令 → Python main → 采样 → reward/advantage → PPO 更新 → loss 计算”的路径按层级展开。
 
 ### 1.1 外部入口（Shell 脚本）
 
-- `grpo_test.sh`
-  - 行为：循环遍历传入参数 `$@`，每轮都会清理进程与 TPU lock，然后 **固定执行** `python -u test_jit9.py`。
-  - 注意：如果你直接运行 `bash grpo_test.sh` 且不传参数，`for script in "$@"` 不会进入循环，脚本将“什么也不做”。要么：
-    - 直接运行：`python -u test_jit9.py`
-    - 或者传一个占位参数：`bash grpo_test.sh dummy`
+- `deprecated/scripts/grpo_test.sh`（已弃用）
+  - 行为：循环遍历传入参数 `$@`，每轮都会清理进程与 TPU lock，然后执行 `deprecated/tests/test_jit9.py`（旧训练入口）。
+  - 注意：如果你直接运行 `bash deprecated/scripts/grpo_test.sh` 且不传参数，`for script in "$@"` 不会进入循环，脚本将“什么也不做”。要么：
+    - 直接运行：`python -u deprecated/tests/test_jit9.py`
+    - 或者传一个占位参数：`bash deprecated/scripts/grpo_test.sh dummy`
   - TPU 优化：脚本里设置了 `LIBTPU_INIT_ARGS=...`（一长串 XLA/TPU fusion 参数）。
 
-### 1.2 Python 顶层入口（`test_jit9.py:main()`）
+### 1.2 Python 顶层入口（`deprecated/tests/test_jit9.py:main()`）
 
-`test_jit9.py` 的整体结构可以概括为：
+`deprecated/tests/test_jit9.py` 的整体结构可以概括为：
 
 1. 初始化分布式：`jax.distributed.initialize()`（失败则退化为单进程模式）。
 2. 训练配置：`TrainingConfig()`（模型、batch、num_pre_q、ppo_epochs、mesh 形状、wandb 等）。
@@ -52,7 +53,7 @@
 
 ### 1.3 `setup_jax()`：state/sampler/函数 JIT 的构造链
 
-`test_jit9.py:setup_jax(config)` 的核心调用链如下（箭头表示调用方向）：
+`deprecated/tests/test_jit9.py:setup_jax(config)` 的核心调用链如下（箭头表示调用方向）：
 
 1. `setup_jax`
    -> `MLLM_JAX.utils.get_jax_mesh2(...)` 创建两套 mesh：
@@ -85,7 +86,7 @@
 
 ### 1.4 训练循环：数据与张量流（关键字段约定）
 
-在 `test_jit9.py` 的训练循环中，`datas`（后续会变成 JAX array）包含这些关键键：
+在 `deprecated/tests/test_jit9.py` 的训练循环中，`datas`（后续会变成 JAX array）包含这些关键键：
 
 - `datas['input_ids']`（`np.int32`）：
   - 形状：`[B, T]`
@@ -113,7 +114,7 @@
 
 ### 1.5 PPO 更新与 loss 计算链（最重要的一段）
 
-从 `test_jit9.py` 到真正 loss 的调用链是：
+从 `deprecated/tests/test_jit9.py` 到真正 loss 的调用链是：
 
 1. `test_jit9.perform_ppo_update(...)`
    - 把 numpy 数据通过 `MLLM_JAX.utils._form_global_array(...)` 放到 `mesh_dp` 对应设备
@@ -149,13 +150,14 @@
 
 - `answers/PROJECT_REVIEW.md`：项目审阅文档（本文件）。
 - `clean.sh`：清理脚本（循环参数；kill python、删除 `/tmp/libtpu_lockfile`、activate conda）。
-- `grpo_test.sh`：GRPO/训练启动脚本（见上文，实际运行 `test_jit9.py`）。
+- `deprecated/scripts/grpo_test.sh`：GRPO/训练启动脚本（已弃用；实际运行 `deprecated/tests/test_jit9.py`）。
 - `setup.sh`：环境安装脚本（miniconda、jax[tpu]、flax/optax、fastapi/uvicorn、math_verify 等）。
 - `test_jit8.py`：较早的 JAX 训练/采样实验脚本（包含奖励与优势计算雏形）。
-- `test_jit9.py`：**当前主 GRPO/PPO 训练脚本**（GSM8K；动态 advantage estimator；replay buffer）。
-- `test_jit10.py`：`test_jit9.py` 的变体（参数/逻辑略有不同，用于对比实验）。
-- `test_jit11.py`：`test_jit9.py` 的变体（参数/逻辑略有不同，用于对比实验）。
-- `training2.py`：**训练组件模块**（`get_state/training_step/reward_* / get_advantages`；被 `test_jit9/10/11` 复用）。
+- `scripts/run_smoke_grpo_gsm8k_qwen25_7b.py`：当前用于 TPU 验证的 3-step smoke-run 入口（GSM8K + GRPO + PPO 更新）。
+- `training2.py`：**训练组件模块**（`get_state/training_step/reward_* / get_advantages`；被 smoke-run 与 `deprecated/tests/test_jit9/10/11.py` 复用）。
+- `deprecated/tests/test_jit9.py`：旧主 GRPO/PPO 训练脚本（已弃用）。
+- `deprecated/tests/test_jit10.py`：`deprecated/tests/test_jit9.py` 的变体（已弃用）。
+- `deprecated/tests/test_jit11.py`：`deprecated/tests/test_jit9.py` 的变体（已弃用）。
 
 ### 2.3 `prompts/`（提示词模板）
 

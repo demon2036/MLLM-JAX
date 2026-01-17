@@ -6,11 +6,17 @@ usage() {
 SSH to a Cloud TPU VM as root (via gcloud).
 
 Usage:
-  scripts/ssh_tpu_vm_root.sh --name TPU_NAME --zone ZONE [--project PROJECT] [--command CMD]
+  scripts/ssh_tpu_vm_root.sh --name TPU_NAME --zone ZONE
+                            [--project PROJECT]
+                            [--worker WORKER]
+                            [--env-file PATH]
+                            [--command CMD]
 
 Examples:
   scripts/ssh_tpu_vm_root.sh --name my-tpu --zone us-central2-b
   scripts/ssh_tpu_vm_root.sh --name my-tpu --zone us-central2-b --command 'whoami'
+  scripts/ssh_tpu_vm_root.sh --name my-tpu --zone us-central2-b --worker all --command 'hostname'
+  scripts/ssh_tpu_vm_root.sh --name my-tpu --zone us-central2-b --worker all --env-file /root/.env --command 'python - <<\"PY\"\nimport os\nprint(\"WANDB_API_KEY_set=\", bool(os.environ.get(\"WANDB_API_KEY\")))\nPY'
 USAGE
 }
 
@@ -22,7 +28,9 @@ fi
 TPU_NAME=""
 ZONE=""
 PROJECT=""
+WORKER="0"
 COMMAND=""
+ENV_FILE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,6 +40,10 @@ while [[ $# -gt 0 ]]; do
       ZONE="${2:-}"; shift 2 ;;
     --project)
       PROJECT="${2:-}"; shift 2 ;;
+    --worker)
+      WORKER="${2:-}"; shift 2 ;;
+    --env-file)
+      ENV_FILE="${2:-}"; shift 2 ;;
     --command)
       COMMAND="${2:-}"; shift 2 ;;
     *)
@@ -67,9 +79,13 @@ ssh_args=(
   "root@${TPU_NAME}"
   "--project=$PROJECT"
   "--zone=$ZONE"
+  "--worker=$WORKER"
 )
 
 if [[ -n "$COMMAND" ]]; then
+  if [[ -n "$ENV_FILE" ]]; then
+    COMMAND="set -euo pipefail; if [ -f '$ENV_FILE' ]; then set -a; source '$ENV_FILE'; set +a; fi; $COMMAND"
+  fi
   ssh_args+=("--quiet" "--command=$COMMAND")
 fi
 

@@ -8,12 +8,14 @@ Bootstrap Miniconda + a Python env on a TPU VM (runs via gcloud SSH as root).
 Usage:
   scripts/bootstrap_miniconda_on_tpu_vm.sh --name TPU_NAME --zone ZONE
                                           [--project PROJECT]
+                                          [--worker WORKER]
                                           [--env-name ENV_NAME]
                                           [--python PYTHON_VERSION]
 
 Defaults:
   --env-name mllm-jax
   --python   3.12
+  --worker   0
 USAGE
 }
 
@@ -25,6 +27,7 @@ fi
 TPU_NAME=""
 ZONE=""
 PROJECT=""
+WORKER="0"
 ENV_NAME="mllm-jax"
 PYTHON_VERSION="3.12"
 
@@ -36,6 +39,8 @@ while [[ $# -gt 0 ]]; do
       ZONE="${2:-}"; shift 2 ;;
     --project)
       PROJECT="${2:-}"; shift 2 ;;
+    --worker)
+      WORKER="${2:-}"; shift 2 ;;
     --env-name)
       ENV_NAME="${2:-}"; shift 2 ;;
     --python)
@@ -74,11 +79,13 @@ create_env_cmd="set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.s
 gcloud alpha compute tpus tpu-vm ssh "root@${TPU_NAME}" \
   --project="$PROJECT" \
   --zone="$ZONE" \
+  --worker="$WORKER" \
   --quiet \
   --command "$install_miniconda_cmd"
 
 gcloud alpha compute tpus tpu-vm ssh "root@${TPU_NAME}" \
   --project="$PROJECT" \
   --zone="$ZONE" \
+  --worker="$WORKER" \
   --quiet \
   --command "$create_env_cmd"

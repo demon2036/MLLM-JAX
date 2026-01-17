@@ -30,6 +30,7 @@ class TestJit8SchemaAndCli(unittest.TestCase):
         rewards = np.zeros((batch_size,), dtype=np.float32)
         advantages = np.ones((batch_size,), dtype=np.float32)
         old_per_token_logps = np.zeros((batch_size, seq_len - 1), dtype=np.float32)
+        group_ids = np.arange(batch_size, dtype=np.int32)
         total_valid_token_count = int(labels[:, 1:].sum())
 
         validate_grpo_batch(
@@ -37,6 +38,7 @@ class TestJit8SchemaAndCli(unittest.TestCase):
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
                 "labels": labels,
+                "group_ids": group_ids,
             },
             stage="rollout",
         )
@@ -46,6 +48,7 @@ class TestJit8SchemaAndCli(unittest.TestCase):
                 "attention_mask": attention_mask,
                 "labels": labels,
                 "rewards": rewards,
+                "group_ids": group_ids,
             },
             stage="rewarded",
         )
@@ -56,6 +59,7 @@ class TestJit8SchemaAndCli(unittest.TestCase):
                 "labels": labels,
                 "rewards": rewards,
                 "advantages": advantages,
+                "group_ids": group_ids,
             },
             stage="advantaged",
         )
@@ -66,6 +70,7 @@ class TestJit8SchemaAndCli(unittest.TestCase):
                 "labels": labels,
                 "rewards": rewards,
                 "advantages": advantages,
+                "group_ids": group_ids,
                 "total_valid_token_count": total_valid_token_count,
             },
             stage="train_step",
@@ -77,6 +82,7 @@ class TestJit8SchemaAndCli(unittest.TestCase):
                 "labels": labels,
                 "rewards": rewards,
                 "advantages": advantages,
+                "group_ids": group_ids,
                 "old_per_token_logps": old_per_token_logps,
                 "total_valid_token_count": total_valid_token_count,
             },

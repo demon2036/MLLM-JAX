@@ -103,6 +103,11 @@ def validate_grpo_batch(batch: Mapping[str, Any], *, stage: str) -> None:
         _require_rank(rewards, 1)
         _require_first_dim(rewards, bsz)
 
+    if "group_ids" in batch:
+        group_ids = _array_info("group_ids", batch["group_ids"])
+        _require_rank(group_ids, 1)
+        _require_first_dim(group_ids, bsz)
+
     if stage in {"advantaged", "train_step", "train_ready"}:
         _require_keys(batch, ["advantages"])
         advantages = _array_info("advantages", batch["advantages"])

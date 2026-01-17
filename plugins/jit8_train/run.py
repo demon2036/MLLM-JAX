@@ -70,9 +70,12 @@ def run_training(cfg: dict[str, Any]) -> None:
     from datasets import load_dataset
     from jax.experimental.multihost_utils import process_allgather
 
-    from plugins.jit8_train.rewarding import compute_weighted_rewards
-    from plugins.jit8_train.sampling import generate_answers_and_training_batch
-    from plugins.jit8_train.update import ppo_update
+    from plugins.training.modules import (
+        GRPOSyncRollout,
+        GroupIdGRPOAdvantageModule,
+        PPOUpdateModule,
+        WeightedRewardModule,
+    )
     from plugins.training.api import BatchSchemaError, validate_grpo_batch
 
     from MLLM_JAX.utils import (
@@ -83,7 +86,6 @@ def run_training(cfg: dict[str, Any]) -> None:
     )
     from prompts.prompts import system_prompt
     from training2 import (
-        get_advantages,
         get_state,
         repeat,
         reward_correct,
@@ -137,8 +139,15 @@ def run_training(cfg: dict[str, Any]) -> None:
             return params_to_dp(params)
         return params_to_dp(jax.tree_util.tree_map(lambda x: x.astype(dtype), params))
 
-    get_advantages_jit = jax.jit(get_advantages, static_argnums=(1,))
     train_step = jax.jit(training_step, donate_argnums=(0,))
+
+    rollout_module = GRPOSyncRollout()
+    reward_module = WeightedRewardModule(
+        reward_funcs=reward_funcs,
+        reward_weights=reward_funcs_weights,
+    )
+    advantage_module = GroupIdGRPOAdvantageModule()
+    update_module = PPOUpdateModule()
 
     if cfg.get("wandb_enabled") and jax.process_index() == 0:
         import wandb
@@ -163,8 +172,13 @@ def run_training(cfg: dict[str, Any]) -> None:
         inputs = random.sample(qas, int(cfg["batch_size"]))
         repeated_inputs = repeat(inputs, int(cfg["num_pre_q"]))
         prompts = [x["Q"] for x in repeated_inputs]
+        group_ids = np.repeat(
+            np.arange(len(inputs), dtype=np.int32),
+            int(cfg["num_pre_q"]),
+            axis=0,
+        )
 
-        _chat_prompts, answers, datas = generate_answers_and_training_batch(
+        _rollout = rollout_module.rollout(
             prompts=prompts,
             sampler=sampler,
             params=dp_params,
@@ -172,16 +186,14 @@ def run_training(cfg: dict[str, Any]) -> None:
             global_length=int(cfg["global_length"]),
             max_length_sample=max_length_sample,
         )
+        _chat_prompts, answers, datas = _rollout.chat_prompts, _rollout.answers, _rollout.batch
+        datas["group_ids"] = group_ids
 
         _validate("rollout", datas)
 
-        rewards_per_func, rewards = compute_weighted_rewards(
-            reward_funcs=reward_funcs,
-            reward_weights=reward_funcs_weights,
-            inputs=repeated_inputs,
-            answers=answers,
-        )
-        reward_corrects = rewards_per_func[0, :]
+        rewards_out = reward_module.compute(inputs=repeated_inputs, answers=answers)
+        rewards_per_func, rewards = rewards_out.rewards_per_func, rewards_out.rewards
+        reward_corrects = rewards_per_func[0, :] if rewards_per_func is not None else np.zeros_like(rewards)
         datas["rewards"] = rewards
 
         _validate("rewarded", datas)
@@ -213,16 +225,21 @@ def run_training(cfg: dict[str, Any]) -> None:
         std_global = process_allgather(datas["rewards"]).std()
         print(f"{step=}", datas["rewards"], np.mean(datas["rewards"]), mean_global, answers[-2:])
 
-        metrics["mean_global"] = mean_global
-        metrics["std_global"] = std_global
+        metrics["mean_global"] = float(np.asarray(mean_global))
+        metrics["std_global"] = float(np.asarray(std_global))
 
-        advantages = get_advantages_jit(datas["rewards"], int(cfg["num_pre_q"]), mean_global=mean_global, std_global=std_global)
-        datas["advantages"] = advantages
+        advantages_out = advantage_module.compute(
+            rewards=datas["rewards"],
+            group_ids=group_ids,
+            mean_global=float(np.asarray(mean_global)),
+            std_global=float(np.asarray(std_global)),
+        )
+        datas["advantages"] = advantages_out.advantages
 
         _validate("advantaged", datas)
 
-        metrics["advantages_max"] = float(advantages.max())
-        metrics["advantages_min"] = float(advantages.min())
+        metrics["advantages_max"] = float(datas["advantages"].max())
+        metrics["advantages_min"] = float(datas["advantages"].min())
 
         rewards_per_func_jnp = jnp.array(rewards_per_func)
         for i, reward_func in enumerate(reward_funcs):
@@ -235,17 +252,18 @@ def run_training(cfg: dict[str, Any]) -> None:
 
         _validate("train_step", {**datas, "total_valid_token_count": total_valid_token_count})
 
-        state, datas, _last_meta, entropy = ppo_update(
+        update_out = update_module.update(
             state=state,
-            datas=datas,
+            batch=datas,
             total_valid_token_count=total_valid_token_count,
             train_step=train_step,
             slice_data=slice_data,
             grad_accum_steps=int(cfg["grad_accum_steps"]),
             ppo_steps=int(cfg["ppo_steps"]),
         )
-        if entropy is not None:
-            metrics["entropy"] = float(entropy)
+        state, datas = update_out.state, update_out.batch
+        if update_out.entropy is not None:
+            metrics["entropy"] = float(update_out.entropy)
         if int(cfg["ppo_steps"]) > 0:
             _validate(
                 "train_ready",

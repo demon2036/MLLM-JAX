@@ -64,6 +64,9 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     _maybe_override_from_env(cfg, env="MESH_SHAPE_FSDP", key="mesh_shape", cast=str)
     _maybe_override_from_env(cfg, env="WANDB_PROJECT", key="wandb_project", cast=str)
     _maybe_override_from_env(cfg, env="WANDB_NAME", key="wandb_name", cast=str)
+    _maybe_override_from_env(cfg, env="EVAL_EVERY_STEPS", key="eval_every_steps", cast=int)
+    _maybe_override_from_env(cfg, env="EVAL_BATCHES", key="eval_batches", cast=int)
+    _maybe_override_from_env(cfg, env="EVAL_SPLIT", key="eval_split", cast=str)
     return cfg
 
 
@@ -93,6 +96,10 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
     else:
         raise ValueError("reward_weights must be a list/tuple of 3 floats")
 
+    eval_every_steps = int(cfg.get("eval_every_steps") or 0)
+    eval_batches = int(cfg.get("eval_batches") or 1)
+    eval_split = str(cfg.get("eval_split") or "test")
+
     return GRPOGsm8kConfig(
         model_path=model_path,
         steps=steps,
@@ -108,6 +115,9 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
         wandb_project=wandb_project,
         wandb_name=wandb_name,
         reward_weights=reward_weights,
+        eval_every_steps=eval_every_steps,
+        eval_batches=eval_batches,
+        eval_split=eval_split,
     )
 
 

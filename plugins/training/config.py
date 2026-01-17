@@ -32,6 +32,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "wandb_name": None,
     # Rewards
     "reward_weights": [1.0, 0.5, 0.5],
+    # Eval (optional)
+    # Run a lightweight eval rollout+reward every N steps (0 disables).
+    "eval_every_steps": 0,
+    "eval_batches": 1,
+    "eval_split": "test",
 }
 
 
@@ -114,4 +119,3 @@ def load_config(config_path: str | None, overrides: list[str] | None = None) -> 
 
 
 __all__ = ["DEFAULT_CONFIG", "load_config"]
-

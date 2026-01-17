@@ -30,3 +30,7 @@ wandb_name: null
 # reward_correct, reward_format, tag_count_reward
 reward_weights: [1.0, 0.5, 0.5]
 
+# Optional eval (rollout + reward only; no parameter updates)
+eval_every_steps: 0
+eval_batches: 1
+eval_split: test

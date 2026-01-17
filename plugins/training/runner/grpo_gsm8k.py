@@ -29,6 +29,9 @@ class GRPOGsm8kConfig:
     wandb_project: str
     wandb_name: str
     reward_weights: tuple[float, float, float] = (1.0, 0.5, 0.5)
+    eval_every_steps: int = 0
+    eval_batches: int = 1
+    eval_split: str = "test"
 
 
 def _ensure_batch_multiple_of_local_devices(local_batch: int, local_device_count: int) -> int:
@@ -52,6 +55,25 @@ def _maybe_init_wandb(cfg: GRPOGsm8kConfig):
     except Exception as e:
         print(f"wandb disabled due to init error: {e}")
         return None
+
+
+def _as_float(x: Any) -> float:
+    return float(np.asarray(x))
+
+
+def _as_int(x: Any) -> int:
+    return int(np.asarray(x))
+
+
+def _stats_1d(x: np.ndarray) -> dict[str, float]:
+    if x.size == 0:
+        return {"mean": float("nan"), "std": float("nan"), "min": float("nan"), "max": float("nan")}
+    return {
+        "mean": float(x.mean()),
+        "std": float(x.std()),
+        "min": float(x.min()),
+        "max": float(x.max()),
+    }
 
 
 def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
@@ -119,6 +141,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 wandb_project=cfg.wandb_project,
                 wandb_name=cfg.wandb_name,
                 reward_weights=cfg.reward_weights,
+                eval_every_steps=cfg.eval_every_steps,
+                eval_batches=cfg.eval_batches,
+                eval_split=cfg.eval_split,
             )
         )
     )
@@ -129,6 +154,15 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         qas = qas[jax.process_index() :: jax.process_count()]
     if not qas:
         raise RuntimeError("No GSM8K data after sharding.")
+
+    eval_qas: list[dict[str, str]] = []
+    if int(cfg.eval_every_steps) > 0:
+        eval_dataset = load_dataset("openai/gsm8k", "main", split=str(cfg.eval_split))
+        eval_qas = [{"Q": q, "A": a.split("####")[-1].strip()} for q, a in zip(eval_dataset["question"], eval_dataset["answer"])]
+        if jax.process_count() > 1:
+            eval_qas = eval_qas[jax.process_index() :: jax.process_count()]
+        if not eval_qas and jax.process_index() == 0:
+            print(f"WARNING: eval enabled but no eval data after sharding (split={cfg.eval_split!r}).")
 
     state, sampler, _state_sharding = get_state(
         mesh,
@@ -145,6 +179,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     wandb = _maybe_init_wandb(cfg)
 
     reward_funcs = [reward_correct, reward_format, tag_count_reward]
+    reward_func_names = [fn.__name__ for fn in reward_funcs]
 
     rng = random.Random(0xC0FFEE + jax.process_index())
     for step in range(cfg.steps):
@@ -154,12 +189,13 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         repeated_items = [item for item in batch_items for _ in range(cfg.num_pre_q)]
         group_ids = np.repeat(np.arange(cfg.batch_size, dtype=np.int32), cfg.num_pre_q)
 
-        t0 = time.time()
+        t_step0 = time.perf_counter()
 
         # --- Rollout (sampling) ---
         # Keep rollout logic local to avoid cross-host coupling; global sync happens at the batch->global array step.
         from plugins.training.grpo.sampling import generate_answers_and_training_batch
 
+        t_rollout0 = time.perf_counter()
         _chat_prompts, answers, datas_np = generate_answers_and_training_batch(
             prompts=repeated_prompts,
             sampler=sampler,
@@ -168,41 +204,48 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             global_length=int(cfg.global_length),
             max_length_sample=cfg.max_length_sample,
         )
+        t_rollout = time.perf_counter() - t_rollout0
 
         # --- Reward ---
         reward_weights = cfg.reward_weights
+        t_reward0 = time.perf_counter()
         rewards_per_func, rewards_np = compute_weighted_rewards(
             reward_funcs=reward_funcs,
             reward_weights=reward_weights,
             inputs=repeated_items,
             answers=answers,
         )
+        t_reward = time.perf_counter() - t_reward0
 
-        rewards_global = np.asarray(process_allgather(rewards_np))
-        mean_global = float(rewards_global.mean())
-        std_global = float(max(rewards_global.std(), 1e-6))
+        rewards_global = np.asarray(process_allgather(rewards_np)).reshape(-1)
+        reward_global_stats = _stats_1d(rewards_global)
 
         # --- Advantages (group_id based) ---
+        t_adv0 = time.perf_counter()
         advantages_np = compute_grpo_advantages_by_group_id(
             rewards=rewards_np,
             group_ids=group_ids,
             eps=1e-4,
         )
+        t_adv = time.perf_counter() - t_adv0
 
         datas_np["rewards"] = rewards_np
         datas_np["advantages"] = advantages_np
         datas_np["group_ids"] = group_ids
 
         # --- Update ---
+        t_shard0 = time.perf_counter()
         datas = jax.tree_util.tree_map_with_path(
             lambda path, x: _form_global_array(path, x, global_mesh=mesh),
             datas_np,
         )
         total_valid_token_count = datas["labels"][:, 1:].sum()
         datas = {**datas, "total_valid_token_count": total_valid_token_count}
+        t_shard = time.perf_counter() - t_shard0
 
         metrics: dict[str, Any] = {}
         old_per_token_logps = None
+        t_update0 = time.perf_counter()
         for ppo_epoch in range(cfg.ppo_epochs):
             if ppo_epoch > 0 and old_per_token_logps is not None:
                 ppo_inputs = {**datas, "old_per_token_logps": old_per_token_logps}
@@ -213,28 +256,152 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             jax.block_until_ready(metrics["loss"])
             if ppo_epoch == 0:
                 old_per_token_logps = metrics.get("per_token_logps")
+        t_update = time.perf_counter() - t_update0
 
-        dt = time.time() - t0
+        t_step = time.perf_counter() - t_step0
 
-        loss_value = float(np.asarray(metrics["loss"]))
-        entropy_value = float(np.asarray(jnp.mean(metrics["entropy"])))
-        reward_mean = float(rewards_np.mean())
+        loss_value = _as_float(metrics["loss"])
+        entropy_value = _as_float(jnp.mean(metrics["entropy"]))
+
+        # --- Derived stats (global) ---
+        advantages_global = np.asarray(process_allgather(advantages_np)).reshape(-1)
+        adv_global_stats = _stats_1d(advantages_global)
+
+        rewards_per_func_global = np.asarray(process_allgather(rewards_per_func))
+        # shape [process_count, num_funcs, B_local]
+        per_func_means = rewards_per_func_global.mean(axis=(0, 2))
+
+        labels_np = np.asarray(datas_np["labels"])
+        attn_np = np.asarray(datas_np["attention_mask"])
+        completion_len_local = labels_np.sum(axis=1).astype(np.float32)
+        total_len_local = attn_np.sum(axis=1).astype(np.float32)
+        prompt_len_local = (total_len_local - completion_len_local).astype(np.float32)
+
+        completion_len_global = np.asarray(process_allgather(completion_len_local)).reshape(-1)
+        total_len_global = np.asarray(process_allgather(total_len_local)).reshape(-1)
+        prompt_len_global = np.asarray(process_allgather(prompt_len_local)).reshape(-1)
+
+        completion_stats = _stats_1d(completion_len_global)
+        prompt_stats = _stats_1d(prompt_len_global)
+        total_len_stats = _stats_1d(total_len_global)
+
+        valid_tokens_local = int(labels_np[:, 1:].sum())
+        valid_tokens_global = int(np.asarray(process_allgather(np.asarray([valid_tokens_local], dtype=np.int64))).sum())
+        global_batch = int(local_batch * jax.process_count())
+
+        train_log: dict[str, Any] = {
+            "train/loss": loss_value,
+            "train/entropy": entropy_value,
+            "train/reward_total_mean": reward_global_stats["mean"],
+            "train/reward_total_std": reward_global_stats["std"],
+            "train/reward_total_min": reward_global_stats["min"],
+            "train/reward_total_max": reward_global_stats["max"],
+            "train/adv_mean": adv_global_stats["mean"],
+            "train/adv_std": adv_global_stats["std"],
+            "train/adv_min": adv_global_stats["min"],
+            "train/adv_max": adv_global_stats["max"],
+            "train/seq_prompt_len_mean": prompt_stats["mean"],
+            "train/seq_prompt_len_max": prompt_stats["max"],
+            "train/seq_completion_len_mean": completion_stats["mean"],
+            "train/seq_completion_len_max": completion_stats["max"],
+            "train/seq_total_len_mean": total_len_stats["mean"],
+            "train/seq_total_len_max": total_len_stats["max"],
+            "train/batch_global": global_batch,
+            "train/batch_local": int(local_batch),
+            "train/total_valid_token_count": valid_tokens_global,
+            "time/train/rollout_s": float(t_rollout),
+            "time/train/reward_s": float(t_reward),
+            "time/train/advantages_s": float(t_adv),
+            "time/train/shard_s": float(t_shard),
+            "time/train/update_s": float(t_update),
+            "time/train/step_s": float(t_step),
+        }
+        for name, mean_value in zip(reward_func_names, per_func_means):
+            train_log[f"train/{name}_mean"] = float(mean_value)
+
+        if t_step > 0:
+            train_log["throughput/train/valid_tokens_per_s"] = float(valid_tokens_global) / float(t_step)
+        if t_update > 0:
+            train_log["throughput/train/valid_tokens_per_s_update"] = float(valid_tokens_global) / float(t_update)
+
+        if wandb is not None and jax.process_index() == 0:
+            wandb.log(train_log, step=step)
 
         if jax.process_index() == 0:
             print(
-                f"step={step} loss={loss_value:.6f} entropy={entropy_value:.4f} "
-                f"reward_mean={reward_mean:.4f} dt={dt:.2f}s"
+                " ".join(
+                    [
+                        f"step={step}",
+                        f"loss={loss_value:.6f}",
+                        f"entropy={entropy_value:.4f}",
+                        f"reward_mean={reward_global_stats['mean']:.4f}",
+                        f"dt={t_step:.2f}s",
+                    ]
+                )
             )
 
-        if wandb is not None and jax.process_index() == 0:
-            wandb.log(
-                dict(
-                    loss=loss_value,
-                    entropy=entropy_value,
-                    reward_mean=reward_mean,
-                    mean_global=mean_global,
-                    std_global=std_global,
-                    dt=dt,
-                ),
-                step=step,
-            )
+        # --- Eval (optional; no updates) ---
+        if eval_qas and int(cfg.eval_every_steps) > 0 and ((step + 1) % int(cfg.eval_every_steps) == 0):
+            eval_logs: dict[str, Any] = {}
+            eval_rollout_s = 0.0
+            eval_reward_s = 0.0
+            eval_step0 = time.perf_counter()
+            eval_rewards_all: list[np.ndarray] = []
+            eval_rewards_per_func_all: list[np.ndarray] = []
+
+            for eval_batch_idx in range(int(cfg.eval_batches)):
+                start = (step * int(cfg.eval_batches) + eval_batch_idx) * cfg.batch_size
+                eval_items = [eval_qas[(start + i) % len(eval_qas)] for i in range(cfg.batch_size)]
+                eval_prompts_base = [item["Q"] for item in eval_items]
+                eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(cfg.num_pre_q)]
+                eval_repeated_items = [item for item in eval_items for _ in range(cfg.num_pre_q)]
+
+                t_eval_rollout0 = time.perf_counter()
+                _eval_chat_prompts, eval_answers, eval_datas_np = generate_answers_and_training_batch(
+                    prompts=eval_repeated_prompts,
+                    sampler=sampler,
+                    params=state.params,
+                    system_prompt=system_prompt,
+                    global_length=int(cfg.global_length),
+                    max_length_sample=cfg.max_length_sample,
+                )
+                eval_rollout_s += time.perf_counter() - t_eval_rollout0
+
+                t_eval_reward0 = time.perf_counter()
+                eval_rewards_per_func, eval_rewards_np = compute_weighted_rewards(
+                    reward_funcs=reward_funcs,
+                    reward_weights=reward_weights,
+                    inputs=eval_repeated_items,
+                    answers=eval_answers,
+                )
+                eval_reward_s += time.perf_counter() - t_eval_reward0
+
+                eval_rewards_global = np.asarray(process_allgather(eval_rewards_np)).reshape(-1)
+                eval_rewards_all.append(eval_rewards_global)
+
+                eval_per_func_global = np.asarray(process_allgather(eval_rewards_per_func))
+                # shape [process_count, num_funcs, B_local] -> [num_funcs, process_count * B_local]
+                eval_per_func_flat = eval_per_func_global.transpose(1, 0, 2).reshape(len(reward_funcs), -1)
+                eval_rewards_per_func_all.append(eval_per_func_flat)
+
+            eval_step_s = time.perf_counter() - eval_step0
+            eval_rewards_concat = np.concatenate(eval_rewards_all, axis=0) if eval_rewards_all else np.asarray([], dtype=np.float32)
+            eval_reward_stats = _stats_1d(eval_rewards_concat)
+
+            eval_logs["eval/reward_total_mean"] = float(eval_reward_stats["mean"])
+            eval_logs["eval/reward_total_std"] = float(eval_reward_stats["std"])
+            eval_logs["eval/reward_total_min"] = float(eval_reward_stats["min"])
+            eval_logs["eval/reward_total_max"] = float(eval_reward_stats["max"])
+
+            if eval_rewards_per_func_all:
+                eval_per_func_concat = np.concatenate(eval_rewards_per_func_all, axis=1)
+                eval_per_func_means = eval_per_func_concat.mean(axis=1)
+                for name, mean_value in zip(reward_func_names, eval_per_func_means):
+                    eval_logs[f"eval/{name}_mean"] = float(mean_value)
+
+            eval_logs["time/eval/rollout_s"] = float(eval_rollout_s)
+            eval_logs["time/eval/reward_s"] = float(eval_reward_s)
+            eval_logs["time/eval/step_s"] = float(eval_step_s)
+
+            if wandb is not None and jax.process_index() == 0:
+                wandb.log(eval_logs, step=step)

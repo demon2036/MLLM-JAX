@@ -1,5 +1,8 @@
 import os
+import sys
 import time
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import jax
 import jax.numpy as jnp
@@ -95,4 +98,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

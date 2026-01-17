@@ -1,0 +1,28 @@
+# Minimal config for `test_jit8.py` (GRPO/GSM8K).
+model_path: Qwen/Qwen2.5-1.5B-Instruct
+dataset_name: openai/gsm8k
+dataset_config: main
+dataset_split: train
+
+mesh_dp: "-1,1,1"
+mesh_fsdp: "1,-1,1"
+
+training_steps: 400
+batch_size: 8
+grad_accum_steps: 8
+num_pre_q: 16
+ppo_steps: 2
+ema_decay: 0.9
+
+max_length_sample: 1024
+max_length_extra: 512
+global_length: 512
+
+reward_funcs_weights: [1.0, 0.5, 0.5]
+
+wandb_enabled: true
+wandb_project: grop-gsm8k
+wandb_name: test
+
+jax_compilation_cache_dir: null
+params_dtype: bfloat16

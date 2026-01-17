@@ -11,3 +11,6 @@ __pycache__/
 
 # Experiment artifacts
 wandb/
+
+# Local scratch (never commit)
+workdir/

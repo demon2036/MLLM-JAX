@@ -11,6 +11,7 @@
 - TPU alive check: `docs/sops/tpu-alive-check.md`
 - TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
 - TPU smoke GRPO train (3 steps): `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
+- jit8 GRPO/GSM8K YAML config: `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 
 ## Browse by area (component-based)
 
@@ -35,6 +36,10 @@
 ### Docs
 
 - `docs/sops/docs-maintenance.md`
+
+### Training
+
+- `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 
 ### Workstation
 

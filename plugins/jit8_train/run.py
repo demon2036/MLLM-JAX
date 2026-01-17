@@ -70,6 +70,8 @@ def run_training(cfg: dict[str, Any]) -> None:
     from datasets import load_dataset
     from jax.experimental.multihost_utils import process_allgather
 
+    from plugins.jit8_train.sampling import generate_answers_and_training_batch
+
     from MLLM_JAX.utils import (
         _form_global_array,
         get_jax_mesh2,
@@ -142,86 +144,6 @@ def run_training(cfg: dict[str, Any]) -> None:
     else:
         wandb = None
 
-    def gen_answers_jax(prompts: list[str], dp_params):
-        tokenizer = sampler.tokenizer
-        chat_prompts = [
-            tokenizer.apply_chat_template(
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": x},
-                ],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            for x in prompts
-        ]
-
-        inputs = tokenizer(chat_prompts, return_tensors="jax", padding=True, padding_side="right")
-        input_ids = inputs["input_ids"]
-        attention_mask = inputs["attention_mask"]
-        position_ids = attention_mask.cumsum(-1) - 1
-        position_ids = jnp.where(attention_mask == 0, 1, position_ids)
-
-        prefill_length = sampler.find_ceil(int(cfg["global_length"]))
-        true_length_prompts = attention_mask.sum(axis=1)
-
-        input_ids_pad = jnp.pad(
-            input_ids,
-            ((0, 0), (0, prefill_length - input_ids.shape[1])),
-            constant_values=tokenizer.eos_token_id,
-        )
-        pad_attention = jnp.pad(attention_mask, ((0, 0), (0, prefill_length - input_ids.shape[1])))
-        pad_position_ids = jnp.pad(position_ids, ((0, 0), (0, prefill_length - input_ids.shape[1])))
-
-        outputs = sampler.generate(
-            input_ids_pad,
-            pad_attention,
-            pad_position_ids,
-            prefill_length,
-            max_length=max_length_sample,
-            params=dp_params,
-        )
-
-        train_input_ids = np.full_like(outputs["local_token_buffer"], fill_value=tokenizer.pad_token_id)
-        train_attention_mask = np.full_like(outputs["local_attention_mask"], fill_value=0)
-        train_completions_mask = np.full_like(outputs["local_attention_mask"], fill_value=0)
-        answers: list[str] = []
-
-        for i, (true_length_prompt, step) in enumerate(
-            zip(true_length_prompts, outputs["local_sample_step"])
-        ):
-            decoded = tokenizer.batch_decode(
-                outputs["local_token_buffer"][i, prefill_length : prefill_length + step + 1].reshape(1, -1),
-                skip_special_tokens=True,
-            )
-            answers.extend(decoded)
-
-            train_input_ids[i, :true_length_prompt] = outputs["local_token_buffer"][i, :true_length_prompt]
-            train_input_ids[i, true_length_prompt : true_length_prompt + step + 1] = outputs["local_token_buffer"][
-                i, prefill_length : prefill_length + step + 1
-            ]
-
-            train_attention_mask[i, :true_length_prompt] = outputs["local_attention_mask"][i, :true_length_prompt]
-            train_attention_mask[
-                i, true_length_prompt : true_length_prompt + step + 1
-            ] = outputs["local_attention_mask"][i, prefill_length : prefill_length + step + 1]
-
-            train_completions_mask[i, true_length_prompt : true_length_prompt + step + 1] = outputs[
-                "local_attention_mask"
-            ][i, prefill_length : prefill_length + step + 1]
-
-        print(answers[-2:])
-        print("\n\n", flush=True)
-        return (
-            chat_prompts,
-            answers,
-            {
-                "input_ids": train_input_ids,
-                "attention_mask": train_attention_mask,
-                "labels": train_completions_mask,
-            },
-        )
-
     ema_decay = float(cfg.get("ema_decay", 0.9))
     mean_correct_length = float(max_length_sample)
 
@@ -231,7 +153,14 @@ def run_training(cfg: dict[str, Any]) -> None:
         repeated_inputs = repeat(inputs, int(cfg["num_pre_q"]))
         prompts = [x["Q"] for x in repeated_inputs]
 
-        _chat_prompts, answers, datas = gen_answers_jax(prompts, dp_params)
+        _chat_prompts, answers, datas = generate_answers_and_training_batch(
+            prompts=prompts,
+            sampler=sampler,
+            params=dp_params,
+            system_prompt=system_prompt,
+            global_length=int(cfg["global_length"]),
+            max_length_sample=max_length_sample,
+        )
 
         rewards_per_func = np.zeros((len(reward_funcs), len(answers)))
         for i, (reward_weight, reward_func) in enumerate(zip(reward_funcs_weights, reward_funcs)):

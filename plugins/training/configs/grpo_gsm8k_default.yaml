@@ -1,0 +1,32 @@
+# Default config for `scripts/run_grpo_gsm8k_training.py`.
+#
+# Notes:
+# - Keep secrets (WANDB_API_KEY) in `.env` (gitignored); do NOT put secrets here.
+# - Values can reference env vars like `$MODEL_PATH`, but prefer explicit values for reproducibility.
+
+model_path: Qwen/Qwen2.5-7B-Instruct
+
+steps: 20
+batch_size: 1
+num_pre_q: 8
+
+global_length: 512
+max_length_sample: 64
+# If null, runner uses `max_length_sample + 128`.
+max_length_total: null
+
+ppo_epochs: 1
+grad_accum_steps: 1
+beta: 0.0
+
+# Mesh axis names are ('dp','fsdp','tp') in `MLLM_JAX.utils.get_jax_mesh2`.
+# v4-16 (2-host, megacore) usually has global `device_count=8`; this shape uses pure FSDP:
+mesh_shape: 1,-1,1
+
+wandb_project: mllm-jax-grpo-gsm8k
+# If null, entrypoint uses an auto name with timestamp.
+wandb_name: null
+
+# reward_correct, reward_format, tag_count_reward
+reward_weights: [1.0, 0.5, 0.5]
+

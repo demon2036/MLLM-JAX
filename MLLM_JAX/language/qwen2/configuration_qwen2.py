@@ -254,10 +254,11 @@ def init_cache(
 
     # 仅创建一次数组，然后复制给所有层
     if shard_method is not None:
+        import numpy as np
         # 创建并分片一次基础数组
-        k_zeros = shard_method(jnp.zeros(k_shape, dtype=dtype))
-        v_zeros = shard_method(jnp.zeros(v_shape, dtype=dtype))
-        end_index = jnp.zeros((batch_size,), dtype=jnp.int32)
+        k_zeros = shard_method(np.zeros(k_shape, dtype=np.dtype(dtype)))
+        v_zeros = shard_method(np.zeros(v_shape, dtype=np.dtype(dtype)))
+        end_index = shard_method(np.zeros((batch_size,), dtype=np.int32))
 
         # 通过字典推导式快速构建多层缓存
         cache = {

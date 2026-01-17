@@ -203,7 +203,8 @@ class Sampler:
             return data
 
         self.jit_init_data = jax.jit(init_data, out_shardings=data_sharding,)
-        self.global_collect_method=partial(_form_global_array, global_mesh=self.mesh)
+        self.global_collect_method_with_path = partial(_form_global_array, global_mesh=self.mesh)
+        self.global_collect_method = partial(_form_global_array, (), global_mesh=self.mesh)
 
 
 
@@ -283,7 +284,10 @@ class Sampler:
 
 
 
-        return jax.tree_util.tree_map_with_path(self.global_collect_method,(cache, input_ids_pad, pad_attention, position_ids))
+        return jax.tree_util.tree_map_with_path(
+            self.global_collect_method_with_path,
+            (cache, input_ids_pad, pad_attention, position_ids),
+        )
 
         # return cache, input_ids_pad, pad_attention, position_ids
 
@@ -306,7 +310,7 @@ class Sampler:
         cache = init_cache(self.model.config, input_ids_pad.shape[0], max_cache_length=prefill_length, dtype=self.dtype,
                            shard_method=self.global_collect_method)
 
-        input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method,
+        input_ids_pad, pad_attention, position_ids = jax.tree_util.tree_map_with_path(self.global_collect_method_with_path,
                                                                                       (input_ids_pad, pad_attention,
                                                                                        position_ids))
 

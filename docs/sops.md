@@ -8,6 +8,7 @@
 - Commit and push to GitHub: `docs/sops/github-push.md`
 - TPU alive check: `docs/sops/tpu-alive-check.md`
 - TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
+- TPU smoke GRPO train (3 steps): `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
 
 ## Browse by area (component-based)
 
@@ -21,6 +22,7 @@
 
 - `docs/sops/tpu-alive-check.md`
 - `docs/sops/tpu-vm-create-v4-8-or-v6e-8.md`
+- `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
 - `docs/sops/tpu-vm-bootstrap.md`
 - `docs/sops/tpu-vm-delete-all.md`
 - `docs/sops/tpu-vm-lifecycle.md`

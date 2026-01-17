@@ -4,7 +4,7 @@
   **Prereqs**: Working tree clean enough to move files; `git` installed; you already have a verified smoke-run baseline
   **Environment (verified)**:
   - Local: Ubuntu kernel `6.14.0-37-generic`; Python `3.13.9`; git `2.48.1`
-  - Verified TPU smoke-run commit after slimming: `b6d9a5b`
+  - Verified TPU smoke-run commit after slimming: `f886cf8`
   **Steps**:
   - Create holding area (example):
     - `cd /home/john/github/MLLM-JAX`
@@ -38,21 +38,24 @@
     - `git mv MLLM_JAX/sample/sample_state_right_padding.py deprecated/MLLM_JAX/sample/`
     - `git mv MLLM_JAX/sample/sample_state_right_padding3.py deprecated/MLLM_JAX/sample/`
   - Sanity check (syntax only):
-    - `python -m py_compile training2.py scripts/run_smoke_grpo_gsm8k_qwen25_7b.py`
+    - `python -m py_compile training2.py scripts/run_smoke_grpo_gsm8k_qwen25_7b.py scripts/run_smoke_train_qwen25_7b.py test_jit8.py`
     - `find MLLM_JAX -type f -name '*.py' -print0 | xargs -0 python -m py_compile`
+  - Keep only `test_jit8.py` outside `deprecated/` (this run moved the other jit scripts + old runner):
+    - `mkdir -p deprecated/tests && git mv test_jit9.py test_jit10.py test_jit11.py deprecated/tests/`
+    - `mkdir -p deprecated/scripts && git mv grpo_test.sh deprecated/scripts/`
   - Commit and push (so TPU can sync via Git):
-    - `git add -A MLLM_JAX deprecated`
-    - `git commit -m "refactor: move unused code to deprecated"`
+    - `git add -A`
+    - `git commit -m "refactor: move extra jit tests to deprecated"`
     - `git push origin john`
   **Expected Result**:
   - Active code needed for the TPU smoke-run stays under `MLLM_JAX/` + `scripts/` + `training2.py`
+  - Only `test_jit8.py` remains at repo root; other jit experiments are under `deprecated/`
   - Deprecated code is kept under `deprecated/` for reference
-  - TPU smoke-run still completes 3 steps on the new commit (this run: `b6d9a5b`)
+  - TPU smoke-run still completes 3 steps on the new commit (this run: `f886cf8`)
   **Troubleshooting**:
   - `fatal: destination already exists ...` during `git mv <dir> deprecated/MLLM_JAX/`:
     - Do not pre-create `deprecated/MLLM_JAX/<dir>` when moving a whole directory; remove the empty destination dir (e.g. `rmdir deprecated/MLLM_JAX/vision`) and retry.
   **References**:
   - `deprecated/README.md`
   - `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
-  - Commit `b6d9a5b`
-
+  - Commit `f886cf8`

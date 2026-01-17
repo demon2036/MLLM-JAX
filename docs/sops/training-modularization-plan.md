@@ -30,10 +30,15 @@ This is a planning SOP: it records the repo touchpoints and the rollout strategy
 
 - Inspect the reusable contracts layer (schema validation):
   - `sed -n '1,260p' plugins/training/api/batch_schema.py`
+  - `sed -n '1,260p' plugins/training/api/interfaces.py`
+
+- Inspect the modular GRPO runner (plugins/training-first):
+  - `sed -n '1,260p' plugins/training/runner/grpo_gsm8k.py`
 
 - Smoke-check the CLI config path (no JAX required for print-config):
   - `python test_jit8.py --print-config`
   - `python test_jit8.py --print-config --set validate_schema=true`
+  - `python scripts/run_grpo_gsm8k_training.py --print-config`
 
 - Run the lightweight local regression test (no JAX required):
   - `python tests/test_jit8_schema_and_cli.py`
@@ -48,6 +53,7 @@ This is a planning SOP: it records the repo touchpoints and the rollout strategy
   - Mesh/sharding helpers: `MLLM_JAX/utils.py` (`get_jax_mesh2`, partition rules, checkpoint helpers)
   - jit8 entrypoint: `test_jit8.py` → `plugins/jit8_train/run.py`
   - Training contracts (schema): `plugins/training/api/batch_schema.py`
+  - Modular GRPO entrypoint: `scripts/run_grpo_gsm8k_training.py` → `plugins/training/runner/grpo_gsm8k.py`
 
 - You can draft a staged modularization plan that keeps new code in `plugins/` and introduces new scripts under `scripts/` (instead of editing upstream logic directly).
 

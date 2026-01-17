@@ -12,6 +12,7 @@
 - TPU alive check: `docs/sops/tpu-alive-check.md`
 - TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
 - TPU smoke GRPO train (3 steps): `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
+- TPU v4-16 GRPO train (20 steps, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-20steps.md`
 - jit8 GRPO/GSM8K YAML config: `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
 - AReaL RL organization notes (for modularizing training): `docs/sops/areal-rl-organization.md`
@@ -36,6 +37,7 @@
 - `docs/sops/tpu-vm-lifecycle.md`
 - `docs/sops/tpu-vm-repo-sync.md`
 - `docs/sops/tpu-vm-multihost-smoke-train.md`
+- `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-20steps.md`
 - `docs/sops/tpu-vm-runtime.md`
 
 ### Training

@@ -16,6 +16,13 @@
 - Create local `.env` (example template: `.env.example`) with:
   - `WANDB_API_KEY=...`
 
+### 0.5) (Optional) Local preflight checks (no JAX required)
+
+- `cd /home/john/github/MLLM-JAX`
+- `python scripts/run_grpo_gsm8k_training.py --print-config`
+- `python tests/test_jit8_schema_and_cli.py`
+- `python -m compileall -q plugins scripts`
+
 ### 1) Push code to GitHub (TPU pulls from Git)
 
 - `cd /home/john/github/MLLM-JAX`
@@ -68,4 +75,3 @@
 - `scripts/bootstrap_miniconda_on_tpu_vm.sh`
 - `scripts/run_grpo_gsm8k_training.py`
 - `plugins/training/runner/grpo_gsm8k.py`
-

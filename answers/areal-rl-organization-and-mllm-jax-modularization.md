@@ -13,6 +13,11 @@ AReaL（inclusionAI/AReaL）把“强化学习训练系统”做成**四层结�
 
 对 MLLM-JAX（JAX/TPU）最值得借鉴的不是 AReaL 的 PyTorch 具体实现，而是它的**模块边界/数据契约/训练生命周期的阶段化/以及异步 rollout 的最小原语**。我们可以在本仓库的“非侵入约束（新代码放 `plugins/`）”下，按阶段把训练拆成：`API（schema/contracts）→ backend（mesh/sharding/ckpt）→ workflow（rollout→reward→traj）→ algorithm（adv/loss/update）→ runner（编排+hooks）→ entrypoint（scripts）`，最终具备走向“同步→异步”的演进空间。
 
+落地实现（本仓库当前状态）：
+
+- 端到端代码链路与模块职责：`answers/mllm-jax-grpo-training-architecture.md`
+- 2-host TPU v4-16 + W&B 20 steps 可复现 SOP：`docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-20steps.md`
+
 ---
 
 ## 1. 本次调研环境与版本（可复现信息）

@@ -6,6 +6,7 @@
 - Network checks: `docs/sops/network-checks.md`
 - Update repo via `git pull`: `docs/sops/git-pull-update.md`
 - Commit and push to GitHub: `docs/sops/github-push.md`
+- Slim repo (move unused code to `deprecated/`): `docs/sops/repo-slim-deprecated.md`
 - TPU alive check: `docs/sops/tpu-alive-check.md`
 - TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
 - TPU smoke GRPO train (3 steps): `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
@@ -17,6 +18,7 @@
 - `docs/sops/git-pull-update.md`
 - `docs/sops/git-worktrees.md`
 - `docs/sops/github-push.md`
+- `docs/sops/repo-slim-deprecated.md`
 
 ### TPU
 

@@ -13,11 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Qwen2 model configuration"""
-import jax.lax
 import jax.numpy as jnp
-import tqdm
-
-from MLLM_JAX.language.gemma3.modeling_gemma3 import Gemma3Attention
 
 
 class Qwen2Config:

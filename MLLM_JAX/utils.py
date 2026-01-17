@@ -32,11 +32,10 @@ import optax
 import webdataset as wds
 import yaml
 from chex import Array, ArrayTree
-from jax import NamedSharding
-from jax._src.partition_spec import PartitionSpec
+from jax.sharding import NamedSharding
 from jax.experimental import mesh_utils
 from jax.tree_util import DictKey
-from jax.sharding import Mesh,PartitionSpec as PS
+from jax.sharding import Mesh, PartitionSpec as PS
 
 
 class AverageMeter:
@@ -303,7 +302,7 @@ def get_jax_mesh2(axis_dims, axis_names=   ('dp', 'fsdp', 'tp') ,devices=None):
 def _build_global_shape_and_sharding(
         local_shape: tuple[int, ...], global_mesh: Mesh
 ) -> tuple[tuple[int, ...], NamedSharding]:
-    sharding = NamedSharding(global_mesh, PartitionSpec(global_mesh.axis_names))
+    sharding = NamedSharding(global_mesh, PS(global_mesh.axis_names))
 
     global_shape = (jax.process_count() * local_shape[0],) + local_shape[1:]
 

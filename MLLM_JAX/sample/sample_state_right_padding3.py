@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import torch
-from jax import NamedSharding
+from jax.sharding import NamedSharding
 from jax.experimental.shard_map import shard_map
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer

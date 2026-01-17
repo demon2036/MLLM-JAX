@@ -1,9 +1,8 @@
 import jax.numpy as jnp
 import jax
 import numpy as np
-from jax import NamedSharding
-from jax._src.mesh import Mesh
-from jax._src.partition_spec import PartitionSpec
+import jax.tree_util as jtu
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 
 def _build_global_shape_and_sharding(

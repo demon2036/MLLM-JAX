@@ -29,7 +29,8 @@ content = """1+1=2 1+2=?
 def get_params(model_path):
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        torch_dtype=torch.float32,
+        torch_dtype=torch.float16,
+        trust_remote_code=True,
     )
     state_dict = model.state_dict()
     params = convert_torch_to_flax_llama(state_dict)

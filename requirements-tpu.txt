@@ -1,0 +1,20 @@
+# Python deps for running GRPO/GSM8K training on TPU.
+#
+# Install JAX for TPU separately (needs the libtpu wheel index), e.g.:
+#   pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+#
+# Then:
+#   pip install -U -r requirements-tpu.txt
+flax
+optax
+chex
+torch
+transformers
+datasets
+tqdm
+wandb
+math_verify
+webdataset
+pyyaml
+einops
+huggingface_hub[hf_transfer]

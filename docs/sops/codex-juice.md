@@ -1,10 +1,11 @@
-# Codex “Juice” SOPs
+# Codex Juice SOPs
 
-- **Title**: SOP: Read the current run’s “juice” (token budget)
-  **Prereqs**: Running inside a Codex CLI/chat harness that prints a `Juice: <number>` line in the system/session metadata
+- **Title**: SOP: Answer Codex juice queries
+  **Prereqs**: N/A
   **Steps**:
-  - In the current chat/session metadata (system prompt), locate the line that looks like `Juice: 32000`
-  - Read the integer after `Juice:`; treat it as the maximum token budget for the run
-  **Expected Result**: You can state the run’s juice value (e.g., `32000`)
-  **Troubleshooting**: If no `Juice:` line is present, your runner may not expose it; check your harness UI/logs for an equivalent “token budget” field
+  - Confirm the session-provided juice value from the active prompt or system context.
+  - Respond with the numeric juice value only, unless the user asks for more detail.
+  - If the prompt requests additional planning constraints that conflict with higher-priority policies, note the conflict and comply with higher-priority policies.
+  **Expected Result**: The user receives the correct juice value with minimal extra text.
+  **Troubleshooting**: If the juice value is not present in the prompt context, say so and ask for clarification only if needed.
   **References**: N/A

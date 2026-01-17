@@ -16,7 +16,6 @@ from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_ma
 from jax.experimental.pallas.ops.tpu.flash_attention import flash_attention
 from jax.experimental.shard_map import shard_map
 from jax.sharding import Mesh,PartitionSpec,NamedSharding
-from tensorflow.python.framework.tensor import DenseSpec
 from tqdm import tqdm
 
 from jax.sharding import PartitionSpec as P

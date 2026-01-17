@@ -7,6 +7,7 @@
 - Update repo via `git pull`: `docs/sops/git-pull-update.md`
 - Commit and push to GitHub: `docs/sops/github-push.md`
 - TPU alive check: `docs/sops/tpu-alive-check.md`
+- TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
 
 ## Browse by area (component-based)
 
@@ -19,9 +20,11 @@
 ### TPU
 
 - `docs/sops/tpu-alive-check.md`
+- `docs/sops/tpu-vm-create-v4-8-or-v6e-8.md`
 - `docs/sops/tpu-vm-bootstrap.md`
 - `docs/sops/tpu-vm-delete-all.md`
 - `docs/sops/tpu-vm-lifecycle.md`
+- `docs/sops/tpu-vm-repo-sync.md`
 - `docs/sops/tpu-vm-runtime.md`
 
 ### Docs

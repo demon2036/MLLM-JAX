@@ -51,21 +51,35 @@
 
 - `python -m unittest -v` 在本机环境会因缺少 `flax` 导致全量 discovery 失败（`MLLM_JAX/train_modules` 导入报错）；本次用“单文件运行”方式验证新增测试脚本。
 
-## 4) 如何开启/使用 schema 校验（推荐重构时开启）
+## 4) TPU 验证（已跑，确保 `test_jit8.py` 真路径可训练）
+
+已在 Cloud TPU VM 上跑通 1-step smoke train（包含 `validate_schema=true`）：
+
+- TPU：`mllm-jax-v4-8-260117090531`（`us-central2-b`），conda env：`mllm-jax`
+- Git ref：`bf199f8b6089add232c371c12a4fdde3eb152b71`
+- JAX：`0.8.2`，backend：`tpu`，device_count：`4`
+- 执行命令（已验证）：
+  - `python -u test_jit8.py --config plugins/jit8_train/configs/gsm8k_default.yaml --set model_path=Qwen/Qwen2.5-0.5B-Instruct --set training_steps=1 --set wandb_enabled=false --set validate_schema=true --set batch_size=1 --set grad_accum_steps=1 --set num_pre_q=4 --set ppo_steps=1 --set max_length_sample=128 --set max_length_extra=512 --set global_length=512`
+- 关键现象（节选）：
+  - 打印 `prefill_length=512`
+  - 打印至少一行 `step=0 ...`（无 Python traceback，进程正常退出）
+
+更完整可复现步骤与 SSH 命令见：`docs/sops/grpo-gsm8k-jit8-yaml-config.md`
+
+## 5) 如何开启/使用 schema 校验（推荐重构时开启）
 
 - 仅验证配置合并（不跑训练）：`python test_jit8.py --print-config --set validate_schema=true`
 - 真正训练时启用（TPU/GPU 环境需要 JAX + 依赖）：`python test_jit8.py --set validate_schema=true`
 
-## 5) 相关 SOP 更新
+## 6) 相关 SOP 更新
 
 - `docs/sops/grpo-gsm8k-jit8-yaml-config.md`：补充了 `validate_schema` 开关与本地测试命令
 - `docs/sops/areal-rl-organization.md`：更新为 repo 内 `workdir/areal` 的 AReaL clone + 阅读命令
 - `docs/sops/training-modularization-plan.md`：更新为“jit8 plugin-first”的实际路径与本地验证命令
 - `docs/sops/git-main-copy-and-switch-to-john.md`：补充了 `main--copy` + 切换 `john` 的可复现步骤
 
-## 6) 下一步建议（对齐 AReaL 的更完整分层）
+## 7) 下一步建议（对齐 AReaL 的更完整分层）
 
 1. **Workflow 进一步对象化**：把 `sampling.py + reward_funcs` 组合成可替换的 workflow（类似 AReaL `RolloutWorkflow`）。
 2. **Algorithm 层收敛**：把 advantage estimator / clipping / KL / entropy 等作为 config-driven toggles（避免复制训练脚本）。
 3. **异步 rollout 演进**：引入 AReaL 风格的 `submit/wait/prepare_batch` + staleness/version 控制（先把 `versions` 字段写进 schema）。
-

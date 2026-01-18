@@ -8,11 +8,12 @@ implementation directly. This makes it possible to later plug in backends like
 from plugins.training.rollout_backends.base import RolloutBackend
 from plugins.training.rollout_backends.factory import SUPPORTED_ROLLOUT_BACKENDS, create_rollout_backend
 from plugins.training.rollout_backends.naive_sampler import NaiveSamplerRolloutBackend
+from plugins.training.rollout_backends.sglang_jax import SglangJaxRolloutBackend
 
 __all__ = [
     "NaiveSamplerRolloutBackend",
     "RolloutBackend",
+    "SglangJaxRolloutBackend",
     "SUPPORTED_ROLLOUT_BACKENDS",
     "create_rollout_backend",
 ]
-

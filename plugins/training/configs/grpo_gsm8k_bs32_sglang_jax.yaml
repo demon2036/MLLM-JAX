@@ -1,0 +1,37 @@
+# GRPO/GSM8K config: bs=32 / `MAX_LENGTH_SAMPLE=1024`, but with `rollout.backend=sglang_jax`.
+#
+# Intended use: TPU throughput benchmarking (compare vs `grpo_gsm8k_bs32.yaml`).
+# sglang-jax engine knobs are currently env-driven; see `plugins/training/rollout_backends/sglang_jax.py`.
+
+model_path: Qwen/Qwen2.5-7B-Instruct
+
+steps: 20
+
+rollout:
+  backend: sglang_jax
+  global_batch_size: null
+  per_device_batch_size: null
+  batch_size: 32
+  num_pre_q: 1
+  global_length: 512
+  max_length_sample: 1024
+
+train:
+  micro_batch_size: 4
+  per_device_micro_batch_size: null
+  max_length_total: null
+  ppo_epochs: 1
+  grad_accum_steps: 1
+  beta: 0.0
+
+mesh_shape: 1,-1,1
+
+wandb_project: mllm-jax-grpo-gsm8k
+wandb_name: null
+
+reward_weights: [1.0, 0.5, 0.5]
+
+eval_every_steps: 0
+eval_batches: 1
+eval_split: test
+

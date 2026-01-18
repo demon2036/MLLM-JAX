@@ -33,6 +33,14 @@ class TestRolloutBackendFactory(unittest.TestCase):
         backend = create_rollout_backend(name="naive", sampler=_DummySampler())
         self.assertEqual(backend.__class__.__name__, "NaiveSamplerRolloutBackend")
 
+    def test_create_rollout_backend_sglang_jax(self) -> None:
+        backend = create_rollout_backend(
+            name="sglang_jax",
+            sampler=_DummySampler(),
+            model_path="Qwen/Qwen2.5-7B-Instruct",
+        )
+        self.assertEqual(backend.__class__.__name__, "SglangJaxRolloutBackend")
+
     def test_create_rollout_backend_rejects_unknown(self) -> None:
         with self.assertRaises(ValueError) as ctx:
             create_rollout_backend(name="does_not_exist", sampler=_DummySampler())
@@ -44,4 +52,3 @@ class TestRolloutBackendFactory(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -288,7 +288,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     from plugins.training.rollout_backends import create_rollout_backend
 
-    rollout_backend = create_rollout_backend(name=str(cfg.rollout.backend), sampler=sampler)
+    rollout_backend = create_rollout_backend(name=str(cfg.rollout.backend), sampler=sampler, model_path=cfg.model_path)
 
     train_fn = jax.jit(training_step, donate_argnums=(0,))
     wandb = _maybe_init_wandb(cfg)

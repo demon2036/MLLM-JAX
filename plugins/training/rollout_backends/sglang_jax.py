@@ -41,6 +41,16 @@ def _get_env_int_list(name: str) -> list[int] | None:
     return ints or None
 
 
+def _normalize_kv_cache_dtype(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"", "auto"}:
+        return "auto"
+    if normalized in {"bf16", "bfloat16"}:
+        # `sgl_jax` currently expects the token "bf16" (not "bfloat16").
+        return "bf16"
+    return value
+
+
 def _require_tokenizer_pad_id(tokenizer: Any) -> int:
     pad = getattr(tokenizer, "pad_token_id", None)
     if pad is not None:
@@ -294,7 +304,7 @@ class SglangJaxRolloutBackend:
             # Keep params in fp32 to match this repo's training (param_dtype=float32).
             "dtype": os.environ.get("SGLANG_JAX_DTYPE", "float32"),
             # Keep KV dtype in sync with model dtype by default; override via env if needed.
-            "kv_cache_dtype": os.environ.get("SGLANG_JAX_KV_CACHE_DTYPE", "auto"),
+            "kv_cache_dtype": _normalize_kv_cache_dtype(os.environ.get("SGLANG_JAX_KV_CACHE_DTYPE", "auto")),
             # Conserve HBM because training already holds model/optimizer state.
             "mem_fraction_static": float(_get_env_float("SGLANG_JAX_MEM_FRACTION_STATIC", 0.1) or 0.1),
             "disable_radix_cache": _get_env_bool("SGLANG_JAX_DISABLE_RADIX_CACHE", True),
@@ -325,6 +335,8 @@ class SglangJaxRolloutBackend:
                         model_path=str(self.model_path),
                         tp_size=tp_size,
                         device_indexes=device_indexes,
+                        dtype=engine_kwargs["dtype"],
+                        kv_cache_dtype=engine_kwargs["kv_cache_dtype"],
                         mem_fraction_static=engine_kwargs["mem_fraction_static"],
                         disable_radix_cache=engine_kwargs["disable_radix_cache"],
                         disable_precompile=engine_kwargs["disable_precompile"],

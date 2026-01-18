@@ -1,0 +1,40 @@
+# GRPO/GSM8K config: increase rollout batch_size to 32 (prompts per step, per process)
+# and set `max_length_sample=1024` for timing experiments.
+#
+# Derived from: `plugins/training/configs/grpo_gsm8k_default.yaml`
+# Notes:
+# - For TPU runs, keep secrets (WANDB_API_KEY) in `/root/.env` (not committed).
+# - This config is meant for throughput / scaling experiments.
+
+model_path: Qwen/Qwen2.5-7B-Instruct
+
+steps: 20
+
+rollout:
+  backend: naive
+  global_batch_size: null
+  per_device_batch_size: null
+  batch_size: 32
+  num_pre_q: 8
+  global_length: 512
+  max_length_sample: 1024
+
+train:
+  # Micro-batch the update step to reduce peak memory with large rollout batches.
+  micro_batch_size: 32
+  per_device_micro_batch_size: null
+  max_length_total: null
+  ppo_epochs: 1
+  grad_accum_steps: 1
+  beta: 0.0
+
+mesh_shape: 1,-1,1
+
+wandb_project: mllm-jax-grpo-gsm8k
+wandb_name: null
+
+reward_weights: [1.0, 0.5, 0.5]
+
+eval_every_steps: 0
+eval_batches: 1
+eval_split: test

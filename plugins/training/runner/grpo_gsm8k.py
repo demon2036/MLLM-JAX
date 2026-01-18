@@ -3,27 +3,40 @@ from __future__ import annotations
 import os
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
 import numpy as np
 
 from plugins.training.grpo.advantages import compute_grpo_advantages_by_group_id
 from plugins.training.grpo.rewarding import compute_weighted_rewards
+from plugins.training.grpo.update import ppo_update
+
+
+@dataclass(frozen=True)
+class GRPORolloutConfig:
+    batch_size: int
+    num_pre_q: int
+    global_length: int
+    max_length_sample: int
+
+
+@dataclass(frozen=True)
+class GRPOTrainConfig:
+    # Optional: if set, split the rollout batch into smaller micro-batches for update.
+    micro_batch_size: int | None
+    max_length_total: int
+    ppo_epochs: int
+    grad_accum_steps: int
+    beta: float
 
 
 @dataclass(frozen=True)
 class GRPOGsm8kConfig:
     model_path: str
     steps: int
-    batch_size: int
-    num_pre_q: int
-    global_length: int
-    max_length_sample: int
-    max_length_total: int
-    ppo_epochs: int
-    grad_accum_steps: int
-    beta: float
+    rollout: GRPORolloutConfig
+    train: GRPOTrainConfig
     mesh_shape: str
 
     wandb_project: str
@@ -50,7 +63,7 @@ def _maybe_init_wandb(cfg: GRPOGsm8kConfig):
     try:
         import wandb
 
-        wandb.init(project=cfg.wandb_project, name=cfg.wandb_name, config=cfg.__dict__)
+        wandb.init(project=cfg.wandb_project, name=cfg.wandb_name, config=asdict(cfg))
         return wandb
     except Exception as e:
         print(f"wandb disabled due to init error: {e}")
@@ -85,13 +98,13 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     from MLLM_JAX.utils import _form_global_array, get_jax_mesh2
     from prompts.prompts import system_prompt
+    from plugins.training.grpo.train_step import training_step
     from training2 import (
         get_state,
         reward_correct,
         reward_format,
         slice_data,
         tag_count_reward,
-        training_step,
     )
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -104,21 +117,51 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     mesh = get_jax_mesh2(cfg.mesh_shape)
     local_device_count = len(mesh.local_devices)
 
-    local_batch = cfg.batch_size * cfg.num_pre_q
+    local_batch = cfg.rollout.batch_size * cfg.rollout.num_pre_q
     padded_local_batch = _ensure_batch_multiple_of_local_devices(local_batch, local_device_count)
     if padded_local_batch != local_batch:
-        if padded_local_batch % cfg.batch_size != 0:
+        if padded_local_batch % cfg.rollout.batch_size != 0:
             raise ValueError(
                 f"Cannot pad local batch {local_batch} -> {padded_local_batch} "
-                f"because batch_size={cfg.batch_size} does not divide it."
+                f"because rollout.batch_size={cfg.rollout.batch_size} does not divide it."
             )
-        new_num_pre_q = padded_local_batch // cfg.batch_size
+        new_num_pre_q = padded_local_batch // cfg.rollout.batch_size
         print(
             f"Padding local batch {local_batch} -> {padded_local_batch} by changing "
-            f"num_pre_q {cfg.num_pre_q} -> {new_num_pre_q}."
+            f"rollout.num_pre_q {cfg.rollout.num_pre_q} -> {new_num_pre_q}."
         )
-        cfg = GRPOGsm8kConfig(**{**cfg.__dict__, "num_pre_q": new_num_pre_q})
+        cfg = GRPOGsm8kConfig(**{**cfg.__dict__, "rollout": GRPORolloutConfig(**{**cfg.rollout.__dict__, "num_pre_q": new_num_pre_q})})
         local_batch = padded_local_batch
+
+    grad_accum_steps = int(cfg.train.grad_accum_steps)
+    micro_batch_size = cfg.train.micro_batch_size
+    if micro_batch_size is not None:
+        micro_batch_size = int(micro_batch_size)
+        if micro_batch_size <= 0:
+            raise ValueError("train.micro_batch_size must be > 0.")
+        if local_batch % micro_batch_size != 0:
+            raise ValueError(
+                f"train.micro_batch_size={micro_batch_size} must divide local_batch={local_batch} "
+                f"(rollout.batch_size * rollout.num_pre_q)."
+            )
+        micro_steps = local_batch // micro_batch_size
+        if grad_accum_steps != 1 and grad_accum_steps != micro_steps:
+            print(
+                f"Overriding train.grad_accum_steps {grad_accum_steps} -> {micro_steps} "
+                f"to respect train.micro_batch_size={micro_batch_size}."
+            )
+        grad_accum_steps = micro_steps
+
+    if local_batch % grad_accum_steps != 0:
+        raise ValueError(
+            f"train.grad_accum_steps={grad_accum_steps} must divide local_batch={local_batch} "
+            f"(rollout.batch_size * rollout.num_pre_q)."
+        )
+
+    train_config = asdict(cfg.train)
+    train_config["grad_accum_steps"] = grad_accum_steps
+    if micro_batch_size is not None:
+        train_config["micro_batch_size"] = micro_batch_size
 
     print(f"backend={jax.default_backend()} process={jax.process_index()}/{jax.process_count()}")
     print(f"device_count={jax.device_count()} local_device_count={local_device_count}")
@@ -128,15 +171,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             dict(
                 model_path=cfg.model_path,
                 steps=cfg.steps,
-                batch_size=cfg.batch_size,
-                num_pre_q=cfg.num_pre_q,
+                rollout=asdict(cfg.rollout),
+                train=train_config,
                 local_batch=local_batch,
-                global_length=cfg.global_length,
-                max_length_sample=cfg.max_length_sample,
-                max_length_total=cfg.max_length_total,
-                ppo_epochs=cfg.ppo_epochs,
-                grad_accum_steps=cfg.grad_accum_steps,
-                beta=cfg.beta,
                 mesh_shape=cfg.mesh_shape,
                 wandb_project=cfg.wandb_project,
                 wandb_name=cfg.wandb_name,
@@ -167,11 +204,11 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     state, sampler, _state_sharding = get_state(
         mesh,
         training_steps=cfg.steps,
-        grad_accum_steps=cfg.grad_accum_steps,
+        grad_accum_steps=grad_accum_steps,
         model_path=cfg.model_path,
-        num_pre_q=cfg.num_pre_q,
-        max_lengths=cfg.max_length_total,
-        beta=cfg.beta,
+        num_pre_q=cfg.rollout.num_pre_q,
+        max_lengths=cfg.train.max_length_total,
+        beta=cfg.train.beta,
         create_sampler=True,
     )
 
@@ -183,11 +220,11 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     rng = random.Random(0xC0FFEE + jax.process_index())
     for step in range(cfg.steps):
-        batch_items = [rng.choice(qas) for _ in range(cfg.batch_size)]
+        batch_items = [rng.choice(qas) for _ in range(cfg.rollout.batch_size)]
         prompts_base = [item["Q"] for item in batch_items]
-        repeated_prompts = [p for p in prompts_base for _ in range(cfg.num_pre_q)]
-        repeated_items = [item for item in batch_items for _ in range(cfg.num_pre_q)]
-        group_ids = np.repeat(np.arange(cfg.batch_size, dtype=np.int32), cfg.num_pre_q)
+        repeated_prompts = [p for p in prompts_base for _ in range(cfg.rollout.num_pre_q)]
+        repeated_items = [item for item in batch_items for _ in range(cfg.rollout.num_pre_q)]
+        group_ids = np.repeat(np.arange(cfg.rollout.batch_size, dtype=np.int32), cfg.rollout.num_pre_q)
 
         t_step0 = time.perf_counter()
 
@@ -201,8 +238,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             sampler=sampler,
             params=state.params,
             system_prompt=system_prompt,
-            global_length=int(cfg.global_length),
-            max_length_sample=cfg.max_length_sample,
+            global_length=int(cfg.rollout.global_length),
+            max_length_sample=cfg.rollout.max_length_sample,
         )
         t_rollout = time.perf_counter() - t_rollout0
 
@@ -240,28 +277,28 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             datas_np,
         )
         total_valid_token_count = datas["labels"][:, 1:].sum()
-        datas = {**datas, "total_valid_token_count": total_valid_token_count}
         t_shard = time.perf_counter() - t_shard0
 
-        metrics: dict[str, Any] = {}
-        old_per_token_logps = None
         t_update0 = time.perf_counter()
-        for ppo_epoch in range(cfg.ppo_epochs):
-            if ppo_epoch > 0 and old_per_token_logps is not None:
-                ppo_inputs = {**datas, "old_per_token_logps": old_per_token_logps}
-            else:
-                ppo_inputs = datas
-
-            state, metrics = train_fn(state, ppo_inputs)
-            jax.block_until_ready(metrics["loss"])
-            if ppo_epoch == 0:
-                old_per_token_logps = metrics.get("per_token_logps")
+        state, datas, last_meta, entropy = ppo_update(
+            state=state,
+            datas=datas,
+            total_valid_token_count=total_valid_token_count,
+            train_step=train_fn,
+            slice_data=slice_data,
+            grad_accum_steps=grad_accum_steps,
+            ppo_steps=cfg.train.ppo_epochs,
+        )
+        jax.block_until_ready(last_meta["loss"])
         t_update = time.perf_counter() - t_update0
 
         t_step = time.perf_counter() - t_step0
 
-        loss_value = _as_float(metrics["loss"])
-        entropy_value = _as_float(jnp.mean(metrics["entropy"]))
+        loss_value = _as_float(last_meta["loss"])
+        if entropy is None:
+            entropy_value = _as_float(jnp.mean(last_meta["entropy"]))
+        else:
+            entropy_value = _as_float(entropy)
 
         # --- Derived stats (global) ---
         advantages_global = np.asarray(process_allgather(advantages_np)).reshape(-1)
@@ -350,11 +387,11 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             eval_rewards_per_func_all: list[np.ndarray] = []
 
             for eval_batch_idx in range(int(cfg.eval_batches)):
-                start = (step * int(cfg.eval_batches) + eval_batch_idx) * cfg.batch_size
-                eval_items = [eval_qas[(start + i) % len(eval_qas)] for i in range(cfg.batch_size)]
+                start = (step * int(cfg.eval_batches) + eval_batch_idx) * cfg.rollout.batch_size
+                eval_items = [eval_qas[(start + i) % len(eval_qas)] for i in range(cfg.rollout.batch_size)]
                 eval_prompts_base = [item["Q"] for item in eval_items]
-                eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(cfg.num_pre_q)]
-                eval_repeated_items = [item for item in eval_items for _ in range(cfg.num_pre_q)]
+                eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(cfg.rollout.num_pre_q)]
+                eval_repeated_items = [item for item in eval_items for _ in range(cfg.rollout.num_pre_q)]
 
                 t_eval_rollout0 = time.perf_counter()
                 _eval_chat_prompts, eval_answers, eval_datas_np = generate_answers_and_training_batch(
@@ -362,8 +399,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                     sampler=sampler,
                     params=state.params,
                     system_prompt=system_prompt,
-                    global_length=int(cfg.global_length),
-                    max_length_sample=cfg.max_length_sample,
+                    global_length=int(cfg.rollout.global_length),
+                    max_length_sample=cfg.rollout.max_length_sample,
                 )
                 eval_rollout_s += time.perf_counter() - t_eval_rollout0
 

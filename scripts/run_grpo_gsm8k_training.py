@@ -14,7 +14,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from plugins.training.config import load_config
-from plugins.training.runner import GRPOGsm8kConfig, run_grpo_gsm8k
+from plugins.training.runner import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig, run_grpo_gsm8k
 
 
 def _load_dotenv_if_present() -> None:
@@ -37,11 +37,35 @@ def _load_dotenv_if_present() -> None:
         return
 
 
-def _maybe_override_from_env(cfg: dict[str, Any], *, env: str, key: str, cast) -> None:
+def _set_by_path(cfg: dict[str, Any], key_path: str, value: Any) -> None:
+    keys = [k for k in key_path.split(".") if k]
+    if not keys:
+        raise ValueError("Empty config key path")
+    cur: dict[str, Any] = cfg
+    for k in keys[:-1]:
+        nxt = cur.get(k)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[k] = nxt
+        cur = nxt
+    cur[keys[-1]] = value
+
+
+def _get_by_path(cfg: dict[str, Any], key_path: str) -> Any:
+    keys = [k for k in key_path.split(".") if k]
+    cur: Any = cfg
+    for k in keys:
+        if not isinstance(cur, dict) or k not in cur:
+            return None
+        cur = cur[k]
+    return cur
+
+
+def _maybe_override_from_env(cfg: dict[str, Any], *, env: str, key_path: str, cast) -> None:
     value = os.environ.get(env)
     if value is None:
         return
-    cfg[key] = cast(value)
+    _set_by_path(cfg, key_path, cast(value))
 
 
 def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -51,37 +75,90 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     YAML configs are now supported, but env vars remain optional overrides.
     """
     cfg = dict(cfg)
-    _maybe_override_from_env(cfg, env="MODEL_PATH", key="model_path", cast=str)
-    _maybe_override_from_env(cfg, env="STEPS", key="steps", cast=int)
-    _maybe_override_from_env(cfg, env="BATCH_SIZE", key="batch_size", cast=int)
-    _maybe_override_from_env(cfg, env="NUM_PRE_Q", key="num_pre_q", cast=int)
-    _maybe_override_from_env(cfg, env="GLOBAL_LENGTH", key="global_length", cast=int)
-    _maybe_override_from_env(cfg, env="MAX_LENGTH_SAMPLE", key="max_length_sample", cast=int)
-    _maybe_override_from_env(cfg, env="MAX_LENGTH_TOTAL", key="max_length_total", cast=int)
-    _maybe_override_from_env(cfg, env="PPO_EPOCHS", key="ppo_epochs", cast=int)
-    _maybe_override_from_env(cfg, env="GRAD_ACCUM_STEPS", key="grad_accum_steps", cast=int)
-    _maybe_override_from_env(cfg, env="BETA", key="beta", cast=float)
-    _maybe_override_from_env(cfg, env="MESH_SHAPE_FSDP", key="mesh_shape", cast=str)
-    _maybe_override_from_env(cfg, env="WANDB_PROJECT", key="wandb_project", cast=str)
-    _maybe_override_from_env(cfg, env="WANDB_NAME", key="wandb_name", cast=str)
-    _maybe_override_from_env(cfg, env="EVAL_EVERY_STEPS", key="eval_every_steps", cast=int)
-    _maybe_override_from_env(cfg, env="EVAL_BATCHES", key="eval_batches", cast=int)
-    _maybe_override_from_env(cfg, env="EVAL_SPLIT", key="eval_split", cast=str)
+    _maybe_override_from_env(cfg, env="MODEL_PATH", key_path="model_path", cast=str)
+    _maybe_override_from_env(cfg, env="STEPS", key_path="steps", cast=int)
+
+    # Rollout (generation)
+    _maybe_override_from_env(cfg, env="BATCH_SIZE", key_path="rollout.batch_size", cast=int)
+    _maybe_override_from_env(cfg, env="NUM_PRE_Q", key_path="rollout.num_pre_q", cast=int)
+    _maybe_override_from_env(cfg, env="GLOBAL_LENGTH", key_path="rollout.global_length", cast=int)
+    _maybe_override_from_env(cfg, env="MAX_LENGTH_SAMPLE", key_path="rollout.max_length_sample", cast=int)
+
+    # Train (update)
+    _maybe_override_from_env(cfg, env="TRAIN_MICRO_BATCH_SIZE", key_path="train.micro_batch_size", cast=int)
+    _maybe_override_from_env(cfg, env="MAX_LENGTH_TOTAL", key_path="train.max_length_total", cast=int)
+    _maybe_override_from_env(cfg, env="PPO_EPOCHS", key_path="train.ppo_epochs", cast=int)
+    _maybe_override_from_env(cfg, env="GRAD_ACCUM_STEPS", key_path="train.grad_accum_steps", cast=int)
+    _maybe_override_from_env(cfg, env="BETA", key_path="train.beta", cast=float)
+
+    # Backward-compatible flat overrides (still accepted).
+    _maybe_override_from_env(cfg, env="BATCH_SIZE", key_path="batch_size", cast=int)
+    _maybe_override_from_env(cfg, env="NUM_PRE_Q", key_path="num_pre_q", cast=int)
+    _maybe_override_from_env(cfg, env="GLOBAL_LENGTH", key_path="global_length", cast=int)
+    _maybe_override_from_env(cfg, env="MAX_LENGTH_SAMPLE", key_path="max_length_sample", cast=int)
+    _maybe_override_from_env(cfg, env="MAX_LENGTH_TOTAL", key_path="max_length_total", cast=int)
+    _maybe_override_from_env(cfg, env="PPO_EPOCHS", key_path="ppo_epochs", cast=int)
+    _maybe_override_from_env(cfg, env="GRAD_ACCUM_STEPS", key_path="grad_accum_steps", cast=int)
+    _maybe_override_from_env(cfg, env="BETA", key_path="beta", cast=float)
+
+    # Infra / logging
+    _maybe_override_from_env(cfg, env="MESH_SHAPE_FSDP", key_path="mesh_shape", cast=str)
+    _maybe_override_from_env(cfg, env="WANDB_PROJECT", key_path="wandb_project", cast=str)
+    _maybe_override_from_env(cfg, env="WANDB_NAME", key_path="wandb_name", cast=str)
+    _maybe_override_from_env(cfg, env="EVAL_EVERY_STEPS", key_path="eval_every_steps", cast=int)
+    _maybe_override_from_env(cfg, env="EVAL_BATCHES", key_path="eval_batches", cast=int)
+    _maybe_override_from_env(cfg, env="EVAL_SPLIT", key_path="eval_split", cast=str)
     return cfg
 
 
 def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
     model_path = str(cfg.get("model_path") or "Qwen/Qwen2.5-7B-Instruct")
     steps = int(cfg.get("steps") or 20)
-    batch_size = int(cfg.get("batch_size") or 1)
-    num_pre_q = int(cfg.get("num_pre_q") or 8)
-    global_length = int(cfg.get("global_length") or 512)
-    max_length_sample = int(cfg.get("max_length_sample") or 64)
-    max_length_total_raw = cfg.get("max_length_total")
+
+    rollout_batch_size = _get_by_path(cfg, "rollout.batch_size")
+    if rollout_batch_size is None:
+        rollout_batch_size = cfg.get("batch_size")
+    rollout_batch_size = int(rollout_batch_size or 1)
+
+    rollout_num_pre_q = _get_by_path(cfg, "rollout.num_pre_q")
+    if rollout_num_pre_q is None:
+        rollout_num_pre_q = cfg.get("num_pre_q")
+    rollout_num_pre_q = int(rollout_num_pre_q or 8)
+
+    global_length = _get_by_path(cfg, "rollout.global_length")
+    if global_length is None:
+        global_length = cfg.get("global_length")
+    global_length = int(global_length or 512)
+
+    max_length_sample = _get_by_path(cfg, "rollout.max_length_sample")
+    if max_length_sample is None:
+        max_length_sample = cfg.get("max_length_sample")
+    max_length_sample = int(max_length_sample or 64)
+
+    train_micro_batch_size_raw = _get_by_path(cfg, "train.micro_batch_size")
+    if train_micro_batch_size_raw is None:
+        train_micro_batch_size_raw = cfg.get("train_micro_batch_size")
+    train_micro_batch_size = int(train_micro_batch_size_raw) if train_micro_batch_size_raw is not None else None
+
+    max_length_total_raw = _get_by_path(cfg, "train.max_length_total")
+    if max_length_total_raw is None:
+        max_length_total_raw = cfg.get("max_length_total")
     max_length_total = int(max_length_total_raw) if max_length_total_raw is not None else max_length_sample + 128
-    ppo_epochs = int(cfg.get("ppo_epochs") or 1)
-    grad_accum_steps = int(cfg.get("grad_accum_steps") or 1)
-    beta = float(cfg.get("beta") or 0.0)
+
+    ppo_epochs = _get_by_path(cfg, "train.ppo_epochs")
+    if ppo_epochs is None:
+        ppo_epochs = cfg.get("ppo_epochs")
+    ppo_epochs = int(ppo_epochs or 1)
+
+    grad_accum_steps = _get_by_path(cfg, "train.grad_accum_steps")
+    if grad_accum_steps is None:
+        grad_accum_steps = cfg.get("grad_accum_steps")
+    grad_accum_steps = int(grad_accum_steps or 1)
+
+    beta = _get_by_path(cfg, "train.beta")
+    if beta is None:
+        beta = cfg.get("beta")
+    beta = float(beta or 0.0)
     mesh_shape = str(cfg.get("mesh_shape") or "1,-1,1")
 
     wandb_project = str(cfg.get("wandb_project") or "mllm-jax-grpo-gsm8k")
@@ -103,14 +180,19 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
     return GRPOGsm8kConfig(
         model_path=model_path,
         steps=steps,
-        batch_size=batch_size,
-        num_pre_q=num_pre_q,
-        global_length=global_length,
-        max_length_sample=max_length_sample,
-        max_length_total=max_length_total,
-        ppo_epochs=ppo_epochs,
-        grad_accum_steps=grad_accum_steps,
-        beta=beta,
+        rollout=GRPORolloutConfig(
+            batch_size=rollout_batch_size,
+            num_pre_q=rollout_num_pre_q,
+            global_length=global_length,
+            max_length_sample=max_length_sample,
+        ),
+        train=GRPOTrainConfig(
+            micro_batch_size=train_micro_batch_size,
+            max_length_total=max_length_total,
+            ppo_epochs=ppo_epochs,
+            grad_accum_steps=grad_accum_steps,
+            beta=beta,
+        ),
         mesh_shape=mesh_shape,
         wandb_project=wandb_project,
         wandb_name=wandb_name,

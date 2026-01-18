@@ -7,17 +7,25 @@
 model_path: Qwen/Qwen2.5-7B-Instruct
 
 steps: 20
-batch_size: 1
-num_pre_q: 8
 
-global_length: 512
-max_length_sample: 64
-# If null, runner uses `max_length_sample + 128`.
-max_length_total: null
+# Rollout (generation) config.
+rollout:
+  batch_size: 1
+  # Number of samples per prompt (GRPO group size, a.k.a. K).
+  num_pre_q: 8
+  global_length: 512
+  max_length_sample: 64
 
-ppo_epochs: 1
-grad_accum_steps: 1
-beta: 0.0
+# Train (update) config.
+train:
+  # If set, split the rollout batch into smaller micro-batches for the update step.
+  # This lets rollout be larger than the per-update memory limit.
+  micro_batch_size: null
+  # If null, runner uses `rollout.max_length_sample + 128`.
+  max_length_total: null
+  ppo_epochs: 1
+  grad_accum_steps: 1
+  beta: 0.0
 
 # Mesh axis names are ('dp','fsdp','tp') in `MLLM_JAX.utils.get_jax_mesh2`.
 # v4-16 (2-host, megacore) usually has global `device_count=8`; this shape uses pure FSDP:

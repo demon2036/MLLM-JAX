@@ -15,16 +15,24 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Model / loop
     "model_path": "Qwen/Qwen2.5-7B-Instruct",
     "steps": 20,
-    "batch_size": 1,
-    "num_pre_q": 8,
-    # Lengths
-    "global_length": 512,
-    "max_length_sample": 64,
-    "max_length_total": None,
-    # Update
-    "ppo_epochs": 1,
-    "grad_accum_steps": 1,
-    "beta": 0.0,
+    # Rollout (generation) vs Train (update) are separated, AReaL-style.
+    "rollout": {
+        "batch_size": 1,
+        # Number of samples per prompt (GRPO group size, a.k.a. K).
+        "num_pre_q": 8,
+        "global_length": 512,
+        "max_length_sample": 64,
+    },
+    "train": {
+        # If set, split the rollout batch into smaller micro-batches for the update step.
+        # This lets rollout be larger than the per-update memory limit.
+        "micro_batch_size": None,
+        # If null, runner uses `rollout.max_length_sample + 128`.
+        "max_length_total": None,
+        "ppo_epochs": 1,
+        "grad_accum_steps": 1,
+        "beta": 0.0,
+    },
     # Mesh
     "mesh_shape": "1,-1,1",
     # Logging

@@ -128,6 +128,7 @@ class SglangJaxRolloutBackend:
         device_put_keys = 0
         device_put_bytes = 0
         debug_sync = _get_env_bool("SGLANG_JAX_WEIGHT_SYNC_DEBUG", False)
+        device_put_records: list[tuple[int, str]] = []
         pending_transposes: list[tuple[str, Any, Any, Any, tuple[int, ...]]] = []
         for tgt_key, tgt_param in transformer_state.flat_state():
             tgt_path = _nnx_key_to_dotted_path(tgt_key)
@@ -152,7 +153,10 @@ class SglangJaxRolloutBackend:
                     val = jnp.zeros(tgt_shape, dtype=tgt_dtype)
                     val = jax.device_put(val, tgt_sharding)
                     device_put_keys += 1
-                    device_put_bytes += int(np.prod(tgt_shape)) * int(np.dtype(tgt_dtype).itemsize)
+                    size_bytes = int(np.prod(tgt_shape)) * int(np.dtype(tgt_dtype).itemsize)
+                    device_put_bytes += size_bytes
+                    if debug_sync:
+                        device_put_records.append((size_bytes, train_key))
                     if hasattr(tgt_param, "value"):
                         tgt_param.value = val
                     else:
@@ -175,7 +179,10 @@ class SglangJaxRolloutBackend:
             else:
                 val = jax.device_put(val, tgt_sharding, may_alias=True)
                 device_put_keys += 1
-                device_put_bytes += int(np.prod(tgt_shape)) * int(np.dtype(tgt_dtype).itemsize)
+                size_bytes = int(np.prod(tgt_shape)) * int(np.dtype(tgt_dtype).itemsize)
+                device_put_bytes += size_bytes
+                if debug_sync:
+                    device_put_records.append((size_bytes, train_key))
 
             if hasattr(tgt_param, "value"):
                 tgt_param.value = val
@@ -221,7 +228,10 @@ class SglangJaxRolloutBackend:
             else:
                 transposed = jax.device_put(transposed, tgt_sharding, may_alias=True)
                 device_put_keys += 1
-                device_put_bytes += int(np.prod(tgt_shape)) * int(np.dtype(tgt_dtype).itemsize)
+                size_bytes = int(np.prod(tgt_shape)) * int(np.dtype(tgt_dtype).itemsize)
+                device_put_bytes += size_bytes
+                if debug_sync:
+                    device_put_records.append((size_bytes, f"{train_key}.T"))
             if hasattr(tgt_param, "value"):
                 tgt_param.value = transposed
             updated_keys += 1
@@ -239,6 +249,13 @@ class SglangJaxRolloutBackend:
                 gb = device_put_bytes / (1024**3)
                 msg += f" reused_keys={reused_keys} device_put_keys={device_put_keys} device_put_gb={gb:.3f}"
             print(msg)
+            if debug_sync and device_put_records:
+                topn = int(_get_env_int("SGLANG_JAX_WEIGHT_SYNC_DEBUG_TOPN", 10) or 10)
+                top = sorted(device_put_records, key=lambda x: x[0], reverse=True)[: max(1, topn)]
+                parts = []
+                for size_bytes, key in top:
+                    parts.append(f"{key}={size_bytes / (1024**2):.1f}MiB")
+                print("sglang_jax_weight_sync_device_put_top=" + ", ".join(parts))
 
     def _ensure_engine(self):
         if self._engine is not None:

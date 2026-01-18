@@ -24,10 +24,9 @@ train:
   grad_accum_steps: 1
   beta: 0.0
 
-# NOTE: sglang-jax shards weights on the `"tensor"` axis. To make weight syncing
-# feasible when co-locating rollout + training on the same TPU, we run training
-# with `tp=-1` (tensor-parallel) rather than `fsdp=-1`.
-mesh_shape: 1,1,-1
+# Training uses the same FSDP mesh as `grpo_gsm8k_bs32.yaml` so update speed is comparable.
+# The sglang-jax Engine still runs TP across local devices; weight sync handles resharding.
+mesh_shape: 1,-1,1
 
 wandb_project: mllm-jax-grpo-gsm8k
 wandb_name: null

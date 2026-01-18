@@ -21,17 +21,17 @@ rollout:
   # Optional: prompts per device per rollout pass (forward-only).
   # Runner uses this to derive a per-process batch size.
   per_device_batch_size: null
-  batch_size: 1
+  batch_size: 32
   # Number of samples per prompt (GRPO group size, a.k.a. K).
-  num_pre_q: 8
+  num_pre_q: 1
   global_length: 512
-  max_length_sample: 64
+  max_length_sample: 1024
 
 # Train (update) config.
 train:
   # If set, split the rollout batch into smaller micro-batches for the update step.
   # This lets rollout be larger than the per-update memory limit.
-  micro_batch_size: null
+  micro_batch_size: 4
   # Optional: sequences per device per micro-step (backward).
   # Runner uses this to derive `micro_batch_size` and `grad_accum_steps`.
   per_device_micro_batch_size: null

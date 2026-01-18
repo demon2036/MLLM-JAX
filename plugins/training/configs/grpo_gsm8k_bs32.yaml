@@ -15,7 +15,7 @@ rollout:
   global_batch_size: null
   per_device_batch_size: null
   batch_size: 32
-  num_pre_q: 8
+  num_pre_q: 4
   global_length: 512
   max_length_sample: 1024
 

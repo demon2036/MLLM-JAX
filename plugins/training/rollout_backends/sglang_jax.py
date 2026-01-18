@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -56,8 +57,6 @@ class SglangJaxRolloutBackend:
 
     Notes
     -----
-    - MVP intentionally does not implement on-policy weight syncing. The `params`
-      argument is currently ignored.
     - The Engine is initialized lazily on the first `rollout()` call so that unit
       tests can run without the `sgl_jax` dependency installed.
     """
@@ -66,6 +65,7 @@ class SglangJaxRolloutBackend:
     model_path: str
 
     _engine: Any | None = field(default=None, init=False, repr=False)
+    _last_synced_params: Any | None = field(default=None, init=False, repr=False)
 
     def initialize(self) -> None:
         """Eagerly initialize the underlying Engine.
@@ -76,6 +76,77 @@ class SglangJaxRolloutBackend:
         """
 
         self._ensure_engine()
+
+    def sync_weights(self, params: Any) -> None:
+        """Sync (hot-swap) the latest training params into the Engine.
+
+        Implementation: follow Tunix's approach and replace `model_state_leaves`
+        in the underlying `ModelRunner` so the next forward uses the latest
+        weights.
+
+        This method is intentionally best-effort and depends on:
+        - `enable_single_process=True` (so we can access the scheduler/model runner)
+        - compatible param trees (Qwen2-style weights)
+        """
+
+        if self._last_synced_params is params:
+            return
+        self._last_synced_params = params
+
+        engine = self._ensure_engine()
+
+        try:
+            import jax
+            from flax import nnx
+        except Exception as e:  # pragma: no cover - dependency/runtime specific
+            raise RuntimeError("sglang_jax weight sync requires `jax` and `flax`.") from e
+
+        scheduler = engine.scheduler_info.get("scheduler") if hasattr(engine, "scheduler_info") else None
+        if scheduler is None:
+            raise RuntimeError(
+                "sglang-jax Engine does not expose a scheduler object (need `enable_single_process=True`)."
+            )
+
+        model_runner = scheduler.tp_worker.worker.model_runner
+        transformer_state = nnx.split(model_runner.model)[1]
+
+        train_flat = _flatten_tree_to_dotted_dict(params)
+
+        updated_keys = 0
+        missing_keys = 0
+        for tgt_key, tgt_param in transformer_state.flat_state():
+            train_key, transpose = _engine_key_to_train_key(tgt_key)
+            if train_key is None:
+                continue
+            if train_key not in train_flat:
+                missing_keys += 1
+                continue
+            val = train_flat[train_key]
+            if transpose:
+                # Engine expects lm_head.embedding [vocab, hidden] while this repo
+                # stores lm_head.kernel [hidden, vocab] (Flax Dense).
+                val = val.T
+
+            # NOTE: We intentionally avoid reshard/cast here. The goal is to keep
+            # weight sync O(1) and let JAX handle any required layout transfers.
+            if hasattr(tgt_param, "value"):
+                tgt_param.value = val
+            else:
+                # NNX may hand back raw arrays for some leaves.
+                tgt_param = val
+            updated_keys += 1
+
+        if updated_keys == 0:
+            raise RuntimeError(
+                "sglang-jax weight sync made no updates. Likely mismatch between the training param tree and "
+                "sglang-jax model state keys."
+            )
+
+        new_model_state_leaves, _ = jax.tree_util.tree_flatten(transformer_state)
+        model_runner.model_state_leaves = new_model_state_leaves
+
+        if jax.process_index() == 0:
+            print(f"sglang_jax_weight_sync=ok updated_keys={updated_keys} missing_keys={missing_keys}")
 
     def _ensure_engine(self):
         if self._engine is not None:
@@ -109,6 +180,8 @@ class SglangJaxRolloutBackend:
             "enable_single_process": True,
             # Keep Engine logs quiet by default.
             "log_level": os.environ.get("SGLANG_JAX_LOG_LEVEL", "error"),
+            # Keep params in fp32 to match this repo's training (param_dtype=float32).
+            "dtype": os.environ.get("SGLANG_JAX_DTYPE", "float32"),
             # Conserve HBM because training already holds model/optimizer state.
             "mem_fraction_static": float(_get_env_float("SGLANG_JAX_MEM_FRACTION_STATIC", 0.1) or 0.1),
             "disable_radix_cache": _get_env_bool("SGLANG_JAX_DISABLE_RADIX_CACHE", True),
@@ -149,6 +222,22 @@ class SglangJaxRolloutBackend:
         self._engine = Engine(**engine_kwargs)
         return self._engine
 
+    def flush_cache(self) -> None:
+        engine = self._engine
+        if engine is None:
+            return
+        try:
+            engine.flush_cache()
+        except Exception as e:  # pragma: no cover - depends on external engine behavior
+            print(f"WARNING: sglang-jax flush_cache failed: {e}")
+        # Best-effort: newer sglang-jax versions may support explicitly releasing
+        # KV/cache memory back to the system.
+        try:  # pragma: no cover - external API surface is version-dependent
+            if hasattr(engine, "release_memory_occupation"):
+                engine.release_memory_occupation()
+        except Exception as e:
+            print(f"WARNING: sglang-jax release_memory_occupation failed: {e}")
+
     def rollout(
         self,
         *,
@@ -158,9 +247,11 @@ class SglangJaxRolloutBackend:
         global_length: int,
         max_length_sample: int,
     ) -> RolloutResult:
-        del params, global_length  # MVP: no weight sync and no bucketed prefill needed.
+        del global_length  # bucketed prefill is handled inside sglang-jax.
 
         engine = self._ensure_engine()
+        # Ensure on-policy weights (runner may call `sync_weights()` explicitly too).
+        self.sync_weights(params)
         tokenizer = self.tokenizer
 
         chat_prompts = build_chat_prompts(tokenizer, list(prompts), system_prompt)
@@ -222,3 +313,43 @@ class SglangJaxRolloutBackend:
 
 
 __all__ = ["SglangJaxRolloutBackend"]
+
+
+def _flatten_tree_to_dotted_dict(tree: Any) -> dict[str, Any]:
+    """Flatten a (nested) mapping-like pytree into `{'a.b.c': leaf}` form."""
+
+    out: dict[str, Any] = {}
+
+    def rec(prefix: str, node: Any) -> None:
+        if isinstance(node, Mapping):
+            for k, v in node.items():
+                key = str(k)
+                rec(f"{prefix}.{key}" if prefix else key, v)
+            return
+        out[prefix] = node
+
+    rec("", tree)
+    return out
+
+
+_LAYER_PREFIX = re.compile(r"^model\\.layers\\.(\\d+)\\.(.+)$")
+
+
+def _engine_key_to_train_key(engine_key: str) -> tuple[str | None, bool]:
+    """Map an sglang-jax NNX flat key to this repo's training param flat key."""
+
+    if engine_key == "lm_head.embedding":
+        return "lm_head.kernel", True
+
+    m = _LAYER_PREFIX.match(engine_key)
+    if m:
+        layer_id = m.group(1)
+        rest = m.group(2)
+        engine_key = f"model.layers_{layer_id}.{rest}"
+
+    # LinearBase uses `.weight` for the kernel, Flax uses `.kernel`.
+    if engine_key.endswith(".weight"):
+        return engine_key[: -len(".weight")] + ".kernel", False
+
+    # q/k/v biases, layernorm scales, embeddings, etc are already aligned (aside from layers.{i} -> layers_{i}).
+    return engine_key, False

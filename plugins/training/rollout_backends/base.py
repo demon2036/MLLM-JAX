@@ -11,6 +11,12 @@ class RolloutBackend(Protocol):
     The backend owns whatever state it needs to generate (in-process sampler,
     external engine client, etc). Callers provide the latest `params` so the
     backend can implement optional weight syncing strategies.
+
+    Optional hooks (duck-typed, used by the runner when present):
+    - `initialize()`: eager backend initialization (e.g. spin up an engine).
+    - `sync_weights(params)`: push the latest policy weights into the backend.
+    - `flush_cache()`: release KV/cache memory after rollout.
+    - `shutdown()`: teardown backend resources.
     """
 
     def rollout(
@@ -22,4 +28,3 @@ class RolloutBackend(Protocol):
         global_length: int,
         max_length_sample: int,
     ) -> RolloutResult: ...
-

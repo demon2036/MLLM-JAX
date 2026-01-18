@@ -14,6 +14,7 @@
 - TPU smoke GRPO train (3 steps): `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
 - TPU v4-16 GRPO train (20 steps, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-20steps.md`
 - TPU v4-16 GRPO train (100 steps, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-100steps.md`
+- TPU v4-16 GRPO micro-batch smoke run (1 step): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
 - TPU v4-16 OOM sweep (len=2048, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-oom-sweep-len2048.md`
 - jit8 GRPO/GSM8K YAML config: `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
@@ -42,6 +43,7 @@
 - `docs/sops/tpu-vm-multihost-smoke-train.md`
 - `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-20steps.md`
 - `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-100steps.md`
+- `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
 - `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-oom-sweep-len2048.md`
 - `docs/sops/tpu-vm-runtime.md`
 
@@ -51,6 +53,7 @@
 - `docs/sops/areal-rl-organization.md`
 - `docs/sops/areal-logging-system.md`
 - `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
+- `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
 
 ### Docs
 

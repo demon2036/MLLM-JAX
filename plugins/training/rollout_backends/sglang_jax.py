@@ -115,7 +115,8 @@ class SglangJaxRolloutBackend:
         updated_keys = 0
         missing_keys = 0
         for tgt_key, tgt_param in transformer_state.flat_state():
-            train_key, transpose = _engine_key_to_train_key(tgt_key)
+            tgt_path = ".".join(str(k) for k in tgt_key)
+            train_key, transpose = _engine_key_to_train_key(tgt_path)
             if train_key is None:
                 continue
             if train_key not in train_flat:

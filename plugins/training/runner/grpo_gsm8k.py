@@ -416,6 +416,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         t_rollout_sync = 0.0
         t_rollout_generate = 0.0
         t_rollout_flush = 0.0
+        t_rollout_release = 0.0
         t_reward = 0.0
         t_adv = 0.0
 
@@ -484,7 +485,12 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             advantages_all.append(advantages_np)
             group_ids_all.append(group_ids)
 
-        t_rollout = t_rollout_sync + t_rollout_generate + t_rollout_flush
+        t_release0 = time.perf_counter()
+        if hasattr(rollout_backend, "release_weights"):
+            rollout_backend.release_weights()  # type: ignore[attr-defined]
+        t_rollout_release = time.perf_counter() - t_release0
+
+        t_rollout = t_rollout_sync + t_rollout_generate + t_rollout_flush + t_rollout_release
         rewards_np = np.concatenate(rewards_all, axis=0) if rewards_all else np.asarray([], dtype=np.float32)
         advantages_np = np.concatenate(advantages_all, axis=0) if advantages_all else np.asarray([], dtype=np.float32)
         group_ids = np.concatenate(group_ids_all, axis=0) if group_ids_all else np.asarray([], dtype=np.int32)
@@ -599,6 +605,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             "time/train/rollout_sync_s": float(t_rollout_sync),
             "time/train/rollout_generate_s": float(t_rollout_generate),
             "time/train/rollout_flush_s": float(t_rollout_flush),
+            "time/train/rollout_release_s": float(t_rollout_release),
             "time/train/reward_s": float(t_reward),
             "time/train/advantages_s": float(t_adv),
             "time/train/shard_s": float(t_shard),
@@ -638,6 +645,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             eval_rollout_sync_s = 0.0
             eval_rollout_generate_s = 0.0
             eval_rollout_flush_s = 0.0
+            eval_rollout_release_s = 0.0
             eval_reward_s = 0.0
             eval_step0 = time.perf_counter()
             eval_rewards_all: list[np.ndarray] = []
@@ -688,8 +696,13 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_per_func_flat = eval_per_func_global.transpose(1, 0, 2).reshape(len(reward_funcs), -1)
                 eval_rewards_per_func_all.append(eval_per_func_flat)
 
+            t_eval_release0 = time.perf_counter()
+            if hasattr(rollout_backend, "release_weights"):
+                rollout_backend.release_weights()  # type: ignore[attr-defined]
+            eval_rollout_release_s = time.perf_counter() - t_eval_release0
+
             eval_step_s = time.perf_counter() - eval_step0
-            eval_rollout_s = eval_rollout_sync_s + eval_rollout_generate_s + eval_rollout_flush_s
+            eval_rollout_s = eval_rollout_sync_s + eval_rollout_generate_s + eval_rollout_flush_s + eval_rollout_release_s
             eval_rewards_concat = np.concatenate(eval_rewards_all, axis=0) if eval_rewards_all else np.asarray([], dtype=np.float32)
             eval_reward_stats = _stats_1d(eval_rewards_concat)
 
@@ -708,6 +721,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             eval_logs["time/eval/rollout_sync_s"] = float(eval_rollout_sync_s)
             eval_logs["time/eval/rollout_generate_s"] = float(eval_rollout_generate_s)
             eval_logs["time/eval/rollout_flush_s"] = float(eval_rollout_flush_s)
+            eval_logs["time/eval/rollout_release_s"] = float(eval_rollout_release_s)
             eval_logs["time/eval/reward_s"] = float(eval_reward_s)
             eval_logs["time/eval/step_s"] = float(eval_step_s)
 

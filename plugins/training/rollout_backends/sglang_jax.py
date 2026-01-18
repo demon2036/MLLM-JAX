@@ -66,6 +66,7 @@ class SglangJaxRolloutBackend:
 
     _engine: Any | None = field(default=None, init=False, repr=False)
     _last_synced_params: Any | None = field(default=None, init=False, repr=False)
+    _base_model_state_leaves: tuple[Any, ...] | None = field(default=None, init=False, repr=False)
     _warned_release_memory_occupation: bool = field(default=False, init=False, repr=False)
 
     def initialize(self) -> None:
@@ -109,6 +110,14 @@ class SglangJaxRolloutBackend:
             )
 
         model_runner = scheduler.tp_worker.worker.model_runner
+        if self._base_model_state_leaves is None:
+            # Capture the Engine's initial weights (often dummy) so we can
+            # restore them after rollout and avoid keeping large weight buffers
+            # alive across the donated training update step.
+            try:
+                self._base_model_state_leaves = tuple(model_runner.model_state_leaves)
+            except Exception:  # pragma: no cover - depends on external engine internals
+                self._base_model_state_leaves = None
         transformer_state = nnx.split(model_runner.model)[1]
 
         train_flat = _flatten_tree_to_dotted_dict(params)
@@ -332,6 +341,30 @@ class SglangJaxRolloutBackend:
             if not self._warned_release_memory_occupation:
                 print(f"WARNING: sglang-jax release_memory_occupation failed: {e}")
                 self._warned_release_memory_occupation = True
+
+    def release_weights(self) -> None:
+        """Drop Engine weight references so training can safely donate buffers.
+
+        When co-locating rollout + training in one process, the training update
+        step donates the `TrainState` buffers. If the rollout Engine still holds
+        references/aliases to those buffers, donation becomes unsafe and can
+        also increase peak memory.
+        """
+
+        self._last_synced_params = None
+        engine = self._engine
+        base_leaves = self._base_model_state_leaves
+        if engine is None or base_leaves is None:
+            return
+
+        try:
+            scheduler = engine.scheduler_info.get("scheduler") if hasattr(engine, "scheduler_info") else None
+            if scheduler is None:
+                return
+            model_runner = scheduler.tp_worker.worker.model_runner
+            model_runner.model_state_leaves = list(base_leaves)
+        except Exception as e:  # pragma: no cover - external engine behavior
+            print(f"WARNING: sglang-jax release_weights failed: {e}")
 
     def rollout(
         self,

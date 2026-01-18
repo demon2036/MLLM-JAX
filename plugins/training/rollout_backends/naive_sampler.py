@@ -24,6 +24,11 @@ class NaiveSamplerRolloutBackend:
         # No external KV/cache to release for the naive sampler.
         return
 
+    def release_weights(self) -> None:
+        # Drop the cached reference so we don't keep training buffers alive
+        # across the (donated) update step.
+        self._last_synced_params = None
+
     def rollout(
         self,
         *,

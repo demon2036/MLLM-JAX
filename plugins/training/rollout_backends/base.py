@@ -16,6 +16,9 @@ class RolloutBackend(Protocol):
     - `initialize()`: eager backend initialization (e.g. spin up an engine).
     - `sync_weights(params)`: push the latest policy weights into the backend.
     - `flush_cache()`: release KV/cache memory after rollout.
+    - `release_weights()`: drop any weight buffers/aliases after rollout (useful
+      when the training step donates buffers and you don't want the backend to
+      keep references alive across the update).
     - `shutdown()`: teardown backend resources.
     """
 

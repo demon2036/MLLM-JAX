@@ -17,6 +17,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "steps": 20,
     # Rollout (generation) vs Train (update) are separated, AReaL-style.
     "rollout": {
+        # Rollout backend selector (swappable generation engine).
+        # - "naive": in-process sampler (current default)
+        # - Future: "sglang_jax", "vllm", ...
+        "backend": "naive",
         # Optional: total prompts per training step (global, across all processes).
         # If set, runner will do multiple rollout passes and may pad up to the next
         # full pass to keep shapes equal across hosts/devices.

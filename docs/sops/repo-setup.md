@@ -17,3 +17,11 @@
   **Expected Result**: Exit code 0 with no output
   **Troubleshooting**: If file paths differ, adjust the command for your checkout
   **References**: N/A
+
+- **Title**: SOP: Run local unit tests (pytest)
+  **Prereqs**: Ubuntu Linux; Python `3.12.2`; `pytest` available
+  **Steps**:
+  - `python -m pytest -q`
+  **Expected Result**: Exit code 0 and all tests pass
+  **Troubleshooting**: If pytest tries to collect `workdir/` or `deprecated/`, ensure `pytest.ini` exists at repo root
+  **References**: `pytest.ini`

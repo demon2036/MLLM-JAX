@@ -79,6 +79,7 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     _maybe_override_from_env(cfg, env="STEPS", key_path="steps", cast=int)
 
     # Rollout (generation)
+    _maybe_override_from_env(cfg, env="ROLLOUT_BACKEND", key_path="rollout.backend", cast=str)
     _maybe_override_from_env(cfg, env="ROLLOUT_GLOBAL_BATCH_SIZE", key_path="rollout.global_batch_size", cast=int)
     _maybe_override_from_env(cfg, env="ROLLOUT_PER_DEVICE_BATCH_SIZE", key_path="rollout.per_device_batch_size", cast=int)
     _maybe_override_from_env(cfg, env="BATCH_SIZE", key_path="rollout.batch_size", cast=int)
@@ -150,6 +151,11 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
         max_length_sample = cfg.get("max_length_sample")
     max_length_sample = int(max_length_sample or 64)
 
+    rollout_backend_raw = _get_by_path(cfg, "rollout.backend")
+    if rollout_backend_raw is None:
+        rollout_backend_raw = cfg.get("rollout_backend")
+    rollout_backend = str(rollout_backend_raw or "naive")
+
     train_micro_batch_size_raw = _get_by_path(cfg, "train.micro_batch_size")
     if train_micro_batch_size_raw is None:
         train_micro_batch_size_raw = cfg.get("train_micro_batch_size")
@@ -203,6 +209,7 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
         model_path=model_path,
         steps=steps,
         rollout=GRPORolloutConfig(
+            backend=rollout_backend,
             batch_size=rollout_batch_size,
             global_batch_size=rollout_global_batch_size,
             per_device_batch_size=rollout_per_device_batch_size,

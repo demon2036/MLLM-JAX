@@ -4,6 +4,7 @@
 
 - Repo setup: `docs/sops/repo-setup.md`
 - Network checks: `docs/sops/network-checks.md`
+- Inspect Tunix → sglang-jax rollout integration: `docs/sops/tunix-sglang-jax-rollout-inspection.md`
 - Update repo via `git pull`: `docs/sops/git-pull-update.md`
 - Commit and push to GitHub: `docs/sops/github-push.md`
 - Backup `main`, replace it with `john`, and delete `join`: `docs/sops/git-main-copy-and-switch-to-john.md`
@@ -18,6 +19,7 @@
 - TPU v4-16 OOM sweep (len=2048, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-oom-sweep-len2048.md`
 - jit8 GRPO/GSM8K YAML config: `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
+- GRPO rollout backend abstraction (naive): `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - AReaL RL organization notes (for modularizing training): `docs/sops/areal-rl-organization.md`
 - AReaL logging system notes (StatsLogger/StatsTracker/PerfTracer): `docs/sops/areal-logging-system.md`
 
@@ -50,6 +52,7 @@
 ### Training
 
 - `docs/sops/training-modularization-plan.md`
+- `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - `docs/sops/areal-rl-organization.md`
 - `docs/sops/areal-logging-system.md`
 - `docs/sops/grpo-gsm8k-jit8-yaml-config.md`

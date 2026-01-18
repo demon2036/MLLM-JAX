@@ -24,6 +24,8 @@ class GRPORolloutConfig:
     global_batch_size: int | None = None
     # Optional: prompts per device per rollout pass (forward-only).
     per_device_batch_size: int | None = None
+    # Rollout backend selector (swappable generation engine).
+    backend: str = "naive"
 
 
 @dataclass(frozen=True)
@@ -284,6 +286,10 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         create_sampler=True,
     )
 
+    from plugins.training.rollout_backends import create_rollout_backend
+
+    rollout_backend = create_rollout_backend(name=str(cfg.rollout.backend), sampler=sampler)
+
     train_fn = jax.jit(training_step, donate_argnums=(0,))
     wandb = _maybe_init_wandb(cfg)
 
@@ -296,8 +302,6 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
         # --- Rollout (sampling) ---
         # Keep rollout logic local to avoid cross-host coupling; global sync happens at the batch->global array step.
-        from plugins.training.grpo.sampling import generate_answers_and_training_batch
-
         reward_weights = cfg.reward_weights
         answers_all: list[str] = []
         datas_np_all: list[dict[str, np.ndarray]] = []
@@ -323,14 +327,15 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
             # --- Rollout (sampling) ---
             t_rollout0 = time.perf_counter()
-            _chat_prompts, answers, datas_np = generate_answers_and_training_batch(
+            rollout = rollout_backend.rollout(
                 prompts=repeated_prompts,
-                sampler=sampler,
                 params=state.params,
                 system_prompt=system_prompt,
                 global_length=int(cfg.rollout.global_length),
                 max_length_sample=cfg.rollout.max_length_sample,
             )
+            answers = rollout.answers
+            datas_np = rollout.batch
             t_rollout += time.perf_counter() - t_rollout0
 
             # --- Reward ---
@@ -521,14 +526,14 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_repeated_items = [item for item in eval_items for _ in range(cfg.rollout.num_pre_q)]
 
                 t_eval_rollout0 = time.perf_counter()
-                _eval_chat_prompts, eval_answers, eval_datas_np = generate_answers_and_training_batch(
+                eval_rollout = rollout_backend.rollout(
                     prompts=eval_repeated_prompts,
-                    sampler=sampler,
                     params=state.params,
                     system_prompt=system_prompt,
                     global_length=int(cfg.rollout.global_length),
                     max_length_sample=cfg.rollout.max_length_sample,
                 )
+                eval_answers = eval_rollout.answers
                 eval_rollout_s += time.perf_counter() - t_eval_rollout0
 
                 t_eval_reward0 = time.perf_counter()

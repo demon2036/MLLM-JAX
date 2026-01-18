@@ -114,6 +114,7 @@ class SglangJaxRolloutBackend:
 
         updated_keys = 0
         missing_keys = 0
+        pending_transposes: list[tuple[Any, Any]] = []
         for tgt_key, tgt_param in transformer_state.flat_state():
             tgt_path = ".".join(str(k) for k in tgt_key)
             train_key, transpose = _engine_key_to_train_key(tgt_path)
@@ -124,9 +125,8 @@ class SglangJaxRolloutBackend:
                 continue
             val = train_flat[train_key]
             if transpose:
-                # Engine expects lm_head.embedding [vocab, hidden] while this repo
-                # stores lm_head.kernel [hidden, vocab] (Flax Dense).
-                val = val.T
+                pending_transposes.append((tgt_param, val))
+                continue
 
             # NOTE: We intentionally avoid reshard/cast here. The goal is to keep
             # weight sync O(1) and let JAX handle any required layout transfers.
@@ -143,8 +143,26 @@ class SglangJaxRolloutBackend:
                 "sglang-jax model state keys."
             )
 
+        # Apply non-transpose updates first so the Engine can drop references to
+        # its own large weight buffers before we run any potentially expensive
+        # transpose operations (notably lm_head).
         new_model_state_leaves, _ = jax.tree_util.tree_flatten(transformer_state)
         model_runner.model_state_leaves = new_model_state_leaves
+
+        for tgt_param, val in pending_transposes:
+            # Engine expects lm_head.embedding [vocab, hidden] while this repo
+            # stores lm_head.kernel [hidden, vocab] (Flax Dense).
+            try:
+                transposed = val.T
+            except Exception as e:  # pragma: no cover - depends on runtime memory/layout
+                raise RuntimeError("Failed to transpose lm_head weights for sglang-jax sync.") from e
+            if hasattr(tgt_param, "value"):
+                tgt_param.value = transposed
+            updated_keys += 1
+
+        if pending_transposes:
+            new_model_state_leaves, _ = jax.tree_util.tree_flatten(transformer_state)
+            model_runner.model_state_leaves = new_model_state_leaves
 
         if jax.process_index() == 0:
             print(f"sglang_jax_weight_sync=ok updated_keys={updated_keys} missing_keys={missing_keys}")

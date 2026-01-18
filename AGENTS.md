@@ -10,6 +10,7 @@
 - 保持无侵入开发：自定义代码一律放在 `plugins/`，不要直接改动 `easydel/` 或其他上游仓库。
 - TPU 上的覆盖/替换通过自写 shell 脚本完成（例如同步到覆盖目录 + `PYTHONPATH`），避免改动原始仓库内容。
 - TPU 开发/运行采用 Git 同步：本地修改代码 → `git commit`/`git push` 到 GitHub → TPU VM 通过 `scripts/ssh_tpu_vm_root.sh`（或 `gcloud ... tpu-vm ssh`）执行 `git clone`/`git pull` 获取代码并运行；不要用 `gcloud ... scp` / `scp` 手动拷贝代码（见 `docs/sops/tpu-vm-repo-sync.md`）。（例外：同步本地 secret 如 `.env`，用 `scripts/sync_env_to_tpu_vm.sh` 分发到 worker=all。）
+- 允许使用 repo 根目录的临时目录 `memo/` 记录调查/调试过程（例如 `memo/<task>.md`）。在上下文 compact 之后，可以重新读取其中的关键记录继续推进。但在**完成任务并准备回复用户之前**，必须删除整个 `memo/` 目录，避免把临时笔记作为交付物留在仓库里。
 
 ## Project Structure & Module Organization
 

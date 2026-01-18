@@ -236,16 +236,16 @@ def get_partition_rules_llama():
         ('.*/self_attn/o_proj/kernel', PS( 'tp', 'fsdp', )),
 
 
-        ('.*/mlp/gate_proj/kernel', PS('tp', 'fsdp')),
-        ('.*/mlp/up_proj/kernel', PS('tp', 'fsdp')),
+        ('.*/mlp/gate_proj/kernel', PS('fsdp', 'tp')),
+        ('.*/mlp/up_proj/kernel', PS('fsdp', 'tp')),
 
-        ('.*/mlp/down_proj/kernel', PS('fsdp', 'tp')),
+        ('.*/mlp/down_proj/kernel', PS('tp', 'fsdp')),
 
         ('embed_tokens/embedding', PS('fsdp', 'tp')),
         ('lm_head/kernel', PS('fsdp', 'tp')),
         # ('lm_head/kernel', PS('tp','fsdp', )),
 
-        ('scale',PS('tp')),
+        ('scale',PS(None)),
         # ('bias', PS('fsdp')),
 
         ('.*', PS(None)),

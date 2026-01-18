@@ -341,20 +341,43 @@ def _form_global_array(path, array: np.ndarray, global_mesh: Mesh,sharding=None)
 
 
 
-def collect_process_data(data:jnp.ndarray,axis=0):
-    local_data = []
-    local_devices = jax.local_devices()
+def collect_process_data(data: jnp.ndarray, axis: int = 0):
+    """Collect this process's addressable shards into a host numpy array.
 
+    Important: Do NOT assume sharding is along axis=0.
+
+    The previous implementation concatenated shards along `axis`, which breaks
+    for TP layouts where the leading axis may be replicated and sharding happens
+    on another dimension (e.g., KV cache sharded on the head axis). We instead
+    reconstruct the array using per-shard indices.
+
+    For multi-host, this returns the bounding-box region covered by this
+    process's addressable shards (it does not all-gather across processes).
+    """
+
+    if not hasattr(data, "addressable_shards"):
+        return np.asarray(data)
+
+    local_devices = set(jax.local_devices())
+    subarray_info: list[tuple[tuple[slice, ...], np.ndarray]] = []
     for shard in data.addressable_shards:
-        device = shard.device
-        local_shard = shard.data
-        if device in local_devices:
-            # if jax.process_index()==0:
-            #     print(device)
+        if shard.device not in local_devices:
+            continue
+        subarray_info.append((shard.index, np.asarray(shard.data)))
 
-            local_data.append(np.array(local_shard))
-    local_data = np.concatenate(local_data, axis=axis)
-    return local_data
+    if not subarray_info:
+        # Best-effort fallback; should not happen in normal single-process runs.
+        try:
+            return np.concatenate([], axis=axis)
+        except Exception:
+            return np.asarray([])
+
+    try:
+        return reconstruct_from_slices(subarray_info)
+    except Exception:
+        # Fallback to the legacy behavior (may be incorrect for non-axis0 sharding).
+        local_data = [arr for _idx, arr in subarray_info]
+        return np.concatenate(local_data, axis=axis)
 
 
 

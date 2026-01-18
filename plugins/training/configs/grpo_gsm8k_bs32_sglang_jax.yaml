@@ -17,7 +17,9 @@ rollout:
   max_length_sample: 1024
 
 train:
-  micro_batch_size: 4
+  # With sglang-jax loaded in-process (same TPU as training), HBM is tighter than
+  # the naive sampler baseline; reduce update micro-batch to avoid compile OOMs.
+  micro_batch_size: 2
   per_device_micro_batch_size: null
   max_length_total: null
   ppo_epochs: 1
@@ -34,4 +36,3 @@ reward_weights: [1.0, 0.5, 0.5]
 eval_every_steps: 0
 eval_batches: 1
 eval_split: test
-

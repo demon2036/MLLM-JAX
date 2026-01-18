@@ -242,6 +242,8 @@ class SglangJaxRolloutBackend:
             "log_level": os.environ.get("SGLANG_JAX_LOG_LEVEL", "error"),
             # Keep params in fp32 to match this repo's training (param_dtype=float32).
             "dtype": os.environ.get("SGLANG_JAX_DTYPE", "float32"),
+            # KV cache precision can be lower than weight precision.
+            "kv_cache_dtype": os.environ.get("SGLANG_JAX_KV_CACHE_DTYPE", "bf16"),
             # Conserve HBM because training already holds model/optimizer state.
             "mem_fraction_static": float(_get_env_float("SGLANG_JAX_MEM_FRACTION_STATIC", 0.1) or 0.1),
             "disable_radix_cache": _get_env_bool("SGLANG_JAX_DISABLE_RADIX_CACHE", True),

@@ -14,6 +14,7 @@ wandb/
 
 # Local scratch (never commit)
 workdir/
+memo/
 
 # Local secrets (never commit)
 .env

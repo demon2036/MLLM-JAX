@@ -136,7 +136,7 @@ class SglangJaxRolloutBackend:
                     import jax.numpy as jnp
 
                     val = jnp.zeros(tgt_shape, dtype=tgt_dtype)
-                    val = jax.device_put(val, tgt_sharding)
+                    val = _device_put_or_reuse(val, tgt_sharding)
                     if hasattr(tgt_param, "value"):
                         tgt_param.value = val
                     else:
@@ -152,7 +152,7 @@ class SglangJaxRolloutBackend:
                 continue
 
             val = _align_shape_and_dtype(val, tgt_shape=tgt_shape, tgt_dtype=tgt_dtype, key=train_key)
-            val = jax.device_put(val, tgt_sharding)
+            val = _device_put_or_reuse(val, tgt_sharding)
 
             if hasattr(tgt_param, "value"):
                 tgt_param.value = val
@@ -191,7 +191,7 @@ class SglangJaxRolloutBackend:
                 tgt_dtype=tgt_dtype,
                 key=f"{train_key}.T",
             )
-            transposed = jax.device_put(transposed, tgt_sharding)
+            transposed = _device_put_or_reuse(transposed, tgt_sharding)
             if hasattr(tgt_param, "value"):
                 tgt_param.value = transposed
             updated_keys += 1
@@ -236,6 +236,8 @@ class SglangJaxRolloutBackend:
             "device_indexes": device_indexes,
             # Critical for TPU + in-process integration (avoid subprocess JAX init/fork issues).
             "enable_single_process": True,
+            # Avoid double-loading checkpoints when we will hot-swap training weights anyway.
+            "load_format": os.environ.get("SGLANG_JAX_LOAD_FORMAT", "dummy"),
             # Keep Engine logs quiet by default.
             "log_level": os.environ.get("SGLANG_JAX_LOG_LEVEL", "error"),
             # Keep params in fp32 to match this repo's training (param_dtype=float32).
@@ -371,6 +373,63 @@ class SglangJaxRolloutBackend:
 
 
 __all__ = ["SglangJaxRolloutBackend"]
+
+
+def _device_put_or_reuse(val: Any, tgt_sharding: Any) -> Any:
+    """Put `val` onto `tgt_sharding`, reusing device buffers when possible.
+
+    On TPU co-located training+rollout, a full `jax.device_put` can temporarily
+    triple memory usage (train weights + engine old weights + engine new weights)
+    and trigger OOM. When the source array is already sharded across the same
+    devices with compatible per-device shapes, we can re-wrap the existing
+    buffers into a new global array with the target sharding without copying.
+    """
+
+    import jax
+
+    maybe = _maybe_rewrap_global_array(val, tgt_sharding)
+    if maybe is not None:
+        return maybe
+    return jax.device_put(val, tgt_sharding)
+
+
+def _maybe_rewrap_global_array(val: Any, tgt_sharding: Any) -> Any | None:
+    try:
+        import jax
+    except Exception:  # pragma: no cover - jax is required at runtime
+        return None
+
+    array_cls = getattr(jax, "Array", None)
+    if array_cls is None or not isinstance(val, array_cls):
+        return None
+
+    # Only safe/possible when all shards are addressable locally.
+    if int(jax.process_count()) != 1:
+        return None
+
+    mesh = getattr(tgt_sharding, "mesh", None)
+    if mesh is None:
+        return None
+
+    tgt_devices = list(getattr(mesh, "local_devices", ()) or ())
+    if not tgt_devices:
+        return None
+
+    device_to_buf: dict[Any, Any] = {}
+    for shard in val.addressable_shards:
+        if shard.device in device_to_buf:
+            # Multiple shards per device (unexpected for our use case).
+            return None
+        device_to_buf[shard.device] = shard.data
+
+    if any(dev not in device_to_buf for dev in tgt_devices):
+        return None
+
+    try:
+        bufs = [device_to_buf[dev] for dev in tgt_devices]
+        return jax.make_array_from_single_device_arrays(tuple(int(x) for x in val.shape), tgt_sharding, bufs)
+    except Exception:  # pragma: no cover - depends on sharding compatibility
+        return None
 
 
 def _nnx_key_to_dotted_path(key: Any) -> str:

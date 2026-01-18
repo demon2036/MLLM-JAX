@@ -114,26 +114,49 @@ class SglangJaxRolloutBackend:
 
         updated_keys = 0
         missing_keys = 0
-        pending_transposes: list[tuple[Any, Any]] = []
+        pending_transposes: list[tuple[str, Any, Any, Any, tuple[int, ...]]] = []
         for tgt_key, tgt_param in transformer_state.flat_state():
-            tgt_path = ".".join(str(k) for k in tgt_key)
+            tgt_path = _nnx_key_to_dotted_path(tgt_key)
             train_key, transpose = _engine_key_to_train_key(tgt_path)
             if train_key is None:
                 continue
+
+            if hasattr(tgt_param, "value"):
+                tgt_value = tgt_param.value
+            else:
+                tgt_value = tgt_param
+            tgt_sharding = tgt_value.sharding
+            tgt_dtype = tgt_value.dtype
+            tgt_shape = tuple(int(x) for x in tgt_value.shape)
+
             if train_key not in train_flat:
+                # Some checkpoints omit attention bias vectors. The Engine always
+                # instantiates them; use zeros so forward stays compatible.
+                if train_key.endswith(".bias"):
+                    import jax.numpy as jnp
+
+                    val = jnp.zeros(tgt_shape, dtype=tgt_dtype)
+                    val = jax.device_put(val, tgt_sharding)
+                    if hasattr(tgt_param, "value"):
+                        tgt_param.value = val
+                    else:
+                        tgt_param = val
+                    updated_keys += 1
+                    continue
                 missing_keys += 1
                 continue
+
             val = train_flat[train_key]
             if transpose:
-                pending_transposes.append((tgt_param, val))
+                pending_transposes.append((train_key, tgt_param, tgt_sharding, tgt_dtype, tgt_shape))
                 continue
 
-            # NOTE: We intentionally avoid reshard/cast here. The goal is to keep
-            # weight sync O(1) and let JAX handle any required layout transfers.
+            val = _align_shape_and_dtype(val, tgt_shape=tgt_shape, tgt_dtype=tgt_dtype, key=train_key)
+            val = jax.device_put(val, tgt_sharding)
+
             if hasattr(tgt_param, "value"):
                 tgt_param.value = val
             else:
-                # NNX may hand back raw arrays for some leaves.
                 tgt_param = val
             updated_keys += 1
 
@@ -142,6 +165,11 @@ class SglangJaxRolloutBackend:
                 "sglang-jax weight sync made no updates. Likely mismatch between the training param tree and "
                 "sglang-jax model state keys."
             )
+        if missing_keys:
+            raise RuntimeError(
+                "sglang-jax weight sync is missing some mapped keys from the training param tree. "
+                f"missing_keys={missing_keys} (first fix mapping/key formatting)."
+            )
 
         # Apply non-transpose updates first so the Engine can drop references to
         # its own large weight buffers before we run any potentially expensive
@@ -149,13 +177,21 @@ class SglangJaxRolloutBackend:
         new_model_state_leaves, _ = jax.tree_util.tree_flatten(transformer_state)
         model_runner.model_state_leaves = new_model_state_leaves
 
-        for tgt_param, val in pending_transposes:
+        for train_key, tgt_param, tgt_sharding, tgt_dtype, tgt_shape in pending_transposes:
             # Engine expects lm_head.embedding [vocab, hidden] while this repo
             # stores lm_head.kernel [hidden, vocab] (Flax Dense).
+            val = train_flat[train_key]
             try:
                 transposed = val.T
             except Exception as e:  # pragma: no cover - depends on runtime memory/layout
                 raise RuntimeError("Failed to transpose lm_head weights for sglang-jax sync.") from e
+            transposed = _align_shape_and_dtype(
+                transposed,
+                tgt_shape=tgt_shape,
+                tgt_dtype=tgt_dtype,
+                key=f"{train_key}.T",
+            )
+            transposed = jax.device_put(transposed, tgt_sharding)
             if hasattr(tgt_param, "value"):
                 tgt_param.value = transposed
             updated_keys += 1
@@ -163,6 +199,9 @@ class SglangJaxRolloutBackend:
         if pending_transposes:
             new_model_state_leaves, _ = jax.tree_util.tree_flatten(transformer_state)
             model_runner.model_state_leaves = new_model_state_leaves
+
+        # Ensure weight sync time is correctly attributed in the runner's timers.
+        jax.block_until_ready(model_runner.model_state_leaves)
 
         if jax.process_index() == 0:
             print(f"sglang_jax_weight_sync=ok updated_keys={updated_keys} missing_keys={missing_keys}")
@@ -334,6 +373,22 @@ class SglangJaxRolloutBackend:
 __all__ = ["SglangJaxRolloutBackend"]
 
 
+def _nnx_key_to_dotted_path(key: Any) -> str:
+    """Convert an NNX `flat_state()` key to a stable dotted string.
+
+    NNX may encode list elements as nested tuples like `('layers', 0)`; flatten
+    them so downstream key mapping can treat it as `layers.0`.
+    """
+
+    parts: list[str] = []
+    for item in key:
+        if isinstance(item, (tuple, list)):
+            parts.extend(str(x) for x in item)
+        else:
+            parts.append(str(item))
+    return ".".join(parts)
+
+
 def _flatten_tree_to_dotted_dict(tree: Any) -> dict[str, Any]:
     """Flatten a (nested) mapping-like pytree into `{'a.b.c': leaf}` form."""
 
@@ -351,7 +406,7 @@ def _flatten_tree_to_dotted_dict(tree: Any) -> dict[str, Any]:
     return out
 
 
-_LAYER_PREFIX = re.compile(r"^model\\.layers\\.(\\d+)\\.(.+)$")
+_LAYER_PREFIX = re.compile(r"^model\.layers\.(\d+)\.(.+)$")
 
 
 def _engine_key_to_train_key(engine_key: str) -> tuple[str | None, bool]:
@@ -360,15 +415,45 @@ def _engine_key_to_train_key(engine_key: str) -> tuple[str | None, bool]:
     if engine_key == "lm_head.embedding":
         return "lm_head.kernel", True
 
+    if engine_key in {"model.embed_tokens.embedding", "model.norm.scale"}:
+        return engine_key, False
+
     m = _LAYER_PREFIX.match(engine_key)
     if m:
         layer_id = m.group(1)
         rest = m.group(2)
         engine_key = f"model.layers_{layer_id}.{rest}"
+    elif engine_key.startswith("model.layers."):
+        # Unexpected layer key format (best-effort skip).
+        return None, False
 
     # LinearBase uses `.weight` for the kernel, Flax uses `.kernel`.
     if engine_key.endswith(".weight"):
         return engine_key[: -len(".weight")] + ".kernel", False
+    if engine_key.endswith((".bias", ".scale")):
+        return engine_key, False
 
-    # q/k/v biases, layernorm scales, embeddings, etc are already aligned (aside from layers.{i} -> layers_{i}).
-    return engine_key, False
+    return None, False
+
+
+def _align_shape_and_dtype(val: Any, *, tgt_shape: tuple[int, ...] | None, tgt_dtype: Any, key: str) -> Any:
+    """Best-effort align training weights to the Engine leaf (shape + dtype)."""
+
+    import jax.numpy as jnp
+
+    if hasattr(val, "dtype") and tgt_dtype is not None and val.dtype != tgt_dtype:
+        val = val.astype(tgt_dtype)
+
+    if tgt_shape is None:
+        return val
+
+    src_shape = tuple(getattr(val, "shape", ()))
+    if src_shape == tuple(tgt_shape):
+        return val
+    if len(src_shape) != len(tgt_shape):
+        raise RuntimeError(f"Shape rank mismatch for {key}: {src_shape} vs {tgt_shape}")
+    if any(int(s) > int(t) for s, t in zip(src_shape, tgt_shape)):
+        raise RuntimeError(f"Shape mismatch (cannot shrink) for {key}: {src_shape} vs {tgt_shape}")
+
+    pad_width = [(0, int(t) - int(s)) for s, t in zip(src_shape, tgt_shape)]
+    return jnp.pad(val, pad_width)

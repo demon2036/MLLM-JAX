@@ -21,7 +21,7 @@ rollout:
 
 train:
   # Micro-batch the update step to reduce peak memory with large rollout batches.
-  micro_batch_size: 32
+  micro_batch_size: 8
   per_device_micro_batch_size: null
   max_length_total: null
   ppo_epochs: 1

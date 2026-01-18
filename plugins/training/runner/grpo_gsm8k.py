@@ -118,7 +118,10 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     from jax.experimental.multihost_utils import process_allgather
     from transformers import AutoTokenizer
 
-    from MLLM_JAX.utils import _form_global_array, get_jax_mesh2
+    from jax.sharding import NamedSharding
+    from jax.sharding import PartitionSpec as PS
+
+    from MLLM_JAX.utils import get_jax_mesh2
     from prompts.prompts import system_prompt
     from plugins.training.grpo.train_step import training_step
     from training2 import (
@@ -139,6 +142,58 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     mesh = get_jax_mesh2(cfg.mesh_shape)
     local_device_count = len(mesh.local_devices)
     process_count = int(jax.process_count())
+    tp_size = int(mesh.shape.get("tp", 1))
+
+    # When training on a TP mesh (tp_size > 1), sharding the batch axis across TP
+    # can lead to heavy all-to-all reshards (TP axis used for both data and model).
+    # Instead, shard batches across (dp, fsdp) and replicate across tp.
+    #
+    # NOTE: This helper focuses on the "training batch" arrays that are always
+    # shaped [B, ...] with B consistent across processes.
+    mesh_devices = np.asarray(mesh.devices)
+    device_to_coords: dict[Any, tuple[int, ...]] = {dev: coords for coords, dev in np.ndenumerate(mesh_devices)}
+    local_devices = list(mesh.local_devices)
+    local_dp_fsdp_coords = sorted({device_to_coords[d][:2] for d in local_devices})
+    local_dp_fsdp_count = len(local_dp_fsdp_coords)
+    dp_fsdp_total = int(mesh.shape.get("dp", 1)) * int(mesh.shape.get("fsdp", 1))
+
+    # Multi-host + TP-on-host-boundary is not fully supported by the dp/fsdp-only
+    # sharding rule because the dp/fsdp coords may be replicated across processes.
+    # Fall back to sharding across all mesh axes in that case.
+    use_dp_fsdp_batch_sharding = True
+    if process_count != 1 and tp_size > 1 and local_dp_fsdp_count * process_count != dp_fsdp_total:
+        use_dp_fsdp_batch_sharding = False
+
+    def _form_training_global_array(path, array: np.ndarray) -> jax.Array:
+        if array.ndim == 0:
+            raise ValueError(f"Expected batched array at {jax.tree_util.keystr(path)}, got scalar shape={array.shape}.")
+
+        global_shape = (jax.process_count() * int(array.shape[0]),) + tuple(int(x) for x in array.shape[1:])
+
+        if use_dp_fsdp_batch_sharding:
+            if int(array.shape[0]) % local_dp_fsdp_count != 0:
+                raise ValueError(
+                    f"Unable to shard batch={int(array.shape[0])} across local (dp,fsdp) shards={local_dp_fsdp_count} "
+                    f"at {jax.tree_util.keystr(path)}. Consider adjusting rollout/train batch sizes."
+                )
+            shard_chunks = np.split(array, local_dp_fsdp_count, axis=0) if local_dp_fsdp_count > 1 else [array]
+            coord_to_chunk = dict(zip(local_dp_fsdp_coords, shard_chunks, strict=True))
+            local_device_arrays = [coord_to_chunk[device_to_coords[d][:2]] for d in local_devices]
+            local_device_buffers = jax.device_put(local_device_arrays, local_devices)
+            sharding = NamedSharding(mesh, PS(("dp", "fsdp")))
+            return jax.make_array_from_single_device_arrays(global_shape, sharding, local_device_buffers)
+
+        # Fallback: shard the batch axis across *all* mesh axes (dp,fsdp,tp), so
+        # each device owns a distinct batch slice (matches the legacy behavior).
+        if int(array.shape[0]) % len(local_devices) != 0:
+            raise ValueError(
+                f"Unable to shard batch={int(array.shape[0])} across local devices={len(local_devices)} "
+                f"at {jax.tree_util.keystr(path)}. Consider adjusting rollout/train batch sizes."
+            )
+        local_device_arrays = np.split(array, len(local_devices), axis=0) if len(local_devices) > 1 else [array]
+        local_device_buffers = jax.device_put(local_device_arrays, local_devices)
+        sharding = NamedSharding(mesh, PS(mesh.axis_names))
+        return jax.make_array_from_single_device_arrays(global_shape, sharding, local_device_buffers)
 
     # --- Resolve rollout batch (prompts) ---
     rollout_batch_size = int(cfg.rollout.batch_size)
@@ -466,7 +521,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         # --- Update ---
         t_shard0 = time.perf_counter()
         datas = jax.tree_util.tree_map_with_path(
-            lambda path, x: _form_global_array(path, x, global_mesh=mesh),
+            _form_training_global_array,
             datas_np,
         )
         total_valid_token_count = datas["labels"][:, 1:].sum()

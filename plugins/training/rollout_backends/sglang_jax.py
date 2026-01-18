@@ -66,6 +66,7 @@ class SglangJaxRolloutBackend:
 
     _engine: Any | None = field(default=None, init=False, repr=False)
     _last_synced_params: Any | None = field(default=None, init=False, repr=False)
+    _warned_release_memory_occupation: bool = field(default=False, init=False, repr=False)
 
     def initialize(self) -> None:
         """Eagerly initialize the underlying Engine.
@@ -114,6 +115,10 @@ class SglangJaxRolloutBackend:
 
         updated_keys = 0
         missing_keys = 0
+        reused_keys = 0
+        device_put_keys = 0
+        device_put_bytes = 0
+        debug_sync = _get_env_bool("SGLANG_JAX_WEIGHT_SYNC_DEBUG", False)
         pending_transposes: list[tuple[str, Any, Any, Any, tuple[int, ...]]] = []
         for tgt_key, tgt_param in transformer_state.flat_state():
             tgt_path = _nnx_key_to_dotted_path(tgt_key)
@@ -136,7 +141,9 @@ class SglangJaxRolloutBackend:
                     import jax.numpy as jnp
 
                     val = jnp.zeros(tgt_shape, dtype=tgt_dtype)
-                    val = _device_put_or_reuse(val, tgt_sharding)
+                    val = jax.device_put(val, tgt_sharding)
+                    device_put_keys += 1
+                    device_put_bytes += int(np.prod(tgt_shape)) * int(np.dtype(tgt_dtype).itemsize)
                     if hasattr(tgt_param, "value"):
                         tgt_param.value = val
                     else:
@@ -152,7 +159,14 @@ class SglangJaxRolloutBackend:
                 continue
 
             val = _align_shape_and_dtype(val, tgt_shape=tgt_shape, tgt_dtype=tgt_dtype, key=train_key)
-            val = _device_put_or_reuse(val, tgt_sharding)
+            maybe = _maybe_rewrap_global_array(val, tgt_sharding)
+            if maybe is not None:
+                val = maybe
+                reused_keys += 1
+            else:
+                val = jax.device_put(val, tgt_sharding, may_alias=True)
+                device_put_keys += 1
+                device_put_bytes += int(np.prod(tgt_shape)) * int(np.dtype(tgt_dtype).itemsize)
 
             if hasattr(tgt_param, "value"):
                 tgt_param.value = val
@@ -191,7 +205,14 @@ class SglangJaxRolloutBackend:
                 tgt_dtype=tgt_dtype,
                 key=f"{train_key}.T",
             )
-            transposed = _device_put_or_reuse(transposed, tgt_sharding)
+            maybe = _maybe_rewrap_global_array(transposed, tgt_sharding)
+            if maybe is not None:
+                transposed = maybe
+                reused_keys += 1
+            else:
+                transposed = jax.device_put(transposed, tgt_sharding, may_alias=True)
+                device_put_keys += 1
+                device_put_bytes += int(np.prod(tgt_shape)) * int(np.dtype(tgt_dtype).itemsize)
             if hasattr(tgt_param, "value"):
                 tgt_param.value = transposed
             updated_keys += 1
@@ -204,7 +225,11 @@ class SglangJaxRolloutBackend:
         jax.block_until_ready(model_runner.model_state_leaves)
 
         if jax.process_index() == 0:
-            print(f"sglang_jax_weight_sync=ok updated_keys={updated_keys} missing_keys={missing_keys}")
+            msg = f"sglang_jax_weight_sync=ok updated_keys={updated_keys} missing_keys={missing_keys}"
+            if debug_sync:
+                gb = device_put_bytes / (1024**3)
+                msg += f" reused_keys={reused_keys} device_put_keys={device_put_keys} device_put_gb={gb:.3f}"
+            print(msg)
 
     def _ensure_engine(self):
         if self._engine is not None:
@@ -292,16 +317,21 @@ class SglangJaxRolloutBackend:
             engine.flush_cache()
         except Exception as e:  # pragma: no cover - depends on external engine behavior
             print(f"WARNING: sglang-jax flush_cache failed: {e}")
-        # Best-effort: some sglang-jax versions expose `release_memory_occupation()`,
-        # but the API is not stable across revisions. Keep this opt-in to avoid
-        # spamming logs with harmless warnings.
-        if not _get_env_bool("SGLANG_JAX_TRY_RELEASE_MEMORY_OCCUPATION", False):
+        # Release KV/memory pool reservation so training can use the full HBM.
+        # Keep this best-effort: some revisions may not implement the API.
+        release_mem = _get_env_bool("SGLANG_JAX_RELEASE_MEMORY_OCCUPATION", True) or _get_env_bool(
+            "SGLANG_JAX_TRY_RELEASE_MEMORY_OCCUPATION", False
+        )
+        if not release_mem:
+            return
+        if not hasattr(engine, "release_memory_occupation"):
             return
         try:  # pragma: no cover - external API surface is version-dependent
-            if hasattr(engine, "release_memory_occupation"):
-                engine.release_memory_occupation()
+            engine.release_memory_occupation()
         except Exception as e:
-            print(f"WARNING: sglang-jax release_memory_occupation failed: {e}")
+            if not self._warned_release_memory_occupation:
+                print(f"WARNING: sglang-jax release_memory_occupation failed: {e}")
+                self._warned_release_memory_occupation = True
 
     def rollout(
         self,

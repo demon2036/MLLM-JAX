@@ -373,6 +373,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
         if hasattr(rollout_backend, "flush_cache"):
             rollout_backend.flush_cache()  # type: ignore[attr-defined]
+        if hasattr(rollout_backend, "release_weights"):
+            rollout_backend.release_weights()  # type: ignore[attr-defined]
     else:
         state, sampler, _state_sharding = get_state(
             mesh,

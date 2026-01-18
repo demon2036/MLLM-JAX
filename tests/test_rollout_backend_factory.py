@@ -36,7 +36,7 @@ class TestRolloutBackendFactory(unittest.TestCase):
     def test_create_rollout_backend_sglang_jax(self) -> None:
         backend = create_rollout_backend(
             name="sglang_jax",
-            sampler=_DummySampler(),
+            tokenizer=object(),
             model_path="Qwen/Qwen2.5-7B-Instruct",
         )
         self.assertEqual(backend.__class__.__name__, "SglangJaxRolloutBackend")

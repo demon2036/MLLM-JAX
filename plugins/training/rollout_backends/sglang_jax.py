@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from plugins.training.api import RolloutResult, RolloutSampler
+from plugins.training.api import RolloutResult
 from plugins.training.grpo.sampling import build_chat_prompts
 
 
@@ -62,10 +62,20 @@ class SglangJaxRolloutBackend:
       tests can run without the `sgl_jax` dependency installed.
     """
 
-    sampler: RolloutSampler
+    tokenizer: Any
     model_path: str
 
     _engine: Any | None = field(default=None, init=False, repr=False)
+
+    def initialize(self) -> None:
+        """Eagerly initialize the underlying Engine.
+
+        This is useful when co-locating rollout + training on the same TPU: it
+        lets the Engine size its KV cache before the training state (FSDP +
+        optimizer) consumes most of the device memory.
+        """
+
+        self._ensure_engine()
 
     def _ensure_engine(self):
         if self._engine is not None:
@@ -151,7 +161,7 @@ class SglangJaxRolloutBackend:
         del params, global_length  # MVP: no weight sync and no bucketed prefill needed.
 
         engine = self._ensure_engine()
-        tokenizer = self.sampler.tokenizer
+        tokenizer = self.tokenizer
 
         chat_prompts = build_chat_prompts(tokenizer, list(prompts), system_prompt)
         tokenized = tokenizer(chat_prompts, padding=False, return_attention_mask=False)
@@ -212,4 +222,3 @@ class SglangJaxRolloutBackend:
 
 
 __all__ = ["SglangJaxRolloutBackend"]
-

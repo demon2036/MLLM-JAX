@@ -116,6 +116,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     import jax.numpy as jnp
     from datasets import load_dataset
     from jax.experimental.multihost_utils import process_allgather
+    from transformers import AutoTokenizer
 
     from MLLM_JAX.utils import _form_global_array, get_jax_mesh2
     from prompts.prompts import system_prompt
@@ -275,20 +276,58 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         if not eval_qas and jax.process_index() == 0:
             print(f"WARNING: eval enabled but no eval data after sharding (split={cfg.eval_split!r}).")
 
-    state, sampler, _state_sharding = get_state(
-        mesh,
-        training_steps=cfg.steps,
-        grad_accum_steps=grad_accum_steps,
-        model_path=cfg.model_path,
-        num_pre_q=cfg.rollout.num_pre_q,
-        max_lengths=cfg.train.max_length_total,
-        beta=cfg.train.beta,
-        create_sampler=True,
-    )
-
     from plugins.training.rollout_backends import create_rollout_backend
 
-    rollout_backend = create_rollout_backend(name=str(cfg.rollout.backend), sampler=sampler, model_path=cfg.model_path)
+    rollout_backend_name = str(cfg.rollout.backend).strip().lower()
+    use_sglang_jax = rollout_backend_name in {"sglang_jax", "sglang-jax", "sglang"}
+
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model_path, trust_remote_code=True)
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    if pad_token_id is None:
+        pad_token_id = getattr(tokenizer, "eos_token_id", None)
+    if pad_token_id is None:
+        pad_token_id = 0
+    pad_token_id = int(pad_token_id)
+
+    if use_sglang_jax:
+        rollout_backend = create_rollout_backend(
+            name=rollout_backend_name,
+            sampler=None,
+            tokenizer=tokenizer,
+            model_path=cfg.model_path,
+        )
+        # Allocate sglang-jax's model + KV cache before creating the training state.
+        # This makes the Engine's KV sizing depend on full device memory rather than
+        # "whatever is left after FSDP+optimizer", which is critical on v4-8.
+        if hasattr(rollout_backend, "initialize"):
+            rollout_backend.initialize()  # type: ignore[attr-defined]
+        state, sampler, _state_sharding = get_state(
+            mesh,
+            training_steps=cfg.steps,
+            grad_accum_steps=grad_accum_steps,
+            model_path=cfg.model_path,
+            num_pre_q=cfg.rollout.num_pre_q,
+            max_lengths=cfg.train.max_length_total,
+            beta=cfg.train.beta,
+            create_sampler=False,
+        )
+    else:
+        state, sampler, _state_sharding = get_state(
+            mesh,
+            training_steps=cfg.steps,
+            grad_accum_steps=grad_accum_steps,
+            model_path=cfg.model_path,
+            num_pre_q=cfg.rollout.num_pre_q,
+            max_lengths=cfg.train.max_length_total,
+            beta=cfg.train.beta,
+            create_sampler=True,
+        )
+        rollout_backend = create_rollout_backend(
+            name=rollout_backend_name,
+            sampler=sampler,
+            tokenizer=None,
+            model_path=cfg.model_path,
+        )
 
     train_fn = jax.jit(training_step, donate_argnums=(0,))
     wandb = _maybe_init_wandb(cfg)
@@ -384,7 +423,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 if k in {"input_ids", "attention_mask", "labels"}:
                     max_len_local = max(int(d[k].shape[1]) for d in datas_np_all)
                     if k == "input_ids":
-                        pad_value = int(sampler.tokenizer.pad_token_id)
+                        pad_value = pad_token_id
                     else:
                         pad_value = 0
                     parts = [_pad_2d_right(d[k], max_len_local, pad_value) for d in datas_np_all]
@@ -395,7 +434,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             seq_len_local = int(datas_np["input_ids"].shape[1])
             seq_len_global = int(np.asarray(process_allgather(np.asarray([seq_len_local], dtype=np.int32))).max())
             if seq_len_global != seq_len_local:
-                datas_np["input_ids"] = _pad_2d_right(datas_np["input_ids"], seq_len_global, int(sampler.tokenizer.pad_token_id))
+                datas_np["input_ids"] = _pad_2d_right(datas_np["input_ids"], seq_len_global, pad_token_id)
                 datas_np["attention_mask"] = _pad_2d_right(datas_np["attention_mask"], seq_len_global, 0)
                 datas_np["labels"] = _pad_2d_right(datas_np["labels"], seq_len_global, 0)
 

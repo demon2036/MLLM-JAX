@@ -292,8 +292,11 @@ class SglangJaxRolloutBackend:
             engine.flush_cache()
         except Exception as e:  # pragma: no cover - depends on external engine behavior
             print(f"WARNING: sglang-jax flush_cache failed: {e}")
-        # Best-effort: newer sglang-jax versions may support explicitly releasing
-        # KV/cache memory back to the system.
+        # Best-effort: some sglang-jax versions expose `release_memory_occupation()`,
+        # but the API is not stable across revisions. Keep this opt-in to avoid
+        # spamming logs with harmless warnings.
+        if not _get_env_bool("SGLANG_JAX_TRY_RELEASE_MEMORY_OCCUPATION", False):
+            return
         try:  # pragma: no cover - external API surface is version-dependent
             if hasattr(engine, "release_memory_occupation"):
                 engine.release_memory_occupation()
@@ -309,8 +312,6 @@ class SglangJaxRolloutBackend:
         global_length: int,
         max_length_sample: int,
     ) -> RolloutResult:
-        del global_length  # bucketed prefill is handled inside sglang-jax.
-
         engine = self._ensure_engine()
         # Ensure on-policy weights (runner may call `sync_weights()` explicitly too).
         self.sync_weights(params)
@@ -320,9 +321,37 @@ class SglangJaxRolloutBackend:
         tokenized = tokenizer(chat_prompts, padding=False, return_attention_mask=False)
         input_ids_list = tokenized["input_ids"]
 
+        # IMPORTANT: Keep the returned training batch shape stable across steps.
+        #
+        # The JAX training step is `jit`-compiled; if we return variable-length
+        # `[B, L]` arrays (based on the max completion length for this batch), the
+        # update step will recompile repeatedly and become unusably slow.
+        #
+        # We follow the existing naive sampler strategy and always return
+        # `[B, global_length + max_length_sample]` buffers, packing
+        # (prompt + completion) contiguously at the front and leaving the tail as
+        # padding.
+        base_prompt_len = int(global_length)
+        target_completion_len = int(max_length_sample)
+        if base_prompt_len <= 0:
+            raise ValueError(f"global_length must be > 0, got {global_length!r}")
+        if target_completion_len <= 0:
+            raise ValueError(f"max_length_sample must be > 0, got {max_length_sample!r}")
+
+        prompt_lens = [len(x) for x in input_ids_list]
+        max_prompt_len = max(prompt_lens) if prompt_lens else 0
+        target_prompt_len = _ceil_to_bucket(max(base_prompt_len, max_prompt_len))
+        if target_prompt_len != base_prompt_len:
+            print(
+                f"WARNING: padding sglang-jax training batch prompt bucket {base_prompt_len} -> {target_prompt_len} "
+                f"(max_prompt_len={max_prompt_len}). Consider increasing rollout.global_length to avoid recompiles."
+            )
+
+        target_len = target_prompt_len + _ceil_to_bucket(target_completion_len)
+
         # Build per-request sampling params (sglang-jax expects a list for batch requests).
         sampling = engine.get_default_sampling_params()
-        sampling.max_new_tokens = int(max_length_sample)
+        sampling.max_new_tokens = target_completion_len
         sampling.temperature = float(_get_env_float("SGLANG_JAX_TEMPERATURE", 1.0) or 1.0)
         sampling.top_k = int(_get_env_int("SGLANG_JAX_TOP_K", 50) or 50)
         sampling.top_p = float(_get_env_float("SGLANG_JAX_TOP_P", 1.0) or 1.0)
@@ -340,28 +369,26 @@ class SglangJaxRolloutBackend:
         completion_ids_list = [list(o.get("output_ids") or []) for o in outputs]
         answers = tokenizer.batch_decode(completion_ids_list, skip_special_tokens=True)
 
-        prompt_lens = [len(x) for x in input_ids_list]
-        completion_lens = [len(x) for x in completion_ids_list]
-        max_len = max((p + c) for p, c in zip(prompt_lens, completion_lens)) if prompt_lens else 0
-        if max_len <= 1:
-            raise RuntimeError(f"sglang_jax produced an invalid sequence length: {max_len}")
-
         pad_id = _require_tokenizer_pad_id(tokenizer)
         batch_size = len(input_ids_list)
-        train_input_ids = np.full((batch_size, max_len), pad_id, dtype=np.int32)
-        train_attention_mask = np.zeros((batch_size, max_len), dtype=np.int32)
-        train_labels = np.zeros((batch_size, max_len), dtype=np.int32)
+        train_input_ids = np.full((batch_size, target_len), pad_id, dtype=np.int32)
+        train_attention_mask = np.zeros((batch_size, target_len), dtype=np.int32)
+        train_labels = np.zeros((batch_size, target_len), dtype=np.int32)
 
         for i, (prompt_ids, completion_ids) in enumerate(zip(input_ids_list, completion_ids_list)):
             p_len = len(prompt_ids)
-            c_len = len(completion_ids)
-            end = p_len + c_len
-            train_input_ids[i, :p_len] = np.asarray(prompt_ids, dtype=np.int32)
-            train_attention_mask[i, :p_len] = 1
-            if c_len:
-                train_input_ids[i, p_len:end] = np.asarray(completion_ids, dtype=np.int32)
-                train_attention_mask[i, p_len:end] = 1
-                train_labels[i, p_len:end] = 1
+            if p_len:
+                train_input_ids[i, :p_len] = np.asarray(prompt_ids, dtype=np.int32)
+                train_attention_mask[i, :p_len] = 1
+
+            # Pack the completion immediately after the *true* prompt length (not
+            # after `global_length`) to avoid introducing an artificial gap.
+            start = p_len
+            end = min(start + len(completion_ids), target_len)
+            if end > start:
+                train_input_ids[i, start:end] = np.asarray(completion_ids[: end - start], dtype=np.int32)
+                train_attention_mask[i, start:end] = 1
+                train_labels[i, start:end] = 1
 
         return RolloutResult(
             chat_prompts=chat_prompts,
@@ -518,3 +545,14 @@ def _align_shape_and_dtype(val: Any, *, tgt_shape: tuple[int, ...] | None, tgt_d
 
     pad_width = [(0, int(t) - int(s)) for s, t in zip(src_shape, tgt_shape)]
     return jnp.pad(val, pad_width)
+
+
+_DEFAULT_SEQ_BUCKETS = (128, 256, 512, 1024, 2048, 4096, 8192)
+
+
+def _ceil_to_bucket(length: int, buckets: Sequence[int] = _DEFAULT_SEQ_BUCKETS) -> int:
+    value = int(length)
+    for b in buckets:
+        if int(b) >= value:
+            return int(b)
+    return value

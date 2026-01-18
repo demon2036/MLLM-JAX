@@ -7,11 +7,22 @@ from plugins.training.api import RolloutResult, RolloutSampler
 from plugins.training.grpo.sampling import generate_answers_and_training_batch
 
 
-@dataclass(frozen=True)
+@dataclass
 class NaiveSamplerRolloutBackend:
     """In-process rollout backend backed by the repo's existing Sampler API."""
 
     sampler: RolloutSampler
+    _last_synced_params: Any | None = None
+
+    def sync_weights(self, params: Any) -> None:
+        # The naive backend uses the same in-process JAX sampler; passing `params`
+        # into `rollout()` is already sufficient for on-policy rollouts. We still
+        # expose this hook so the runner can treat all backends uniformly.
+        self._last_synced_params = params
+
+    def flush_cache(self) -> None:
+        # No external KV/cache to release for the naive sampler.
+        return
 
     def rollout(
         self,
@@ -22,6 +33,8 @@ class NaiveSamplerRolloutBackend:
         global_length: int,
         max_length_sample: int,
     ) -> RolloutResult:
+        if self._last_synced_params is not None:
+            params = self._last_synced_params
         chat_prompts, answers, batch = generate_answers_and_training_batch(
             prompts=list(prompts),
             sampler=self.sampler,
@@ -31,4 +44,3 @@ class NaiveSamplerRolloutBackend:
             max_length_sample=int(max_length_sample),
         )
         return RolloutResult(chat_prompts=chat_prompts, answers=answers, batch=batch)
-

@@ -343,6 +343,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     reward_func_names = [fn.__name__ for fn in reward_funcs]
 
     rng = random.Random(0xC0FFEE + jax.process_index())
+    step_times: list[float] = []
     for step in range(cfg.steps):
         t_step0 = time.perf_counter()
 
@@ -485,6 +486,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         t_update = time.perf_counter() - t_update0
 
         t_step = time.perf_counter() - t_step0
+        step_times.append(float(t_step))
 
         loss_value = _as_float(last_meta["loss"])
         if entropy is None:
@@ -548,6 +550,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             "time/train/update_s": float(t_update),
             "time/train/step_s": float(t_step),
         }
+        if len(step_times) >= 10:
+            train_log["time/train/step_avg_last10_s"] = float(sum(step_times[-10:]) / 10.0)
         for name, mean_value in zip(reward_func_names, per_func_means):
             train_log[f"train/{name}_mean"] = float(mean_value)
 

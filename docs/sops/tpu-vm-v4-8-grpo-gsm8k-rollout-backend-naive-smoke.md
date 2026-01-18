@@ -9,16 +9,42 @@
   - Conda env: `mllm-jax`; Python `3.12.12`
   - JAX: `0.8.2`, jaxlib `0.8.2`, libtpu `0.0.32`
   - JAX devices: `4` (megacore)
-  - Git ref on TPU (verified): `efa7631`
+  - Git refs on TPU (verified): `efa7631`, `cb89c1d`
 
 ## Steps (commands actually used)
 
-### 0) Local: record the commit you want to run on TPU
+### 0) (Option) Reuse an already-alive TPU VM (verified: `mllm-jax-v4-8-260117090531`)
+
+List TPU VMs in the zone and find a `READY` one:
+
+- `gcloud alpha compute tpus tpu-vm list --project civil-rarity-482610-s5 --zone us-central2-b --format='table(name,acceleratorType,state)'`
+
+Sanity check the VM + conda + repo status:
+
+- `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260117090531 --zone us-central2-b --project civil-rarity-482610-s5 --command 'set -euo pipefail; echo \"==whoami==\"; whoami; echo \"==os==\"; cat /etc/os-release | sed -n \"1,3p\"; echo \"==uptime==\"; uptime; echo \"==python==\"; python3 --version || true; echo \"==conda==\"; if [ -f /root/miniconda3/etc/profile.d/conda.sh ]; then source /root/miniconda3/etc/profile.d/conda.sh; conda --version; conda env list | sed -n \"1,10p\"; else echo no_conda; fi; echo \"==running_grpo==\"; pgrep -af \"run_grpo_gsm8k_training.py|run_smoke_grpo_gsm8k\" || true; echo \"==repo==\"; if [ -d /root/MLLM-JAX/.git ]; then cd /root/MLLM-JAX; echo \"HEAD=$(git rev-parse --short HEAD)\"; git status -sb; else echo no_repo; fi'`
+
+Checkout the commit you want to run (example: `cb89c1d`) and verify Git state:
+
+- `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260117090531 --zone us-central2-b --project civil-rarity-482610-s5 --command 'set -euo pipefail; cd /root/MLLM-JAX; echo \"==remote==\"; git remote -v; echo \"==fetch==\"; git fetch --all --prune; echo \"==checkout==\"; git checkout cb89c1d; git status -sb; echo \"HEAD=$(git rev-parse --short HEAD)\"'`
+
+Verify TPU JAX runtime (quick):
+
+- `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260117090531 --zone us-central2-b --project civil-rarity-482610-s5 --command 'set -euo pipefail; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; python - <<\"PY\"\nimport sys\nimport jax, jaxlib\nprint(\"python\", sys.version.split()[0])\nprint(\"jax\", jax.__version__, \"jaxlib\", jaxlib.__version__)\nprint(\"backend\", jax.default_backend())\nprint(\"process\", jax.process_index(), \"/\", jax.process_count())\nprint(\"device_count\", jax.device_count(), \"local\", len(jax.local_devices()))\nPY'`
+
+Run the 1-step smoke:
+
+- `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260117090531 --zone us-central2-b --project civil-rarity-482610-s5 --command 'set -euo pipefail; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; export HF_HUB_ENABLE_HF_TRANSFER=1; export WANDB_MODE=disabled; export TOKENIZERS_PARALLELISM=false; export MODEL_PATH=\"Qwen/Qwen2.5-7B-Instruct\"; export STEPS=1; export ROLLOUT_BACKEND=naive; export BATCH_SIZE=1; export NUM_PRE_Q=4; export GLOBAL_LENGTH=512; export MAX_LENGTH_SAMPLE=64; export PPO_EPOCHS=1; export GRAD_ACCUM_STEPS=1; export BETA=0.0; python -u scripts/run_grpo_gsm8k_training.py'`
+
+Observed success line:
+
+- `step=0 loss=0.000000 entropy=0.2734 reward_mean=0.1250 dt=127.51s`
+
+### 1) Local: record the commit you want to run on TPU
 
 - `cd /home/john/works/MLLM-JAX-mllm-jax-sglang`
 - `git rev-parse --short HEAD`  # -> `efa7631`
 
-### 1) Create a TPU VM
+### 2) Create a TPU VM
 
 Attempted spot first (preempted immediately due to a maintenance event):
 
@@ -33,22 +59,22 @@ Create on-demand (verified run):
 - `scripts/create_tpu_vm.sh --type v4-8 --zone us-central2-b --on-demand`  # -> `mllm-jax-v4-8-260118180552`
 - `gcloud alpha compute tpus tpu-vm describe mllm-jax-v4-8-260118180552 --zone us-central2-b --project civil-rarity-482610-s5 --format='value(state,acceleratorType)'`
 
-### 2) Bootstrap Miniconda + conda env on the TPU VM
+### 3) Bootstrap Miniconda + conda env on the TPU VM
 
 - `cd /home/john/works/MLLM-JAX-mllm-jax-sglang`
 - `scripts/bootstrap_miniconda_on_tpu_vm.sh --name mllm-jax-v4-8-260118180552 --zone us-central2-b --project civil-rarity-482610-s5`
 
-### 3) Clone/pull the repo on the TPU VM (git-sync, no SCP) and checkout the commit
+### 4) Clone/pull the repo on the TPU VM (git-sync, no SCP) and checkout the commit
 
 - `cd /home/john/works/MLLM-JAX-mllm-jax-sglang`
 - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260118180552 --zone us-central2-b --project civil-rarity-482610-s5 --command 'set -euo pipefail; REPO_URL=https://github.com/demon2036/MLLM-JAX.git; REPO_DIR=/root/MLLM-JAX; if [ ! -d \"$REPO_DIR/.git\" ]; then rm -rf \"$REPO_DIR\"; git clone \"$REPO_URL\" \"$REPO_DIR\"; fi; cd \"$REPO_DIR\"; git fetch --all --prune; git checkout efa7631; git status -sb; echo \"HEAD=$(git rev-parse --short HEAD)\"'`
 
-### 4) Install TPU runtime deps (JAX + requirements)
+### 5) Install TPU runtime deps (JAX + requirements)
 
 - `cd /home/john/works/MLLM-JAX-mllm-jax-sglang`
 - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260118180552 --zone us-central2-b --project civil-rarity-482610-s5 --command 'set -euo pipefail; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; python -V; python -m pip install -U pip; python -m pip install -U \"jax[tpu]\" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html; python -m pip install -U torch --index-url https://download.pytorch.org/whl/cpu; cd /root/MLLM-JAX; python -m pip install -U -r requirements-tpu.txt; python - <<\"PY\"\nimport jax, jaxlib\nprint(\"jax\", jax.__version__, \"jaxlib\", jaxlib.__version__)\nprint(\"backend\", jax.default_backend())\nprint(\"process\", jax.process_index(), \"/\", jax.process_count())\nprint(\"device_count\", jax.device_count(), \"local\", len(jax.local_devices()))\nPY'`
 
-### 5) Run a 1-step smoke training with `ROLLOUT_BACKEND=naive`
+### 6) Run a 1-step smoke training with `ROLLOUT_BACKEND=naive`
 
 - `cd /home/john/works/MLLM-JAX-mllm-jax-sglang`
 - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260118180552 --zone us-central2-b --project civil-rarity-482610-s5 --command 'set -euo pipefail; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; export HF_HUB_ENABLE_HF_TRANSFER=1; export WANDB_MODE=disabled; export TOKENIZERS_PARALLELISM=false; export MODEL_PATH=\"Qwen/Qwen2.5-7B-Instruct\"; export STEPS=1; export ROLLOUT_BACKEND=naive; export BATCH_SIZE=1; export NUM_PRE_Q=4; export GLOBAL_LENGTH=512; export MAX_LENGTH_SAMPLE=64; export PPO_EPOCHS=1; export GRAD_ACCUM_STEPS=1; export BETA=0.0; python -u scripts/run_grpo_gsm8k_training.py'`
@@ -57,7 +83,7 @@ Observed success line:
 
 - `step=0 loss=0.000000 entropy=0.2734 reward_mean=0.1250 dt=118.86s`
 
-### 6) Delete the TPU VM (to stop billing)
+### 7) Delete the TPU VM (to stop billing)
 
 - `cd /home/john/works/MLLM-JAX-mllm-jax-sglang`
 - `scripts/delete_tpu_vm.sh --name mllm-jax-v4-8-260118180552 --zone us-central2-b --project civil-rarity-482610-s5`
@@ -87,4 +113,3 @@ Observed success line:
 - `scripts/bootstrap_miniconda_on_tpu_vm.sh`
 - `scripts/ssh_tpu_vm_root.sh`
 - `scripts/run_grpo_gsm8k_training.py`
-

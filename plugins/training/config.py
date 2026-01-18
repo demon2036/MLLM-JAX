@@ -17,6 +17,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "steps": 20,
     # Rollout (generation) vs Train (update) are separated, AReaL-style.
     "rollout": {
+        # Optional: total prompts per training step (global, across all processes).
+        # If set, runner will do multiple rollout passes and may pad up to the next
+        # full pass to keep shapes equal across hosts/devices.
+        "global_batch_size": None,
+        # Optional: prompts per device per rollout pass (forward-only).
+        # Runner uses this to derive a per-process batch size.
+        "per_device_batch_size": None,
         "batch_size": 1,
         # Number of samples per prompt (GRPO group size, a.k.a. K).
         "num_pre_q": 8,
@@ -27,6 +34,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # If set, split the rollout batch into smaller micro-batches for the update step.
         # This lets rollout be larger than the per-update memory limit.
         "micro_batch_size": None,
+        # Optional: sequences per device per micro-step (backward).
+        # Runner uses this to derive `micro_batch_size` and `grad_accum_steps`.
+        "per_device_micro_batch_size": None,
         # If null, runner uses `rollout.max_length_sample + 128`.
         "max_length_total": None,
         "ppo_epochs": 1,

@@ -9,6 +9,7 @@ from typing import Any, Callable
 import numpy as np
 
 from plugins.training.grpo.advantages import compute_grpo_advantages_by_group_id
+from plugins.training.grpo.batching import infer_rollout_passes, round_up_passes_for_divisibility
 from plugins.training.grpo.rewarding import compute_weighted_rewards
 from plugins.training.grpo.update import ppo_update
 
@@ -19,6 +20,10 @@ class GRPORolloutConfig:
     num_pre_q: int
     global_length: int
     max_length_sample: int
+    # Optional: global prompts per training step (across all processes).
+    global_batch_size: int | None = None
+    # Optional: prompts per device per rollout pass (forward-only).
+    per_device_batch_size: int | None = None
 
 
 @dataclass(frozen=True)
@@ -29,6 +34,8 @@ class GRPOTrainConfig:
     ppo_epochs: int
     grad_accum_steps: int
     beta: float
+    # Optional: sequences per device per micro-step (backward).
+    per_device_micro_batch_size: int | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +96,18 @@ def _stats_1d(x: np.ndarray) -> dict[str, float]:
     }
 
 
+def _pad_2d_right(x: np.ndarray, target_len: int, pad_value: int) -> np.ndarray:
+    if x.ndim != 2:
+        raise ValueError(f"Expected rank-2 array, got shape={x.shape}")
+    cur = int(x.shape[1])
+    target = int(target_len)
+    if cur == target:
+        return x
+    if cur > target:
+        raise ValueError(f"Cannot pad to a smaller length: {cur} -> {target}")
+    return np.pad(x, ((0, 0), (0, target - cur)), constant_values=pad_value)
+
+
 def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     """End-to-end GRPO training loop (rollout → reward → advantages → update)."""
     import jax
@@ -116,52 +135,105 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     mesh = get_jax_mesh2(cfg.mesh_shape)
     local_device_count = len(mesh.local_devices)
+    process_count = int(jax.process_count())
 
-    local_batch = cfg.rollout.batch_size * cfg.rollout.num_pre_q
-    padded_local_batch = _ensure_batch_multiple_of_local_devices(local_batch, local_device_count)
-    if padded_local_batch != local_batch:
-        if padded_local_batch % cfg.rollout.batch_size != 0:
+    # --- Resolve rollout batch (prompts) ---
+    rollout_batch_size = int(cfg.rollout.batch_size)
+    if cfg.rollout.per_device_batch_size is not None:
+        per_device_rollout = int(cfg.rollout.per_device_batch_size)
+        if per_device_rollout <= 0:
+            raise ValueError("rollout.per_device_batch_size must be > 0")
+        rollout_batch_size = per_device_rollout * local_device_count
+
+    if rollout_batch_size <= 0:
+        raise ValueError("rollout.batch_size must be > 0")
+
+    # Ensure per-pass local batch (sequences) can be evenly split across local devices.
+    local_batch_per_pass = int(rollout_batch_size) * int(cfg.rollout.num_pre_q)
+    padded_local_batch_per_pass = _ensure_batch_multiple_of_local_devices(local_batch_per_pass, local_device_count)
+    if padded_local_batch_per_pass != local_batch_per_pass:
+        if padded_local_batch_per_pass % rollout_batch_size != 0:
             raise ValueError(
-                f"Cannot pad local batch {local_batch} -> {padded_local_batch} "
-                f"because rollout.batch_size={cfg.rollout.batch_size} does not divide it."
+                f"Cannot pad local batch {local_batch_per_pass} -> {padded_local_batch_per_pass} "
+                f"because rollout.batch_size={rollout_batch_size} does not divide it."
             )
-        new_num_pre_q = padded_local_batch // cfg.rollout.batch_size
+        new_num_pre_q = padded_local_batch_per_pass // rollout_batch_size
         print(
-            f"Padding local batch {local_batch} -> {padded_local_batch} by changing "
+            f"Padding local batch {local_batch_per_pass} -> {padded_local_batch_per_pass} by changing "
             f"rollout.num_pre_q {cfg.rollout.num_pre_q} -> {new_num_pre_q}."
         )
         cfg = GRPOGsm8kConfig(**{**cfg.__dict__, "rollout": GRPORolloutConfig(**{**cfg.rollout.__dict__, "num_pre_q": new_num_pre_q})})
-        local_batch = padded_local_batch
+        local_batch_per_pass = padded_local_batch_per_pass
+
+    base_rollout_passes, _base_effective_global_prompts = infer_rollout_passes(
+        global_batch_size=cfg.rollout.global_batch_size,
+        batch_size_per_process=rollout_batch_size,
+        process_count=process_count,
+    )
+    rollout_passes = int(base_rollout_passes)
+
+    # --- Resolve train micro-batch & grad accumulation (sequences) ---
+    micro_batch_size_per_process = cfg.train.micro_batch_size
+    if cfg.train.per_device_micro_batch_size is not None:
+        if micro_batch_size_per_process is not None:
+            raise ValueError("Specify only one of train.micro_batch_size and train.per_device_micro_batch_size.")
+        per_device_micro = int(cfg.train.per_device_micro_batch_size)
+        if per_device_micro <= 0:
+            raise ValueError("train.per_device_micro_batch_size must be > 0.")
+        micro_batch_size_per_process = per_device_micro * local_device_count
+
+    if micro_batch_size_per_process is not None:
+        micro_batch_size_per_process = int(micro_batch_size_per_process)
+        if micro_batch_size_per_process <= 0:
+            raise ValueError("train.micro_batch_size must be > 0.")
+        padded_passes = round_up_passes_for_divisibility(
+            passes=rollout_passes,
+            sequences_per_pass_per_process=local_batch_per_pass,
+            micro_batch_size_per_process=micro_batch_size_per_process,
+        )
+        if padded_passes != rollout_passes:
+            print(
+                f"Padding rollout passes {rollout_passes} -> {padded_passes} so that "
+                f"passes * local_batch_per_pass is divisible by train.micro_batch_size={micro_batch_size_per_process}."
+            )
+            rollout_passes = int(padded_passes)
+
+    local_batch = int(rollout_passes) * int(local_batch_per_pass)
 
     grad_accum_steps = int(cfg.train.grad_accum_steps)
-    micro_batch_size = cfg.train.micro_batch_size
-    if micro_batch_size is not None:
-        micro_batch_size = int(micro_batch_size)
-        if micro_batch_size <= 0:
-            raise ValueError("train.micro_batch_size must be > 0.")
-        if local_batch % micro_batch_size != 0:
+    if micro_batch_size_per_process is not None:
+        if local_batch % micro_batch_size_per_process != 0:
             raise ValueError(
-                f"train.micro_batch_size={micro_batch_size} must divide local_batch={local_batch} "
-                f"(rollout.batch_size * rollout.num_pre_q)."
+                f"train.micro_batch_size={micro_batch_size_per_process} must divide local_batch={local_batch} "
+                f"(rollout_passes * rollout.batch_size * rollout.num_pre_q)."
             )
-        micro_steps = local_batch // micro_batch_size
+        micro_steps = local_batch // micro_batch_size_per_process
         if grad_accum_steps != 1 and grad_accum_steps != micro_steps:
             print(
                 f"Overriding train.grad_accum_steps {grad_accum_steps} -> {micro_steps} "
-                f"to respect train.micro_batch_size={micro_batch_size}."
+                f"to respect train.micro_batch_size={micro_batch_size_per_process}."
             )
         grad_accum_steps = micro_steps
 
     if local_batch % grad_accum_steps != 0:
         raise ValueError(
             f"train.grad_accum_steps={grad_accum_steps} must divide local_batch={local_batch} "
-            f"(rollout.batch_size * rollout.num_pre_q)."
+            f"(rollout_passes * rollout.batch_size * rollout.num_pre_q)."
         )
 
-    train_config = asdict(cfg.train)
-    train_config["grad_accum_steps"] = grad_accum_steps
-    if micro_batch_size is not None:
-        train_config["micro_batch_size"] = micro_batch_size
+    cfg = GRPOGsm8kConfig(
+        **{
+            **cfg.__dict__,
+            "rollout": GRPORolloutConfig(**{**cfg.rollout.__dict__, "batch_size": rollout_batch_size}),
+            "train": GRPOTrainConfig(
+                **{
+                    **cfg.train.__dict__,
+                    "micro_batch_size": micro_batch_size_per_process,
+                    "grad_accum_steps": grad_accum_steps,
+                }
+            ),
+        }
+    )
 
     print(f"backend={jax.default_backend()} process={jax.process_index()}/{jax.process_count()}")
     print(f"device_count={jax.device_count()} local_device_count={local_device_count}")
@@ -171,8 +243,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             dict(
                 model_path=cfg.model_path,
                 steps=cfg.steps,
-                rollout=asdict(cfg.rollout),
-                train=train_config,
+                rollout={**asdict(cfg.rollout), "passes_per_step": int(rollout_passes)},
+                train=asdict(cfg.train),
                 local_batch=local_batch,
                 mesh_shape=cfg.mesh_shape,
                 wandb_project=cfg.wandb_project,
@@ -220,55 +292,110 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     rng = random.Random(0xC0FFEE + jax.process_index())
     for step in range(cfg.steps):
-        batch_items = [rng.choice(qas) for _ in range(cfg.rollout.batch_size)]
-        prompts_base = [item["Q"] for item in batch_items]
-        repeated_prompts = [p for p in prompts_base for _ in range(cfg.rollout.num_pre_q)]
-        repeated_items = [item for item in batch_items for _ in range(cfg.rollout.num_pre_q)]
-        group_ids = np.repeat(np.arange(cfg.rollout.batch_size, dtype=np.int32), cfg.rollout.num_pre_q)
-
         t_step0 = time.perf_counter()
 
         # --- Rollout (sampling) ---
         # Keep rollout logic local to avoid cross-host coupling; global sync happens at the batch->global array step.
         from plugins.training.grpo.sampling import generate_answers_and_training_batch
 
-        t_rollout0 = time.perf_counter()
-        _chat_prompts, answers, datas_np = generate_answers_and_training_batch(
-            prompts=repeated_prompts,
-            sampler=sampler,
-            params=state.params,
-            system_prompt=system_prompt,
-            global_length=int(cfg.rollout.global_length),
-            max_length_sample=cfg.rollout.max_length_sample,
-        )
-        t_rollout = time.perf_counter() - t_rollout0
-
-        # --- Reward ---
         reward_weights = cfg.reward_weights
-        t_reward0 = time.perf_counter()
-        rewards_per_func, rewards_np = compute_weighted_rewards(
-            reward_funcs=reward_funcs,
-            reward_weights=reward_weights,
-            inputs=repeated_items,
-            answers=answers,
+        answers_all: list[str] = []
+        datas_np_all: list[dict[str, np.ndarray]] = []
+        rewards_per_func_all: list[np.ndarray] = []
+        rewards_all: list[np.ndarray] = []
+        advantages_all: list[np.ndarray] = []
+        group_ids_all: list[np.ndarray] = []
+
+        t_rollout = 0.0
+        t_reward = 0.0
+        t_adv = 0.0
+
+        for pass_idx in range(int(rollout_passes)):
+            batch_items = [rng.choice(qas) for _ in range(cfg.rollout.batch_size)]
+            prompts_base = [item["Q"] for item in batch_items]
+            repeated_prompts = [p for p in prompts_base for _ in range(cfg.rollout.num_pre_q)]
+            repeated_items = [item for item in batch_items for _ in range(cfg.rollout.num_pre_q)]
+
+            group_ids = np.repeat(
+                np.arange(cfg.rollout.batch_size, dtype=np.int32) + pass_idx * cfg.rollout.batch_size,
+                cfg.rollout.num_pre_q,
+            )
+
+            # --- Rollout (sampling) ---
+            t_rollout0 = time.perf_counter()
+            _chat_prompts, answers, datas_np = generate_answers_and_training_batch(
+                prompts=repeated_prompts,
+                sampler=sampler,
+                params=state.params,
+                system_prompt=system_prompt,
+                global_length=int(cfg.rollout.global_length),
+                max_length_sample=cfg.rollout.max_length_sample,
+            )
+            t_rollout += time.perf_counter() - t_rollout0
+
+            # --- Reward ---
+            t_reward0 = time.perf_counter()
+            rewards_per_func, rewards_np = compute_weighted_rewards(
+                reward_funcs=reward_funcs,
+                reward_weights=reward_weights,
+                inputs=repeated_items,
+                answers=answers,
+            )
+            t_reward += time.perf_counter() - t_reward0
+
+            # --- Advantages (group_id based) ---
+            t_adv0 = time.perf_counter()
+            advantages_np = compute_grpo_advantages_by_group_id(
+                rewards=rewards_np,
+                group_ids=group_ids,
+                eps=1e-4,
+            )
+            t_adv += time.perf_counter() - t_adv0
+
+            datas_np = dict(datas_np)
+            datas_np["rewards"] = rewards_np
+            datas_np["advantages"] = advantages_np
+            datas_np["group_ids"] = group_ids
+
+            answers_all.extend(answers)
+            datas_np_all.append(datas_np)
+            rewards_per_func_all.append(rewards_per_func)
+            rewards_all.append(rewards_np)
+            advantages_all.append(advantages_np)
+            group_ids_all.append(group_ids)
+
+        rewards_np = np.concatenate(rewards_all, axis=0) if rewards_all else np.asarray([], dtype=np.float32)
+        advantages_np = np.concatenate(advantages_all, axis=0) if advantages_all else np.asarray([], dtype=np.float32)
+        group_ids = np.concatenate(group_ids_all, axis=0) if group_ids_all else np.asarray([], dtype=np.int32)
+        rewards_per_func = (
+            np.concatenate(rewards_per_func_all, axis=1) if rewards_per_func_all else np.asarray([], dtype=np.float32)
         )
-        t_reward = time.perf_counter() - t_reward0
+
+        # Concatenate per-pass batches. If sequence lengths differ, pad up to the global max length.
+        datas_np = {}
+        if datas_np_all:
+            keys = datas_np_all[0].keys()
+            for k in keys:
+                if k in {"input_ids", "attention_mask", "labels"}:
+                    max_len_local = max(int(d[k].shape[1]) for d in datas_np_all)
+                    if k == "input_ids":
+                        pad_value = int(sampler.tokenizer.pad_token_id)
+                    else:
+                        pad_value = 0
+                    parts = [_pad_2d_right(d[k], max_len_local, pad_value) for d in datas_np_all]
+                    datas_np[k] = np.concatenate(parts, axis=0)
+                else:
+                    datas_np[k] = np.concatenate([d[k] for d in datas_np_all], axis=0)
+
+            seq_len_local = int(datas_np["input_ids"].shape[1])
+            seq_len_global = int(np.asarray(process_allgather(np.asarray([seq_len_local], dtype=np.int32))).max())
+            if seq_len_global != seq_len_local:
+                datas_np["input_ids"] = _pad_2d_right(datas_np["input_ids"], seq_len_global, int(sampler.tokenizer.pad_token_id))
+                datas_np["attention_mask"] = _pad_2d_right(datas_np["attention_mask"], seq_len_global, 0)
+                datas_np["labels"] = _pad_2d_right(datas_np["labels"], seq_len_global, 0)
 
         rewards_global = np.asarray(process_allgather(rewards_np)).reshape(-1)
         reward_global_stats = _stats_1d(rewards_global)
-
-        # --- Advantages (group_id based) ---
-        t_adv0 = time.perf_counter()
-        advantages_np = compute_grpo_advantages_by_group_id(
-            rewards=rewards_np,
-            group_ids=group_ids,
-            eps=1e-4,
-        )
-        t_adv = time.perf_counter() - t_adv0
-
-        datas_np["rewards"] = rewards_np
-        datas_np["advantages"] = advantages_np
-        datas_np["group_ids"] = group_ids
 
         # --- Update ---
         t_shard0 = time.perf_counter()

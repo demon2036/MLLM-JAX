@@ -1,4 +1,5 @@
 import random
+import os
 from functools import partial
 from typing import Any
 
@@ -70,7 +71,17 @@ def get_model(mesh,model_path = 'Qwen/Qwen2.5-14B', only_model=False):
     train_state_partition = match_partition_rules(get_partition_rules_llama(), state_shapes)
     train_state_sharding = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh, x), train_state_partition)
 
-    params = jax.tree_util.tree_map(lambda x, d: jnp.asarray(x, dtype=jnp.float32, device=d), params, train_state_sharding)
+    param_dtype_raw = os.environ.get("MLLM_JAX_PARAM_DTYPE", "float32").strip().lower()
+    if param_dtype_raw in {"float32", "f32"}:
+        param_dtype = jnp.float32
+    elif param_dtype_raw in {"bfloat16", "bf16"}:
+        param_dtype = jnp.bfloat16
+    elif param_dtype_raw in {"float16", "f16"}:
+        param_dtype = jnp.float16
+    else:
+        raise ValueError(f"Unsupported MLLM_JAX_PARAM_DTYPE={param_dtype_raw!r} (expected float32/bfloat16/float16).")
+
+    params = jax.tree_util.tree_map(lambda x, d: jnp.asarray(x, dtype=param_dtype, device=d), params, train_state_sharding)
 
     params = jax.jit(init_fn,
                      # donate_argnums=(0,),

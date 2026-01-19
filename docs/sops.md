@@ -16,6 +16,7 @@
 - TPU v4-8 GRPO runner smoke (`rollout.backend=naive`): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
 - TPU v4-8 GRPO runner smoke (`rollout.backend=sglang_jax`): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-sglang-jax-smoke.md`
 - TPU v4-8 GRPO train (20 steps, W&B, `rollout.backend=sglang_jax`): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-sglang-jax-wandb-20steps.md`
+- TPU v4-8 sglang-jax OOM (bs32 len1024) + small smoke: `docs/sops/tpu-vm-v4-8-sglang-jax-oom-bs32-len1024.md`
 - TPU v4-8 timing (len=1024, 20 steps, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`
 - TPU v4-8 timing (bs=32, len=1024, k=1, micro_batch=4, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-bs32-len1024-k1-mb4-20steps-timing.md`
 - TPU v4-16 GRPO train (20 steps, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-20steps.md`
@@ -46,6 +47,7 @@
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-sglang-jax-smoke.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-sglang-jax-wandb-20steps.md`
+- `docs/sops/tpu-vm-v4-8-sglang-jax-oom-bs32-len1024.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-bs32-len1024-k1-mb4-20steps-timing.md`
 - `docs/sops/tpu-vm-bootstrap.md`

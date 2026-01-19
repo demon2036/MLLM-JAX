@@ -62,10 +62,10 @@ RUNNER="set -euo pipefail; \
   cd '$REPO_DIR'; \
   set +e; \
   python -u scripts/run_grpo_gsm8k_training.py --config '$CONFIG_PATH' $PY_ARGS; \
-  status=\\$?; \
+  status=\$?; \
   set -e; \
-  echo \\$status > '$EXIT_FILE'; \
-  exit \\$status"
+  echo \$status > '$EXIT_FILE'; \
+  exit \$status"
 
 nohup bash -lc "$RUNNER" >"$LOG_FILE" 2>&1 &
 pid="$!"

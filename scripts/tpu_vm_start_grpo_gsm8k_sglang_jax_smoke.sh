@@ -30,9 +30,12 @@ LATEST_LOG="logs/nohup_grpo_gsm8k_sglang_jax_smoke_latest.log"
 LATEST_EXIT="logs/nohup_grpo_gsm8k_sglang_jax_smoke_latest.exit"
 LATEST_PID="logs/nohup_grpo_gsm8k_sglang_jax_smoke_latest.pid"
 
-ln -sf "$LOG_FILE" "$LATEST_LOG"
-ln -sf "$EXIT_FILE" "$LATEST_EXIT"
-ln -sf "$PID_FILE" "$LATEST_PID"
+# NOTE: The `LATEST_*` files live under `logs/`, so the symlink target must be
+# relative to that directory. If we point them at `logs/<file>`, they'll resolve
+# as `logs/logs/<file>` when opened.
+ln -sf "$(basename "$LOG_FILE")" "$LATEST_LOG"
+ln -sf "$(basename "$EXIT_FILE")" "$LATEST_EXIT"
+ln -sf "$(basename "$PID_FILE")" "$LATEST_PID"
 
 rm -f "$EXIT_FILE" "$PID_FILE"
 rm -f /tmp/libtpu_lockfile || true
@@ -75,4 +78,3 @@ echo "EXIT_FILE=$EXIT_FILE"
 echo "LATEST_LOG=$LATEST_LOG"
 echo "LATEST_EXIT=$LATEST_EXIT"
 echo "LATEST_PID=$LATEST_PID"
-

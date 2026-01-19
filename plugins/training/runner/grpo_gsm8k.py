@@ -367,7 +367,11 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         _setdefault_env("SGLANG_JAX_DTYPE", "bfloat16")
         _setdefault_env("SGLANG_JAX_CONTEXT_LENGTH", str(context_length))
         _setdefault_env("SGLANG_JAX_MAX_TOTAL_TOKENS", str(max_total_tokens))
-        _setdefault_env("SGLANG_JAX_MEM_FRACTION_STATIC", "0.25")
+        # When the Engine is initialized after the training state, available HBM
+        # is already reduced. Use a higher mem_fraction_static so sglang-jax can
+        # carve out a (small) KV pool from the remaining memory; max_total_tokens
+        # still caps actual KV usage.
+        _setdefault_env("SGLANG_JAX_MEM_FRACTION_STATIC", "0.88")
         _setdefault_env("SGLANG_JAX_DISABLE_PRECOMPILE", "1")
 
         rollout_backend = create_rollout_backend(

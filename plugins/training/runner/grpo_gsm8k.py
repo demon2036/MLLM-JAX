@@ -132,6 +132,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         tag_count_reward,
     )
 
+    train_fn = jax.jit(training_step, donate_argnums=(0,))
+
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
     try:
@@ -374,11 +376,6 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             tokenizer=tokenizer,
             model_path=cfg.model_path,
         )
-        # Allocate sglang-jax's model + KV cache before creating the training state.
-        # This makes the Engine's KV sizing depend on full device memory rather than
-        # "whatever is left after FSDP+optimizer", which is critical on v4-8.
-        if hasattr(rollout_backend, "initialize"):
-            rollout_backend.initialize()  # type: ignore[attr-defined]
         state, sampler, _state_sharding = get_state(
             mesh,
             training_steps=cfg.steps,
@@ -389,6 +386,38 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             beta=cfg.train.beta,
             create_sampler=False,
         )
+
+        # Pre-compile the training step BEFORE initializing the sglang-jax Engine.
+        #
+        # On v4-8, the Engine consumes HBM; if we JIT the training step after
+        # Engine initialization (and after rollouts), XLA may fail to reserve
+        # enough contiguous memory at the bottom of HBM when loading the
+        # `jit_training_step` program.
+        if os.environ.get("SGLANG_JAX_PRECOMPILE_TRAIN_STEP", "1").strip().lower() not in {"0", "false", "no", "off"}:
+            seq_len = _ceil_to_bucket(int(cfg.rollout.global_length)) + _ceil_to_bucket(int(cfg.rollout.max_length_sample))
+            micro_batch = int(cfg.train.micro_batch_size or (local_batch // int(grad_accum_steps)))
+            if micro_batch <= 0:
+                raise ValueError(f"Invalid derived micro_batch={micro_batch}")
+
+            dummy_np = {
+                "input_ids": np.zeros((micro_batch, seq_len), dtype=np.int32),
+                "attention_mask": np.ones((micro_batch, seq_len), dtype=np.int32),
+                "labels": np.ones((micro_batch, seq_len), dtype=np.int32),
+                "rewards": np.zeros((micro_batch,), dtype=np.float32),
+                "advantages": np.zeros((micro_batch,), dtype=np.float32),
+                "group_ids": np.zeros((micro_batch,), dtype=np.int32),
+            }
+            dummy = jax.tree_util.tree_map_with_path(_form_training_global_array, dummy_np)
+            dummy["total_valid_token_count"] = dummy["labels"][:, 1:].sum()
+
+            if jax.process_index() == 0:
+                print(f"precompile_training_step=1 micro_batch={micro_batch} seq_len={seq_len}")
+            train_fn.lower(state, dummy).compile()
+
+        # Allocate sglang-jax's model + KV cache after the training executable is ready.
+        if hasattr(rollout_backend, "initialize"):
+            rollout_backend.initialize()  # type: ignore[attr-defined]
+
         # Eliminate persistent weight duplication as early as possible (before
         # compiling the training step): swap Engine weights to the freshly
         # created training params, then flush any KV/cache allocations.
@@ -416,7 +445,6 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             model_path=cfg.model_path,
         )
 
-    train_fn = jax.jit(training_step, donate_argnums=(0,))
     wandb = _maybe_init_wandb(cfg)
 
     reward_funcs = [reward_correct, reward_format, tag_count_reward]

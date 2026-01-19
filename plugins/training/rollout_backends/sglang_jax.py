@@ -417,9 +417,6 @@ class SglangJaxRolloutBackend:
         tokenizer = self.tokenizer
 
         chat_prompts = build_chat_prompts(tokenizer, list(prompts), system_prompt)
-        tokenized = tokenizer(chat_prompts, padding=False, return_attention_mask=False)
-        input_ids_list = tokenized["input_ids"]
-
         # IMPORTANT: Keep the returned training batch shape stable across steps.
         #
         # The JAX training step is `jit`-compiled; if we return variable-length
@@ -436,6 +433,17 @@ class SglangJaxRolloutBackend:
             raise ValueError(f"global_length must be > 0, got {global_length!r}")
         if target_completion_len <= 0:
             raise ValueError(f"max_length_sample must be > 0, got {max_length_sample!r}")
+
+        # Truncate prompts to `global_length` so prompt bucketing stays stable and
+        # comparable to the naive sampler (which always pads/truncates prompts).
+        tokenized = tokenizer(
+            chat_prompts,
+            padding=False,
+            return_attention_mask=False,
+            truncation=True,
+            max_length=base_prompt_len,
+        )
+        input_ids_list = tokenized["input_ids"]
 
         prompt_lens = [len(x) for x in input_ids_list]
         max_prompt_len = max(prompt_lens) if prompt_lens else 0

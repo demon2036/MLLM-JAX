@@ -468,7 +468,23 @@ class SglangJaxRolloutBackend:
             sampling.stop_token_ids = {int(eos_id)}
 
         sampling_params = [sampling.convert_to_dict() for _ in input_ids_list]
-        outputs = engine.generate(input_ids=input_ids_list, sampling_params=sampling_params, stream=False)
+
+        chunk_size = _get_env_int("SGLANG_JAX_ROLLOUT_CHUNK_SIZE", None)
+        if chunk_size is not None:
+            chunk_size = int(chunk_size)
+        if chunk_size is None or chunk_size <= 0 or chunk_size >= len(input_ids_list):
+            outputs = engine.generate(input_ids=input_ids_list, sampling_params=sampling_params, stream=False)
+        else:
+            # Chunking reduces concurrent KV pressure for large rollout batches.
+            outputs = []
+            for start in range(0, len(input_ids_list), chunk_size):
+                end = start + chunk_size
+                batch_inputs = input_ids_list[start:end]
+                batch_sampling = sampling_params[start:end]
+                batch_outputs = engine.generate(input_ids=batch_inputs, sampling_params=batch_sampling, stream=False)
+                if isinstance(batch_outputs, dict):
+                    batch_outputs = [batch_outputs]
+                outputs.extend(batch_outputs)
 
         if isinstance(outputs, dict):
             outputs = [outputs]

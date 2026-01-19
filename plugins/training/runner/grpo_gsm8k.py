@@ -374,15 +374,23 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         completion_len_bucket = _ceil_to_bucket(int(cfg.rollout.max_length_sample))
         context_length = _ceil_to_bucket(prompt_len_bucket + completion_len_bucket)
         max_total_tokens = min(16384, max(8192, context_length * 8))
+        rollout_sequences = int(local_batch_per_pass)
+        default_chunk = min(rollout_sequences, local_device_count)
+        if default_chunk <= 0:
+            default_chunk = max(1, local_device_count)
+        capped_max_total_tokens = min(max_total_tokens, context_length * default_chunk)
+        if capped_max_total_tokens < context_length:
+            capped_max_total_tokens = context_length
 
         _setdefault_env("SGLANG_JAX_DTYPE", "bfloat16")
         _setdefault_env("SGLANG_JAX_CONTEXT_LENGTH", str(context_length))
-        _setdefault_env("SGLANG_JAX_MAX_TOTAL_TOKENS", str(max_total_tokens))
+        _setdefault_env("SGLANG_JAX_MAX_TOTAL_TOKENS", str(capped_max_total_tokens))
+        _setdefault_env("SGLANG_JAX_MAX_RUNNING_REQUESTS", str(default_chunk))
+        _setdefault_env("SGLANG_JAX_ROLLOUT_CHUNK_SIZE", str(default_chunk))
         # When the Engine is initialized after the training state, available HBM
-        # is already reduced. Use a higher mem_fraction_static so sglang-jax can
-        # carve out a (small) KV pool from the remaining memory; max_total_tokens
-        # still caps actual KV usage.
-        _setdefault_env("SGLANG_JAX_MEM_FRACTION_STATIC", "0.88")
+        # is already reduced. Use a conservative mem_fraction_static so training
+        # keeps headroom; max_total_tokens still caps actual KV usage.
+        _setdefault_env("SGLANG_JAX_MEM_FRACTION_STATIC", "0.5")
         _setdefault_env("SGLANG_JAX_DISABLE_PRECOMPILE", "1")
 
         rollout_backend = create_rollout_backend(

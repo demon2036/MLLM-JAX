@@ -416,7 +416,20 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
             if jax.process_index() == 0:
                 print(f"precompile_training_step=1 micro_batch={micro_batch} seq_len={seq_len}")
-            train_fn.lower(state, dummy).compile()
+            # NOTE: `lower(...).compile()` may not load the executable onto TPU.
+            # Execute exactly one micro-step to force program loading while the
+            # Engine has not yet consumed HBM. This is safe when grad accumulation
+            # is enabled because the first micro-step does not apply gradients.
+            if getattr(state, "grad_accum", None) is None:
+                if jax.process_index() == 0:
+                    print("precompile_training_step_skip_reason=no_grad_accum")
+            else:
+                state_warm, warm_meta = train_fn(state, dummy)
+                jax.block_until_ready(warm_meta["loss"])
+                zero = jnp.asarray(0, dtype=getattr(getattr(state_warm, "micro_step", 0), "dtype", jnp.int32))
+                state = state_warm.replace(micro_step=zero)
+                if jax.process_index() == 0:
+                    print("precompile_training_step_done=1")
 
         # Allocate sglang-jax's model + KV cache after the training executable is ready.
         if hasattr(rollout_backend, "initialize"):

@@ -120,13 +120,17 @@ class SglangJaxRolloutBackend:
             )
 
         model_runner = scheduler.tp_worker.worker.model_runner
-        if self._base_model_state_leaves is None:
-            # Capture the Engine's initial weights (often dummy) so we can
-            # restore them after rollout and avoid keeping large weight buffers
-            # alive across the donated training update step.
-            try:
+        # NOTE: Do NOT capture the Engine's initial weights by default.
+        #
+        # Keeping a reference to the initial (dummy) weights pins a full
+        # parameter-sized buffer on device and can easily OOM on v4-8 when
+        # co-locating training + rollout. If you want to enable restoring the
+        # initial weights after each rollout, opt in explicitly via:
+        #   SGLANG_JAX_CAPTURE_BASE_WEIGHTS=1
+        if self._base_model_state_leaves is None and _get_env_bool("SGLANG_JAX_CAPTURE_BASE_WEIGHTS", False):
+            try:  # pragma: no cover - depends on external engine internals
                 self._base_model_state_leaves = tuple(model_runner.model_state_leaves)
-            except Exception:  # pragma: no cover - depends on external engine internals
+            except Exception:
                 self._base_model_state_leaves = None
         transformer_state = nnx.split(model_runner.model)[1]
 
@@ -301,14 +305,15 @@ class SglangJaxRolloutBackend:
             "load_format": os.environ.get("SGLANG_JAX_LOAD_FORMAT", "dummy"),
             # Keep Engine logs quiet by default.
             "log_level": os.environ.get("SGLANG_JAX_LOG_LEVEL", "error"),
-            # Keep params in fp32 to match this repo's training (param_dtype=float32).
-            "dtype": os.environ.get("SGLANG_JAX_DTYPE", "float32"),
+            # Co-located rollout should default to bf16 to reduce HBM pressure.
+            # (Training stays fp32; weight sync casts as needed.)
+            "dtype": os.environ.get("SGLANG_JAX_DTYPE", "bfloat16"),
             # Keep KV dtype in sync with model dtype by default; override via env if needed.
             "kv_cache_dtype": _normalize_kv_cache_dtype(os.environ.get("SGLANG_JAX_KV_CACHE_DTYPE", "auto")),
             # Conserve HBM because training already holds model/optimizer state.
-            "mem_fraction_static": float(_get_env_float("SGLANG_JAX_MEM_FRACTION_STATIC", 0.1) or 0.1),
+            "mem_fraction_static": float(_get_env_float("SGLANG_JAX_MEM_FRACTION_STATIC", 0.25) or 0.25),
             "disable_radix_cache": _get_env_bool("SGLANG_JAX_DISABLE_RADIX_CACHE", True),
-            "disable_precompile": _get_env_bool("SGLANG_JAX_DISABLE_PRECOMPILE", False),
+            "disable_precompile": _get_env_bool("SGLANG_JAX_DISABLE_PRECOMPILE", True),
         }
 
         # Optional knobs (env driven) to help fit/benchmark on TPU.
@@ -357,7 +362,9 @@ class SglangJaxRolloutBackend:
             print(f"WARNING: sglang-jax flush_cache failed: {e}")
         # Release KV/memory pool reservation so training can use the full HBM.
         # Keep this best-effort: some revisions may not implement the API.
-        release_mem = _get_env_bool("SGLANG_JAX_RELEASE_MEMORY_OCCUPATION", True) or _get_env_bool(
+        # NOTE: Disabled by default because sglang-jax 0.0.2 has a broken
+        # `release_memory_occupation()` implementation on TPU.
+        release_mem = _get_env_bool("SGLANG_JAX_RELEASE_MEMORY_OCCUPATION", False) or _get_env_bool(
             "SGLANG_JAX_TRY_RELEASE_MEMORY_OCCUPATION", False
         )
         if not release_mem:

@@ -345,6 +345,29 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     pad_token_id = int(pad_token_id)
 
     if use_sglang_jax:
+        def _setdefault_env(name: str, value: str) -> None:
+            if os.environ.get(name) in {None, ""}:
+                os.environ[name] = value
+
+        def _ceil_to_bucket(value: int) -> int:
+            for b in (128, 256, 512, 1024, 2048, 4096, 8192):
+                if int(b) >= int(value):
+                    return int(b)
+            return int(value)
+
+        # Co-located training + rollout is HBM sensitive on v4-8. Provide safe
+        # defaults unless the user has explicitly overridden them via env vars.
+        prompt_len_bucket = _ceil_to_bucket(int(cfg.rollout.global_length))
+        completion_len_bucket = _ceil_to_bucket(int(cfg.rollout.max_length_sample))
+        context_length = _ceil_to_bucket(prompt_len_bucket + completion_len_bucket)
+        max_total_tokens = min(16384, max(8192, context_length * 8))
+
+        _setdefault_env("SGLANG_JAX_DTYPE", "bfloat16")
+        _setdefault_env("SGLANG_JAX_CONTEXT_LENGTH", str(context_length))
+        _setdefault_env("SGLANG_JAX_MAX_TOTAL_TOKENS", str(max_total_tokens))
+        _setdefault_env("SGLANG_JAX_MEM_FRACTION_STATIC", "0.25")
+        _setdefault_env("SGLANG_JAX_DISABLE_PRECOMPILE", "1")
+
         rollout_backend = create_rollout_backend(
             name=rollout_backend_name,
             sampler=None,

@@ -128,11 +128,22 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         get_state,
         reward_correct,
         reward_format,
-        slice_data,
         tag_count_reward,
     )
 
     train_fn = jax.jit(training_step, donate_argnums=(0,))
+    # IMPORTANT: slice micro-batches inside a jitted function to preserve sharding.
+    #
+    # If we slice a sharded global batch with Python indexing (outside jit), JAX may
+    # replicate the slice across devices (PartitionSpec()), which increases both
+    # per-device compute and memory. On v4-8 co-located train+rollout, that can
+    # be the difference between loading `jit_training_step` successfully or OOM.
+    def _slice_data_impl(x, accumulate_steps: int, i: int):
+        micro_batch_size = int(x.shape[0]) // int(accumulate_steps)
+        start = int(i) * micro_batch_size
+        return jax.lax.dynamic_slice_in_dim(x, start, micro_batch_size, axis=0)
+
+    slice_data = jax.jit(_slice_data_impl, static_argnums=(1, 2))
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 

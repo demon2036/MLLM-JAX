@@ -11,16 +11,10 @@ import jax.numpy as jnp
 import numpy as np
 import torch
 from flax.linen.spmd import RulesFallback
-from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask, splash_attention_kernel
-
-from jax.experimental.pallas.ops.tpu.flash_attention import flash_attention
-from jax.experimental.shard_map import shard_map
 from jax.sharding import Mesh,PartitionSpec,NamedSharding
 from tqdm import tqdm
 
-from jax.sharding import PartitionSpec as P
-
-from ..attention import apply_attention
+from ..attention import AttentionSpec, scaled_dot_product_attention
 
 K_MASK = -2.3819763e38  # Set to a large negative number.
 LayerCache = dict[str, jax.Array]
@@ -546,6 +540,18 @@ class LlamaAttention(nn.Module):
         self.v_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=config.attention_bias)
         self.o_proj = nn.Dense(self.hidden_size, use_bias=config.attention_bias)
 
+    def _jax_attention_spec(self) -> AttentionSpec:
+        return AttentionSpec()
+
+    def _jax_attention_backend(self) -> str:
+        return getattr(self.config, "jax_attention_backend", "auto")
+
+    def _jax_attention_use_block_sizes(self) -> bool:
+        return True
+
+    def _jax_attention_mask_value(self) -> float | None:
+        return -1e17
+
     def __call__(
             self,
             x: jax.Array,
@@ -618,15 +624,24 @@ class LlamaAttention(nn.Module):
         value_states=repeat_kv(value_states,self.num_key_value_groups)
         key_states=repeat_kv(key_states,self.num_key_value_groups)
 
-        mesh = getattr(self.jax_config, "mesh", None) if self.jax_config is not None else None
-        attn_output = apply_attention(
+        attention_kwargs: dict[str, Any] = {}
+        mask_value = self._jax_attention_mask_value()
+        if mask_value is not None:
+            attention_kwargs["mask_value"] = mask_value
+
+        attn_output = scaled_dot_product_attention(
             query_states,
             key_states,
             value_states,
-            attn_bias=attn_mask,
             head_dim=self.head_dim,
-            mesh=mesh,
-            out_dtype=dtype,
+            attn_mask=attn_mask,
+            dtype=dtype,
+            mesh=getattr(self.jax_config, "mesh", None),
+            backend=self._jax_attention_backend(),
+            spec=self._jax_attention_spec(),
+            causal=True,
+            use_block_sizes=self._jax_attention_use_block_sizes(),
+            **attention_kwargs,
         )
 
 

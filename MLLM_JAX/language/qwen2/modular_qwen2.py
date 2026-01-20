@@ -1,5 +1,3 @@
-import functools
-import math
 from typing import Any
 
 import einops
@@ -7,13 +5,9 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel, splash_attention_mask
-from jax.experimental.shard_map import shard_map
 
 from .configuration_qwen2 import Qwen2Config
-from ..llama.llama import LlamaMLP, LlamaAttention, LlamaDecoderLayer, LlamaRMSNorm, LlamaRotaryEmbedding, \
-    apply_rotary_pos_emb, repeat_kv
-from jax.sharding import PartitionSpec as P
+from ..llama.llama import LlamaMLP, LlamaAttention, LlamaDecoderLayer, LlamaRMSNorm, LlamaRotaryEmbedding
 
 class Qwen2MLP(LlamaMLP):
     config: Qwen2Config
@@ -49,6 +43,12 @@ class Qwen2Attention(LlamaAttention):
         self.k_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=True,dtype=dtype,param_dtype=param_dtype)
         self.v_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=True,dtype=dtype,param_dtype=param_dtype)
         self.o_proj = nn.Dense(self.hidden_size, use_bias=False,dtype=dtype,param_dtype=param_dtype)
+
+    def _jax_attention_use_block_sizes(self) -> bool:
+        return False
+
+    def _jax_attention_mask_value(self) -> float | None:
+        return None
 
 
 class Qwen2DecoderLayer(LlamaDecoderLayer):
@@ -106,8 +106,6 @@ class Qwen2Model(nn.Module):
                 (attention_mask.shape[1], attention_mask.shape[1]), -1e37#-0.7 * float(np.finfo(np.dtype("float32")).max)#-1e37
             )
             attention_mask = jnp.triu(attention_mask, 1)[...]
-
-            pass
         else:
             attention_mask = jnp.where(attention_mask, 0, -0.7 * float(np.finfo(np.dtype("float32")).max)#-1e37
                                        )[:,None,None,...]

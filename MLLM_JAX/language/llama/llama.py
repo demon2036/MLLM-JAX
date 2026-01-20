@@ -11,15 +11,10 @@ import jax.numpy as jnp
 import numpy as np
 import torch
 from flax.linen.spmd import RulesFallback
-from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask, splash_attention_kernel
-
-from jax.experimental.pallas.ops.tpu.flash_attention import flash_attention
-from jax.experimental.shard_map import shard_map
 from jax.sharding import Mesh,PartitionSpec,NamedSharding
 from tqdm import tqdm
 
-from jax.sharding import PartitionSpec as P
-
+from ..attention import AttentionSpec, scaled_dot_product_attention
 
 K_MASK = -2.3819763e38  # Set to a large negative number.
 LayerCache = dict[str, jax.Array]
@@ -545,6 +540,18 @@ class LlamaAttention(nn.Module):
         self.v_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=config.attention_bias)
         self.o_proj = nn.Dense(self.hidden_size, use_bias=config.attention_bias)
 
+    def _jax_attention_spec(self) -> AttentionSpec:
+        return AttentionSpec()
+
+    def _jax_attention_backend(self) -> str:
+        return getattr(self.config, "jax_attention_backend", "auto")
+
+    def _jax_attention_use_block_sizes(self) -> bool:
+        return True
+
+    def _jax_attention_mask_value(self) -> float | None:
+        return -1e17
+
     def __call__(
             self,
             x: jax.Array,
@@ -617,62 +624,25 @@ class LlamaAttention(nn.Module):
         value_states=repeat_kv(value_states,self.num_key_value_groups)
         key_states=repeat_kv(key_states,self.num_key_value_groups)
 
-        if q_len%128==0 and value_states.shape[-1]%128==0 :#and q_len>512:
-            @functools.partial(
-                shard_map,
-                mesh=self.jax_config.mesh,
-                in_specs=P(['dp','fsdp'],'tp',None,None),
-                out_specs=P(['dp','fsdp'],'tp',None,None),
-                check_rep=False,
-            )
-            def wrap_splash_attention(query_states, key_states, value_states):
-                mask = splash_attention_mask.CausalMask(shape=(key_states.shape[2], key_states.shape[2]))
-                multi_head_mask = splash_attention_mask.MultiHeadMask(masks=(mask,) * value_states.shape[1])
+        attention_kwargs: dict[str, Any] = {}
+        mask_value = self._jax_attention_mask_value()
+        if mask_value is not None:
+            attention_kwargs["mask_value"] = mask_value
 
-                block_sizes = splash_attention_kernel.BlockSizes(
-                    block_q=min(512, query_states.shape[2]),
-                    block_kv_compute=min(512, key_states.shape[2]),
-                    block_kv=min(512, key_states.shape[2]),
-                    block_q_dkv=min(512, query_states.shape[2]),
-                    block_kv_dkv=min(512, key_states.shape[2]),
-                    block_kv_dkv_compute=min(512, query_states.shape[2]),
-                    block_q_dq=min(512, query_states.shape[2]),
-                    block_kv_dq=min(512, query_states.shape[2]),
-                )
-
-                splash_kernel = splash_attention_kernel.make_splash_mha(
-                    mask=multi_head_mask,
-                    head_shards=1,
-                    q_seq_shards=1,
-                    mask_value=-1e17,
-                    block_sizes=block_sizes
-                )
-
-                attn_output = jax.vmap(splash_kernel)(query_states , key_states, value_states)
-                return attn_output
-
-            @functools.partial(
-                shard_map,
-                mesh=self.jax_config.mesh,
-                in_specs=P(['dp', 'fsdp'], 'tp', None, None),
-                out_specs=P(['dp', 'fsdp'], 'tp', None, None),
-                check_rep=False,
-            )
-            def wrap_flash_attention(query_states, key_states, value_states):
-                attn_output = flash_attention(query_states, key_states, value_states,causal=True)
-                return attn_output
-            attn_output=wrap_splash_attention(query_states/ math.sqrt(self.head_dim), key_states, value_states).astype(jnp.bfloat16)
-
-
-        else:
-
-            attn_weights = (query_states @ key_states.swapaxes(2, 3)) / math.sqrt(self.head_dim)
-            if attn_mask is not None:  # no matter the length, we just slice it
-                causal_mask = attn_mask
-                attn_weights = attn_weights.astype(jnp.float32) + causal_mask
-
-            attn_weights = nn.softmax(attn_weights.astype(jnp.float32), axis=-1, ).astype(attn_weights.dtype)
-            attn_output = attn_weights @ value_states
+        attn_output = scaled_dot_product_attention(
+            query_states,
+            key_states,
+            value_states,
+            head_dim=self.head_dim,
+            attn_mask=attn_mask,
+            dtype=dtype,
+            mesh=getattr(self.jax_config, "mesh", None),
+            backend=self._jax_attention_backend(),
+            spec=self._jax_attention_spec(),
+            causal=True,
+            use_block_sizes=self._jax_attention_use_block_sizes(),
+            **attention_kwargs,
+        )
 
 
 

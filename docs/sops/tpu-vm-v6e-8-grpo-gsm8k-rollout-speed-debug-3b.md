@@ -1,0 +1,79 @@
+# TPU VM v6e-8 GRPO/GSM8K rollout speed debug (Qwen2.5-3B)
+
+- **Title**: SOP: Reproduce + speed up GRPO rollout time on `v6e-8` (Qwen2.5-3B) without changing `max_length_sample`
+  **Prereqs**: `v6e-8` TPU VM is `READY`; conda env `mllm-jax` exists; repo synced via Git; outbound internet for HF model download
+  **Environment (verified)**:
+  - TPU VM: `mllm-jax-v6e-8-260120021350` (`v6e-8`, 1 host), zone `us-east1-d`, project `civil-rarity-482610-s5`
+  - Python: `3.12.12`
+  - JAX/JAXLIB: `0.8.2` / `0.8.2` (backend `tpu`, `device_count=8`)
+  - Branch: `improve-rollout`
+  - Commits used:
+    - `b043fc0` (adds step time breakdown + sampler timing hooks)
+    - `6a24e97` (adds Qwen2 decode attention patch)
+
+## What we learned (root cause)
+
+- Rollout time is dominated by **decode** (token-by-token) compute.
+- Baseline decode path is expensive because:
+  - `Sampler.generate` uses a Python loop for decode (host orchestration overhead).
+  - Qwen2 attention fallback path (used when `q_len=1`) casts Q/K/V to `float32`, making per-token attention matmuls expensive on TPU.
+
+## Steps (commands actually used)
+
+### 0) Git-sync the repo on TPU (no SCP for code)
+
+- `cd /root/MLLM-JAX`
+- `git fetch --all --prune`
+- `git checkout improve-rollout`
+- `git reset --hard origin/improve-rollout`
+- `git rev-parse --short HEAD`
+
+### 1) Baseline rollout timing (no patches)
+
+This keeps `rollout.max_length_sample=1024` (from `plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml`).
+
+- `rm -f /tmp/libtpu_lockfile || true`
+- `source /root/miniconda3/etc/profile.d/conda.sh && conda activate mllm-jax`
+- `cd /root/MLLM-JAX`
+- `export WANDB_MODE=disabled TOKENIZERS_PARALLELISM=false PRINT_TRAIN_TIME_BREAKDOWN=1`
+- `unset ROLLOUT_FAST_GENERATE ROLLOUT_FAST_QWEN2_DECODE_ATTENTION PRINT_SAMPLER_GENERATE_TIMING`
+- `python -u scripts/run_grpo_gsm8k_training.py --config plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml --set steps=4 --set model_path=Qwen/Qwen2.5-3B-Instruct 2>&1 | tee /root/rollout_logs/baseline_3b_steps4.log`
+
+### 2) Speed up rollout by removing Python decode loop (while_loop)
+
+- `export WANDB_MODE=disabled TOKENIZERS_PARALLELISM=false PRINT_TRAIN_TIME_BREAKDOWN=1`
+- `export ROLLOUT_FAST_GENERATE=1`
+- `unset ROLLOUT_FAST_QWEN2_DECODE_ATTENTION PRINT_SAMPLER_GENERATE_TIMING`
+- `python -u scripts/run_grpo_gsm8k_training.py --config plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml --set steps=4 --set model_path=Qwen/Qwen2.5-3B-Instruct 2>&1 | tee /root/rollout_logs/fast_generate_3b_steps4.log`
+
+### 3) Speed up rollout further by patching Qwen2 decode attention dtype
+
+- `export WANDB_MODE=disabled TOKENIZERS_PARALLELISM=false PRINT_TRAIN_TIME_BREAKDOWN=1`
+- `export ROLLOUT_FAST_GENERATE=1`
+- `export ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1`
+- `unset PRINT_SAMPLER_GENERATE_TIMING`
+- `python -u scripts/run_grpo_gsm8k_training.py --config plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml --set steps=4 --set model_path=Qwen/Qwen2.5-3B-Instruct 2>&1 | tee /root/rollout_logs/fast_generate_decodeattn_3b_steps4.log`
+
+## Expected Result
+
+- The runner prints per-step breakdown when `PRINT_TRAIN_TIME_BREAKDOWN=1`, including:
+  - `rollout_generate=...s`
+  - `update=...s`
+  - `completion_len_max=...`
+- With `ROLLOUT_FAST_GENERATE=1` + `ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1`, `rollout_generate` drops materially vs baseline at the same `max_length_sample=1024`.
+
+## Troubleshooting
+
+- `Unable to initialize backend 'tpu' ... already in use`:
+  - `rm -f /tmp/libtpu_lockfile` and ensure no other training process is running (`pgrep -af run_grpo_gsm8k_training.py`).
+- Logs disappearing after repo clean:
+  - Keep logs outside the repo dir (example used here: `/root/rollout_logs/`).
+
+## References
+
+- `plugins/training/runner/grpo_gsm8k.py`
+- `plugins/training/rollout_optimizations/fast_sampler_generate.py`
+- `plugins/training/rollout_optimizations/qwen2_decode_attention.py`
+- `MLLM_JAX/sample/sample_state_right_padding2.py`
+- `MLLM_JAX/language/qwen2/modular_qwen2.py`
+

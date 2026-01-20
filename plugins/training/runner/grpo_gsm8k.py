@@ -410,6 +410,12 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         beta=cfg.train.beta,
         create_sampler=True,
     )
+    if os.environ.get("ROLLOUT_FAST_GENERATE") == "1":
+        from plugins.training.rollout_optimizations import patch_sampler_generate_fast
+
+        patch_sampler_generate_fast(sampler)
+        if jax.process_index() == 0:
+            print("rollout_fast_generate=1 (patched sampler.generate)")
     rollout_backend = create_rollout_backend(
         name=rollout_backend_name,
         sampler=sampler,

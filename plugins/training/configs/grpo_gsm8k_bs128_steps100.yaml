@@ -8,7 +8,7 @@
 #
 # This config sets:
 # - rollout.batch_size=128, rollout.num_pre_q=8 -> global_batch=128 sequences
-# - train.micro_batch_size=16 -> runner infers grad_accum_steps so update sees 128 sequences/step
+# - train.micro_batch_size=128 -> runner infers grad_accum_steps=1 (no accumulation)
 #
 # Intended use: v6e-8 single-host training (100 steps) with W&B logging.
 
@@ -26,7 +26,7 @@ rollout:
   max_length_sample: 1024
 
 train:
-  micro_batch_size: 16
+  micro_batch_size: 128
   per_device_micro_batch_size: null
   ppo_epochs: 1
   beta: 0.0

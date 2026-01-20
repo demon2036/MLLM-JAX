@@ -23,7 +23,7 @@ rollout:
   prompt_batch_size: null
   num_pre_q: 8
   global_length: 512
-  max_length_sample: 64
+  max_length_sample: 1024
 
 train:
   micro_batch_size: 16

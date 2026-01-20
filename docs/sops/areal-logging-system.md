@@ -63,3 +63,18 @@
 - AReaL repo: https://github.com/inclusionAI/AReaL
 - 本仓库调研输出：`answers/areal-logging-system.md`
 
+## Windows notes (PowerShell, 2026-01-20)
+
+Commands actually used (Windows, this repo):
+
+- `git clone --depth 1 https://github.com/inclusionAI/AReaL.git workdir/areal`
+- `git -C workdir/areal rev-parse --short HEAD` (inspected: `37e4f84`)
+- `rg -n "class StatsLogger|class DistributedStatsTracker|class PerfTracer" workdir/areal/areal/utils -S`
+
+Key takeaways for W&B metric naming:
+
+- AReaL does **not** put everything under `train/*`. It uses hierarchical scopes such as:
+  - `timeperf/<stage>` from `stats_tracker.record_timing(...)`
+  - `<scope>/<metric>` from `with stats_tracker.scope("<scope>")`
+- `stats_tracker` exports `key__count` for scalar aggregation across workers; `StatsLogger.commit` filters `__count` keys before logging to W&B.
+

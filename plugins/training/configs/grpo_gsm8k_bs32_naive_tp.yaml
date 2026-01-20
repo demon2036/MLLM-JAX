@@ -10,9 +10,9 @@ steps: 20
 
 rollout:
   backend: naive
-  global_batch_size: null
   per_device_batch_size: null
   batch_size: 32
+  prompt_batch_size: null
   num_pre_q: 1
   global_length: 512
   max_length_sample: 1024
@@ -20,9 +20,7 @@ rollout:
 train:
   micro_batch_size: 4
   per_device_micro_batch_size: null
-  max_length_total: null
   ppo_epochs: 1
-  grad_accum_steps: 1
   beta: 0.0
 
 mesh_shape: 1,1,-1

@@ -1,13 +1,14 @@
-# GRPO/GSM8K config: "overall batch" = 128 sequences per step (local_batch=128)
+# GRPO/GSM8K config: batch_size=128 sequences per training step (global)
 #
 # In this repo:
-# - `rollout.batch_size` is prompts per step (per process)
+# - `rollout.batch_size` is sequences per training step (global, across all processes)
+# - `rollout.prompt_batch_size` is prompts per rollout pass (per process)
 # - `rollout.num_pre_q` is samples per prompt (GRPO group size, K)
-# - `local_batch` (sequences per step) = rollout.batch_size * rollout.num_pre_q * rollout_passes
+# - `local_batch` (sequences per step, per process) = rollout.prompt_batch_size * rollout.num_pre_q * rollout_passes
 #
 # This config sets:
-# - rollout.batch_size=16, rollout.num_pre_q=8  -> local_batch=128 sequences
-# - train.micro_batch_size=16, train.grad_accum_steps=8 -> 16 * 8 = 128 sequences per update
+# - rollout.batch_size=128, rollout.num_pre_q=8 -> global_batch=128 sequences
+# - train.micro_batch_size=16 -> runner infers grad_accum_steps so update sees 128 sequences/step
 #
 # Intended use: v6e-8 single-host training (100 steps) with W&B logging.
 
@@ -17,19 +18,17 @@ steps: 100
 
 rollout:
   backend: naive
-  global_batch_size: null
   per_device_batch_size: null
-  batch_size: 16
+  batch_size: 128
+  prompt_batch_size: null
   num_pre_q: 8
   global_length: 512
-  max_length_sample: 64
+  max_length_sample: 1024
 
 train:
   micro_batch_size: 16
   per_device_micro_batch_size: null
-  max_length_total: 192
   ppo_epochs: 1
-  grad_accum_steps: 8
   beta: 0.0
 
 mesh_shape: 1,-1,1

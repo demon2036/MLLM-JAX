@@ -21,14 +21,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # - "naive": in-process sampler (current default)
         # - Future: other engines (e.g. vllm)
         "backend": "naive",
-        # Optional: total prompts per training step (global, across all processes).
+        # Optional: total sequences per training step (global, across all processes).
         # If set, runner will do multiple rollout passes and may pad up to the next
         # full pass to keep shapes equal across hosts/devices.
-        "global_batch_size": None,
+        #
+        # A "sequence" here means one (prompt, completion) sample.
+        "batch_size": None,
+        # Optional: prompts per process per rollout pass (forward-only).
+        # If unset, runner derives a value from `batch_size`, `num_pre_q`, and `process_count`.
+        "prompt_batch_size": None,
         # Optional: prompts per device per rollout pass (forward-only).
-        # Runner uses this to derive a per-process batch size.
+        # Runner uses this to derive `prompt_batch_size`.
         "per_device_batch_size": None,
-        "batch_size": 1,
         # Number of samples per prompt (GRPO group size, a.k.a. K).
         "num_pre_q": 8,
         "global_length": 512,
@@ -41,10 +45,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Optional: sequences per device per micro-step (backward).
         # Runner uses this to derive `micro_batch_size` and `grad_accum_steps`.
         "per_device_micro_batch_size": None,
-        # If null, runner uses `rollout.max_length_sample + 128`.
-        "max_length_total": None,
         "ppo_epochs": 1,
-        "grad_accum_steps": 1,
         "beta": 0.0,
     },
     # Mesh

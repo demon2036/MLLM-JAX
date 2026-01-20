@@ -6,6 +6,8 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
+import math
+
 import numpy as np
 
 from plugins.training.grpo.advantages import compute_grpo_advantages_by_group_id
@@ -16,12 +18,17 @@ from plugins.training.grpo.update import ppo_update
 
 @dataclass(frozen=True)
 class GRPORolloutConfig:
-    batch_size: int
+    # Optional: global sequences per training step (across all processes).
+    # If None, runner does a single rollout pass using `prompt_batch_size`.
+    #
+    # A "sequence" here means one (prompt, completion) sample.
+    batch_size: int | None
     num_pre_q: int
     global_length: int
     max_length_sample: int
-    # Optional: global prompts per training step (across all processes).
-    global_batch_size: int | None = None
+    # Optional: prompts per process per rollout pass.
+    # If unset, runner derives a value from `batch_size`, `num_pre_q`, and `process_count`.
+    prompt_batch_size: int | None = None
     # Optional: prompts per device per rollout pass (forward-only).
     per_device_batch_size: int | None = None
     # Rollout backend selector (swappable generation engine).
@@ -208,37 +215,60 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         sharding = NamedSharding(mesh, PS(mesh.axis_names))
         return jax.make_array_from_single_device_arrays(global_shape, sharding, local_device_buffers)
 
-    # --- Resolve rollout batch (prompts) ---
-    rollout_batch_size = int(cfg.rollout.batch_size)
+    # --- Resolve rollout batch sizes ---
+    num_pre_q = int(cfg.rollout.num_pre_q)
+    if num_pre_q <= 0:
+        raise ValueError("rollout.num_pre_q must be > 0")
+
+    global_seq_target = cfg.rollout.batch_size
+    global_prompt_target: int | None
+    if global_seq_target is not None:
+        global_seq_target = int(global_seq_target)
+        if global_seq_target <= 0:
+            raise ValueError("rollout.batch_size must be > 0")
+        if global_seq_target % num_pre_q != 0:
+            raise ValueError(
+                f"rollout.batch_size={global_seq_target} must be divisible by rollout.num_pre_q={num_pre_q} "
+                "(each prompt has exactly num_pre_q samples)."
+            )
+        global_prompt_target = global_seq_target // num_pre_q
+    else:
+        global_prompt_target = None
+
+    prompt_batch_size = cfg.rollout.prompt_batch_size
     if cfg.rollout.per_device_batch_size is not None:
         per_device_rollout = int(cfg.rollout.per_device_batch_size)
         if per_device_rollout <= 0:
             raise ValueError("rollout.per_device_batch_size must be > 0")
-        rollout_batch_size = per_device_rollout * local_device_count
+        prompt_batch_size = per_device_rollout * local_device_count
 
-    if rollout_batch_size <= 0:
-        raise ValueError("rollout.batch_size must be > 0")
+    if prompt_batch_size is None:
+        if global_prompt_target is not None:
+            prompt_batch_size = max(1, (int(global_prompt_target) + int(process_count) - 1) // int(process_count))
+        else:
+            prompt_batch_size = 1
+
+    prompt_batch_size = int(prompt_batch_size)
+    if prompt_batch_size <= 0:
+        raise ValueError("rollout.prompt_batch_size must be > 0")
 
     # Ensure per-pass local batch (sequences) can be evenly split across local devices.
-    local_batch_per_pass = int(rollout_batch_size) * int(cfg.rollout.num_pre_q)
-    padded_local_batch_per_pass = _ensure_batch_multiple_of_local_devices(local_batch_per_pass, local_device_count)
-    if padded_local_batch_per_pass != local_batch_per_pass:
-        if padded_local_batch_per_pass % rollout_batch_size != 0:
-            raise ValueError(
-                f"Cannot pad local batch {local_batch_per_pass} -> {padded_local_batch_per_pass} "
-                f"because rollout.batch_size={rollout_batch_size} does not divide it."
-            )
-        new_num_pre_q = padded_local_batch_per_pass // rollout_batch_size
+    required_multiple = local_device_count // math.gcd(num_pre_q, local_device_count)
+    if required_multiple <= 0:
+        raise ValueError("Invalid rollout batching: local_device_count must be > 0")
+    if prompt_batch_size % required_multiple != 0:
+        padded_prompt_batch_size = ((prompt_batch_size + required_multiple - 1) // required_multiple) * required_multiple
         print(
-            f"Padding local batch {local_batch_per_pass} -> {padded_local_batch_per_pass} by changing "
-            f"rollout.num_pre_q {cfg.rollout.num_pre_q} -> {new_num_pre_q}."
+            f"Padding rollout.prompt_batch_size {prompt_batch_size} -> {padded_prompt_batch_size} so that "
+            f"prompt_batch_size * rollout.num_pre_q is divisible by local_device_count={local_device_count}."
         )
-        cfg = GRPOGsm8kConfig(**{**cfg.__dict__, "rollout": GRPORolloutConfig(**{**cfg.rollout.__dict__, "num_pre_q": new_num_pre_q})})
-        local_batch_per_pass = padded_local_batch_per_pass
+        prompt_batch_size = padded_prompt_batch_size
 
-    base_rollout_passes, _base_effective_global_prompts = infer_rollout_passes(
-        global_batch_size=cfg.rollout.global_batch_size,
-        batch_size_per_process=rollout_batch_size,
+    local_batch_per_pass = int(prompt_batch_size) * int(num_pre_q)
+
+    base_rollout_passes, effective_global_prompts = infer_rollout_passes(
+        global_batch_size=global_prompt_target,
+        batch_size_per_process=prompt_batch_size,
         process_count=process_count,
     )
     rollout_passes = int(base_rollout_passes)
@@ -270,13 +300,14 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             rollout_passes = int(padded_passes)
 
     local_batch = int(rollout_passes) * int(local_batch_per_pass)
+    global_batch = int(local_batch) * int(process_count)
 
     grad_accum_steps = int(cfg.train.grad_accum_steps)
     if micro_batch_size_per_process is not None:
         if local_batch % micro_batch_size_per_process != 0:
             raise ValueError(
                 f"train.micro_batch_size={micro_batch_size_per_process} must divide local_batch={local_batch} "
-                f"(rollout_passes * rollout.batch_size * rollout.num_pre_q)."
+                f"(rollout_passes * rollout.prompt_batch_size * rollout.num_pre_q)."
             )
         micro_steps = local_batch // micro_batch_size_per_process
         if grad_accum_steps != 1 and grad_accum_steps != micro_steps:
@@ -289,13 +320,23 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     if local_batch % grad_accum_steps != 0:
         raise ValueError(
             f"train.grad_accum_steps={grad_accum_steps} must divide local_batch={local_batch} "
-            f"(rollout_passes * rollout.batch_size * rollout.num_pre_q)."
+            f"(rollout_passes * rollout.prompt_batch_size * rollout.num_pre_q)."
         )
+
+    resolved_rollout_batch_size = cfg.rollout.batch_size
+    if resolved_rollout_batch_size is None:
+        resolved_rollout_batch_size = global_batch
 
     cfg = GRPOGsm8kConfig(
         **{
             **cfg.__dict__,
-            "rollout": GRPORolloutConfig(**{**cfg.rollout.__dict__, "batch_size": rollout_batch_size}),
+            "rollout": GRPORolloutConfig(
+                **{
+                    **cfg.rollout.__dict__,
+                    "batch_size": resolved_rollout_batch_size,
+                    "prompt_batch_size": prompt_batch_size,
+                }
+            ),
             "train": GRPOTrainConfig(
                 **{
                     **cfg.train.__dict__,
@@ -317,6 +358,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 rollout={**asdict(cfg.rollout), "passes_per_step": int(rollout_passes)},
                 train=asdict(cfg.train),
                 local_batch=local_batch,
+                global_batch=global_batch,
                 mesh_shape=cfg.mesh_shape,
                 wandb_project=cfg.wandb_project,
                 wandb_name=cfg.wandb_name,
@@ -404,13 +446,13 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         t_adv = 0.0
 
         for pass_idx in range(int(rollout_passes)):
-            batch_items = [rng.choice(qas) for _ in range(cfg.rollout.batch_size)]
+            batch_items = [rng.choice(qas) for _ in range(int(cfg.rollout.prompt_batch_size))]
             prompts_base = [item["Q"] for item in batch_items]
             repeated_prompts = [p for p in prompts_base for _ in range(cfg.rollout.num_pre_q)]
             repeated_items = [item for item in batch_items for _ in range(cfg.rollout.num_pre_q)]
 
             group_ids = np.repeat(
-                np.arange(cfg.rollout.batch_size, dtype=np.int32) + pass_idx * cfg.rollout.batch_size,
+                np.arange(int(cfg.rollout.prompt_batch_size), dtype=np.int32) + pass_idx * int(cfg.rollout.prompt_batch_size),
                 cfg.rollout.num_pre_q,
             )
 
@@ -635,8 +677,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             eval_rewards_per_func_all: list[np.ndarray] = []
 
             for eval_batch_idx in range(int(cfg.eval_batches)):
-                start = (step * int(cfg.eval_batches) + eval_batch_idx) * cfg.rollout.batch_size
-                eval_items = [eval_qas[(start + i) % len(eval_qas)] for i in range(cfg.rollout.batch_size)]
+                start = (step * int(cfg.eval_batches) + eval_batch_idx) * int(cfg.rollout.prompt_batch_size)
+                eval_items = [eval_qas[(start + i) % len(eval_qas)] for i in range(int(cfg.rollout.prompt_batch_size))]
                 eval_prompts_base = [item["Q"] for item in eval_items]
                 eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(cfg.rollout.num_pre_q)]
                 eval_repeated_items = [item for item in eval_items for _ in range(cfg.rollout.num_pre_q)]

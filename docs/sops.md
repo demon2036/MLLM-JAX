@@ -21,6 +21,7 @@
 - TPU v4-16 GRPO micro-batch smoke run (1 step): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
 - TPU v4-16 OOM sweep (len=2048, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-oom-sweep-len2048.md`
 - jit8 GRPO/GSM8K YAML config: `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
+- GRPO runner batch size semantics: `docs/sops/grpo-gsm8k-runner-batch-size.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
 - GRPO rollout backend abstraction (naive): `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - AReaL RL organization notes (for modularizing training): `docs/sops/areal-rl-organization.md`
@@ -63,6 +64,7 @@
 - `docs/sops/areal-rl-organization.md`
 - `docs/sops/areal-logging-system.md`
 - `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
+- `docs/sops/grpo-gsm8k-runner-batch-size.md`
 - `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
 
 ### Docs

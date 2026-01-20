@@ -80,9 +80,14 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
 
     # Rollout (generation)
     _maybe_override_from_env(cfg, env="ROLLOUT_BACKEND", key_path="rollout.backend", cast=str)
+    # New-style: global sequences per training step (across all processes).
+    _maybe_override_from_env(cfg, env="ROLLOUT_BATCH_SIZE", key_path="rollout.batch_size", cast=int)
+    # Legacy: global prompts per training step (across all processes). Still accepted.
     _maybe_override_from_env(cfg, env="ROLLOUT_GLOBAL_BATCH_SIZE", key_path="rollout.global_batch_size", cast=int)
     _maybe_override_from_env(cfg, env="ROLLOUT_PER_DEVICE_BATCH_SIZE", key_path="rollout.per_device_batch_size", cast=int)
-    _maybe_override_from_env(cfg, env="BATCH_SIZE", key_path="rollout.batch_size", cast=int)
+    # Legacy: prompts per rollout pass (per process). Still accepted as `BATCH_SIZE`.
+    _maybe_override_from_env(cfg, env="BATCH_SIZE", key_path="rollout.prompt_batch_size", cast=int)
+    _maybe_override_from_env(cfg, env="ROLLOUT_PROMPT_BATCH_SIZE", key_path="rollout.prompt_batch_size", cast=int)
     _maybe_override_from_env(cfg, env="NUM_PRE_Q", key_path="rollout.num_pre_q", cast=int)
     _maybe_override_from_env(cfg, env="GLOBAL_LENGTH", key_path="rollout.global_length", cast=int)
     _maybe_override_from_env(cfg, env="MAX_LENGTH_SAMPLE", key_path="rollout.max_length_sample", cast=int)
@@ -119,16 +124,6 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
     model_path = str(cfg.get("model_path") or "Qwen/Qwen2.5-7B-Instruct")
     steps = int(cfg.get("steps") or 20)
 
-    rollout_batch_size = _get_by_path(cfg, "rollout.batch_size")
-    if rollout_batch_size is None:
-        rollout_batch_size = cfg.get("batch_size")
-    rollout_batch_size = int(rollout_batch_size or 1)
-
-    rollout_global_batch_size_raw = _get_by_path(cfg, "rollout.global_batch_size")
-    if rollout_global_batch_size_raw is None:
-        rollout_global_batch_size_raw = cfg.get("rollout_global_batch_size")
-    rollout_global_batch_size = int(rollout_global_batch_size_raw) if rollout_global_batch_size_raw is not None else None
-
     rollout_per_device_batch_size_raw = _get_by_path(cfg, "rollout.per_device_batch_size")
     if rollout_per_device_batch_size_raw is None:
         rollout_per_device_batch_size_raw = cfg.get("rollout_per_device_batch_size")
@@ -140,6 +135,33 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
     if rollout_num_pre_q is None:
         rollout_num_pre_q = cfg.get("num_pre_q")
     rollout_num_pre_q = int(rollout_num_pre_q or 8)
+
+    # New-style: global sequences per training step (across all processes).
+    rollout_batch_size_raw = _get_by_path(cfg, "rollout.batch_size")
+    if rollout_batch_size_raw is None:
+        rollout_batch_size_raw = cfg.get("rollout_batch_size")
+    rollout_batch_size = int(rollout_batch_size_raw) if rollout_batch_size_raw is not None else None
+
+    # Prompts per rollout pass (per process).
+    rollout_prompt_batch_size_raw = _get_by_path(cfg, "rollout.prompt_batch_size")
+    if rollout_prompt_batch_size_raw is None:
+        rollout_prompt_batch_size_raw = cfg.get("rollout_prompt_batch_size")
+    if rollout_prompt_batch_size_raw is None:
+        rollout_prompt_batch_size_raw = cfg.get("prompt_batch_size")
+    if rollout_prompt_batch_size_raw is None:
+        # Legacy flat key used by older SOPs / scripts.
+        rollout_prompt_batch_size_raw = cfg.get("batch_size")
+    rollout_prompt_batch_size = int(rollout_prompt_batch_size_raw) if rollout_prompt_batch_size_raw is not None else None
+
+    # Legacy: global prompts per training step (across all processes).
+    rollout_global_prompt_batch_size_raw = _get_by_path(cfg, "rollout.global_batch_size")
+    if rollout_global_prompt_batch_size_raw is None:
+        rollout_global_prompt_batch_size_raw = cfg.get("rollout_global_batch_size")
+    rollout_global_prompt_batch_size = (
+        int(rollout_global_prompt_batch_size_raw) if rollout_global_prompt_batch_size_raw is not None else None
+    )
+    if rollout_batch_size is None and rollout_global_prompt_batch_size is not None:
+        rollout_batch_size = int(rollout_global_prompt_batch_size) * int(rollout_num_pre_q)
 
     global_length = _get_by_path(cfg, "rollout.global_length")
     if global_length is None:
@@ -211,7 +233,7 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
         rollout=GRPORolloutConfig(
             backend=rollout_backend,
             batch_size=rollout_batch_size,
-            global_batch_size=rollout_global_batch_size,
+            prompt_batch_size=rollout_prompt_batch_size,
             per_device_batch_size=rollout_per_device_batch_size,
             num_pre_q=rollout_num_pre_q,
             global_length=global_length,

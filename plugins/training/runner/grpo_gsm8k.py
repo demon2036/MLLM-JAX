@@ -655,17 +655,28 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             wandb.log(train_log, step=step)
 
         if jax.process_index() == 0:
-            print(
-                " ".join(
+            parts = [
+                f"step={step}",
+                f"loss={loss_value:.6f}",
+                f"entropy={entropy_value:.4f}",
+                f"reward_mean={reward_global_stats['mean']:.4f}",
+                f"dt={t_step:.2f}s",
+            ]
+            if os.environ.get("PRINT_TRAIN_TIME_BREAKDOWN") == "1":
+                parts.extend(
                     [
-                        f"step={step}",
-                        f"loss={loss_value:.6f}",
-                        f"entropy={entropy_value:.4f}",
-                        f"reward_mean={reward_global_stats['mean']:.4f}",
-                        f"dt={t_step:.2f}s",
+                        f"rollout={t_rollout:.2f}s",
+                        f"rollout_sync={t_rollout_sync:.2f}s",
+                        f"rollout_generate={t_rollout_generate:.2f}s",
+                        f"rollout_flush={t_rollout_flush:.2f}s",
+                        f"rollout_release={t_rollout_release:.2f}s",
+                        f"reward={t_reward:.2f}s",
+                        f"advantages={t_adv:.2f}s",
+                        f"shard={t_shard:.2f}s",
+                        f"update={t_update:.2f}s",
                     ]
                 )
-            )
+            print(" ".join(parts))
 
         # --- Eval (optional; no updates) ---
         if eval_qas and int(cfg.eval_every_steps) > 0 and ((step + 1) % int(cfg.eval_every_steps) == 0):

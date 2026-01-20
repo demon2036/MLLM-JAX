@@ -66,7 +66,7 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
         import jax
         import jax.numpy as jnp
 
-        from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache
+        from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache_right
         from MLLM_JAX.sample.sample_state_right_padding2 import SampleState
         from MLLM_JAX.utils import collect_process_data
 
@@ -82,8 +82,6 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
         if max_length_ceiled is None:
             raise ValueError(f"No decode bucket found for max_length={max_length_i}")
         max_length_ceiled = int(max_length_ceiled)
-
-        total_cache_length = prefill_length_i + max_length_ceiled
 
         batch_size = int(np.shape(input_ids_pad)[0])
         eos_token_id = int(self.tokenizer.eos_token_id)
@@ -113,7 +111,7 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
         cache = init_cache(
             self.model.config,
             batch_size,
-            max_cache_length=total_cache_length,
+            max_cache_length=prefill_length_i,
             dtype=self.dtype,
             shard_method=self.global_collect_method,
         )
@@ -125,6 +123,7 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
             attention_mask=attention_global,
             cache=cache,
         )
+        cache = pad_cache_right(cache, prefill_length_i, max_length_ceiled)
 
         start_positions = jnp.max(position_global * attention_global, axis=1).reshape((-1, 1)) + 1
         next_token_logits = jnp.take_along_axis(logits, start_positions[..., None] - 1, axis=1)[:, -1]
@@ -163,4 +162,3 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
     sampler.generate = types.MethodType(generate_fast, sampler)
     sampler._fast_generate_patched = True
     sampler._fast_generate_original = original_generate
-

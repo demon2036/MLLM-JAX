@@ -1,6 +1,6 @@
-# TPU VM v6e-8 (spot, 1-host) GRPO/GSM8K 100-step Train (bs=128 sequences) with W&B
+# TPU VM v6e-8 (spot, 1-host) GRPO/GSM8K 100-step Train (bs=128 sequences, global) with W&B
 
-- **Title**: SOP: Run `GRPO + GSM8K` for 100 steps on a `v6e-8` TPU VM (spot) with `local_batch=128` and W&B logging
+- **Title**: SOP: Run `GRPO + GSM8K` for 100 steps on a `v6e-8` TPU VM (spot) with `batch_size=128` (global sequences/step) and W&B logging
   **Prereqs**: Windows PowerShell + `gcloud` installed/authenticated; TPU API enabled; outbound internet from TPU VM (HF + datasets + wandb); local `.env` contains `WANDB_API_KEY` (gitignored)
   **Environment (verified)**:
   - Local: Windows PowerShell; gcloud `551.0.0`; account `nitokyo8@gmail.com`; project `civil-rarity-482610-s5`
@@ -8,8 +8,8 @@
   - TPU OS: Ubuntu `24.04.2` (kernel `6.11.0-1015-gcp`)
   - Conda env: `mllm-jax` (Python `3.12.12`)
   - JAX: `0.8.2`, jaxlib `0.8.2`, libtpu `0.0.32`, device_count `8`
-  - Repo: `https://github.com/demon2036/MLLM-JAX.git`, branch `mllm-jax-sglang`, commit `d04a76c`
-  - W&B run: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/1xzp558q`
+  - Repo: `https://github.com/demon2036/MLLM-JAX.git`, branch `mllm-jax-sglang`, commit `0fb993a`
+  - W&B run: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/digdipr9`
 
 ## Steps (commands actually used)
 
@@ -57,33 +57,33 @@ Record the host key fingerprint shown on first connect and pass it explicitly:
 ### 7) Start a 100-step run (bs=128 sequences) via nohup helper
 
 Config notes:
-- `BATCH_SIZE=16`, `NUM_PRE_Q=8` ⇒ `local_batch=128` (and `global_batch=128` on 1-host v6e-8)
-- `TRAIN_MICRO_BATCH_SIZE=16`, `GRAD_ACCUM_STEPS=8` ⇒ micro-batch 16 * 8 accum = 128 sequences
-- `MAX_LENGTH_SAMPLE=64`, `EVAL_EVERY_STEPS=10`, `EVAL_SPLIT=test`
+- Config: `plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml`
+- `rollout.batch_size=128` means global sequences per training step (across all processes/hosts)
+- `rollout.num_pre_q=8` => global prompts/step = `128/8=16`; on 1-host v6e-8 this infers `rollout.prompt_batch_size=16` and `local_batch=128`
+- `train.micro_batch_size=16` => runner infers `train.grad_accum_steps=8` at runtime (so update sees 128 sequences/step)
+- `rollout.max_length_sample=1024`, `rollout.global_length=512`, `eval_every_steps=10`, `eval_split=test`
 
-- `$run_ts = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss'); $wandb_name = "grpo_gsm8k_v6e-8_d04a76c_bs128_steps100_eval10_$run_ts"; gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command "set -euo pipefail; cd /root/MLLM-JAX; export HF_HUB_ENABLE_HF_TRANSFER=1; export TOKENIZERS_PARALLELISM=false; export WANDB_MODE=online; export WANDB_PROJECT=mllm-jax-grpo-gsm8k; export WANDB_NAME=$wandb_name; export MODEL_PATH=Qwen/Qwen2.5-7B-Instruct; export STEPS=100; export ROLLOUT_BACKEND=naive; export BATCH_SIZE=16; export NUM_PRE_Q=8; export GLOBAL_LENGTH=512; export MAX_LENGTH_SAMPLE=64; export TRAIN_MICRO_BATCH_SIZE=16; export GRAD_ACCUM_STEPS=8; export PPO_EPOCHS=1; export BETA=0.0; export EVAL_EVERY_STEPS=10; export EVAL_BATCHES=1; export EVAL_SPLIT=test; export ENV_NAME=mllm-jax; export CONFIG_PATH=plugins/training/configs/grpo_gsm8k_default.yaml; bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh"`
+- `$run_ts = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss'); $wandb_name = "grpo_gsm8k_v6e-8_0fb993a_bs128_steps100_len1024_$run_ts"; gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command "set -euo pipefail; cd /root/MLLM-JAX; export WANDB_MODE=online; export WANDB_PROJECT=mllm-jax-grpo-gsm8k; export WANDB_NAME=$wandb_name; export ENV_NAME=mllm-jax; export CONFIG_PATH=plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml; bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh"`
 
 ### 8) Monitor and verify exit code
 
 - `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command 'ps -p <PID> -o pid=,etime=,cmd= || echo process_not_running'`
-- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command 'grep -n "step=" /root/MLLM-JAX/logs/nohup_grpo_gsm8k_default_latest.log | tail -n 5 || true'`
-- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command 'cat /root/MLLM-JAX/logs/nohup_grpo_gsm8k_default_latest.exit'`  # expect `0`
+- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command 'grep -n \"step=\" /root/MLLM-JAX/logs/nohup_grpo_gsm8k_bs128_steps100_latest.log | tail -n 5 || true'`
+- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command 'cat /root/MLLM-JAX/logs/nohup_grpo_gsm8k_bs128_steps100_latest.exit'`  # expect `0`
 
 ### 9) Extract final metrics from `wandb-summary.json` (no W&B API needed)
 
-- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command "set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; python -c 'import json,sys; d=json.load(open(sys.argv[1])); [print(k, d.get(k)) for k in sys.argv[2:]]' /root/MLLM-JAX/wandb/latest-run/files/wandb-summary.json train/reward_correct_mean eval/reward_correct_mean train/reward_total_mean eval/reward_total_mean time/train/step_avg_last10_s train/batch_local train/batch_global"`
+- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command "set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; python -c 'import json,sys; d=json.load(open(sys.argv[1])); [print(k, d.get(k)) for k in sys.argv[2:]]' /root/MLLM-JAX/wandb/latest-run/files/wandb-summary.json train/reward/func/reward_correct/mean eval/reward/func/reward_correct/mean train/reward/total/mean eval/reward/total/mean time/train/step_avg_last10_s train/other/batch_local train/other/batch_global"`
 
 ## Expected Result
 
-- `logs/nohup_grpo_gsm8k_default_latest.exit` contains `0`.
+- `logs/nohup_grpo_gsm8k_bs128_steps100_latest.exit` contains `0`.
 - `wandb-summary.json` includes final `train/*` + `eval/*` metrics.
 
 ## Observed Result (this verified run)
 
-- Exit: `0`
-- `train/reward_correct_mean`: `0.5`
-- `eval/reward_correct_mean`: `0.1640625`
-- W&B run: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/1xzp558q`
+- W&B run: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/digdipr9`
+- Ran to `step=62`, then manually stopped (no `.exit` file written for this run)
 
 ## Troubleshooting
 
@@ -96,3 +96,4 @@ Config notes:
 - `docs/sops/tpu-vm-repo-sync.md`
 - `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-100steps.md`
 - `scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh`
+- `plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml`

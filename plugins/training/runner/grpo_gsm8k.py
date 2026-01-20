@@ -607,25 +607,29 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         global_batch = int(local_batch * jax.process_count())
 
         train_log: dict[str, Any] = {
-            "train/loss": loss_value,
-            "train/entropy": entropy_value,
-            "train/reward_total_mean": reward_global_stats["mean"],
-            "train/reward_total_std": reward_global_stats["std"],
-            "train/reward_total_min": reward_global_stats["min"],
-            "train/reward_total_max": reward_global_stats["max"],
-            "train/adv_mean": adv_global_stats["mean"],
-            "train/adv_std": adv_global_stats["std"],
-            "train/adv_min": adv_global_stats["min"],
-            "train/adv_max": adv_global_stats["max"],
-            "train/seq_prompt_len_mean": prompt_stats["mean"],
-            "train/seq_prompt_len_max": prompt_stats["max"],
-            "train/seq_completion_len_mean": completion_stats["mean"],
-            "train/seq_completion_len_max": completion_stats["max"],
-            "train/seq_total_len_mean": total_len_stats["mean"],
-            "train/seq_total_len_max": total_len_stats["max"],
-            "train/batch_global": global_batch,
-            "train/batch_local": int(local_batch),
-            "train/total_valid_token_count": valid_tokens_global,
+            # Other
+            "train/other/loss": loss_value,
+            "train/other/entropy": entropy_value,
+            "train/other/batch_global": global_batch,
+            "train/other/batch_local": int(local_batch),
+            "train/other/total_valid_token_count": valid_tokens_global,
+            # Reward / advantage
+            "train/reward/total/mean": reward_global_stats["mean"],
+            "train/reward/total/std": reward_global_stats["std"],
+            "train/reward/total/min": reward_global_stats["min"],
+            "train/reward/total/max": reward_global_stats["max"],
+            "train/reward/advantage/mean": adv_global_stats["mean"],
+            "train/reward/advantage/std": adv_global_stats["std"],
+            "train/reward/advantage/min": adv_global_stats["min"],
+            "train/reward/advantage/max": adv_global_stats["max"],
+            # Seq lengths
+            "train/seq_len/prompt/mean": prompt_stats["mean"],
+            "train/seq_len/prompt/max": prompt_stats["max"],
+            "train/seq_len/completion/mean": completion_stats["mean"],
+            "train/seq_len/completion/max": completion_stats["max"],
+            "train/seq_len/total/mean": total_len_stats["mean"],
+            "train/seq_len/total/max": total_len_stats["max"],
+            # Timing
             "time/train/rollout_s": float(t_rollout),
             "time/train/rollout_sync_s": float(t_rollout_sync),
             "time/train/rollout_generate_s": float(t_rollout_generate),
@@ -640,7 +644,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         if len(step_times) >= 10:
             train_log["time/train/step_avg_last10_s"] = float(sum(step_times[-10:]) / 10.0)
         for name, mean_value in zip(reward_func_names, per_func_means):
-            train_log[f"train/{name}_mean"] = float(mean_value)
+            train_log[f"train/reward/func/{name}/mean"] = float(mean_value)
 
         if t_step > 0:
             train_log["throughput/train/valid_tokens_per_s"] = float(valid_tokens_global) / float(t_step)
@@ -731,16 +735,16 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             eval_rewards_concat = np.concatenate(eval_rewards_all, axis=0) if eval_rewards_all else np.asarray([], dtype=np.float32)
             eval_reward_stats = _stats_1d(eval_rewards_concat)
 
-            eval_logs["eval/reward_total_mean"] = float(eval_reward_stats["mean"])
-            eval_logs["eval/reward_total_std"] = float(eval_reward_stats["std"])
-            eval_logs["eval/reward_total_min"] = float(eval_reward_stats["min"])
-            eval_logs["eval/reward_total_max"] = float(eval_reward_stats["max"])
+            eval_logs["eval/reward/total/mean"] = float(eval_reward_stats["mean"])
+            eval_logs["eval/reward/total/std"] = float(eval_reward_stats["std"])
+            eval_logs["eval/reward/total/min"] = float(eval_reward_stats["min"])
+            eval_logs["eval/reward/total/max"] = float(eval_reward_stats["max"])
 
             if eval_rewards_per_func_all:
                 eval_per_func_concat = np.concatenate(eval_rewards_per_func_all, axis=1)
                 eval_per_func_means = eval_per_func_concat.mean(axis=1)
                 for name, mean_value in zip(reward_func_names, eval_per_func_means):
-                    eval_logs[f"eval/{name}_mean"] = float(mean_value)
+                    eval_logs[f"eval/reward/func/{name}/mean"] = float(mean_value)
 
             eval_logs["time/eval/rollout_s"] = float(eval_rollout_s)
             eval_logs["time/eval/rollout_sync_s"] = float(eval_rollout_sync_s)

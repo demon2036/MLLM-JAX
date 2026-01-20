@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import types
 from typing import Any
 
@@ -61,6 +62,7 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
         max_length=8192,
         params=None,
     ):
+        import time
         import numpy as np
 
         import jax
@@ -72,6 +74,21 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
 
         if params is None:
             raise ValueError("sampler.generate(..., params=...) is required for fast generate")
+
+        print_timing = os.environ.get("PRINT_SAMPLER_GENERATE_TIMING") == "1" and jax.process_index() == 0
+        timing: dict[str, float] = {}
+
+        def _tic():
+            if not print_timing:
+                return None
+            return time.perf_counter()
+
+        def _toc(key: str, t0):
+            if not print_timing or t0 is None:
+                return
+            timing[key] = time.perf_counter() - t0
+
+        t_total0 = _tic()
 
         prefill_length_i = int(prefill_length)
         max_length_i = int(max_length)
@@ -86,14 +103,23 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
         batch_size = int(np.shape(input_ids_pad)[0])
         eos_token_id = int(self.tokenizer.eos_token_id)
 
+        t0 = _tic()
         input_ids_host = np.asarray(input_ids_pad)
         attention_host = np.asarray(pad_attention)
         position_host = np.asarray(position_ids)
+        _toc("host_to_numpy_s", t0)
 
+        t0 = _tic()
         input_ids_global = self.global_collect_method(input_ids_host)
         attention_global = self.global_collect_method(attention_host)
         position_global = self.global_collect_method(position_host)
+        if print_timing:
+            jax.block_until_ready(input_ids_global)
+            jax.block_until_ready(attention_global)
+            jax.block_until_ready(position_global)
+        _toc("shard_prompt_s", t0)
 
+        t0 = _tic()
         token_buffer_host = np.pad(
             input_ids_host,
             ((0, 0), (0, max_length_ceiled)),
@@ -104,10 +130,17 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
             ((0, 0), (0, max_length_ceiled)),
             constant_values=0,
         )
+        _toc("host_pad_buffers_s", t0)
 
+        t0 = _tic()
         token_buffer = self.global_collect_method(token_buffer_host)
         attention_full = self.global_collect_method(attention_full_host)
+        if print_timing:
+            jax.block_until_ready(token_buffer)
+            jax.block_until_ready(attention_full)
+        _toc("shard_buffers_s", t0)
 
+        t0 = _tic()
         cache = init_cache(
             self.model.config,
             batch_size,
@@ -115,7 +148,13 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
             dtype=self.dtype,
             shard_method=self.global_collect_method,
         )
+        if print_timing:
+            leaves = jax.tree_util.tree_leaves(cache)
+            if leaves:
+                jax.block_until_ready(leaves[0])
+        _toc("init_cache_s", t0)
 
+        t0 = _tic()
         logits, cache = self.jit_infer_prefill(
             {"params": params},
             input_ids=input_ids_global,
@@ -123,14 +162,33 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
             attention_mask=attention_global,
             cache=cache,
         )
-        cache = pad_cache_right(cache, prefill_length_i, max_length_ceiled)
+        if print_timing:
+            jax.block_until_ready(logits)
+        _toc("prefill_s", t0)
 
+        t0 = _tic()
+        cache = pad_cache_right(cache, prefill_length_i, max_length_ceiled)
+        if print_timing:
+            leaves = jax.tree_util.tree_leaves(cache)
+            if leaves:
+                jax.block_until_ready(leaves[0])
+        _toc("pad_cache_s", t0)
+
+        t0 = _tic()
         start_positions = jnp.max(position_global * attention_global, axis=1).reshape((-1, 1)) + 1
         next_token_logits = jnp.take_along_axis(logits, start_positions[..., None] - 1, axis=1)[:, -1]
         first_token = self.sample_fn(self.key, next_token_logits)
+        if print_timing:
+            jax.block_until_ready(first_token)
+        _toc("first_token_s", t0)
 
+        t0 = _tic()
         token_buffer = token_buffer.at[:, prefill_length_i].set(first_token)
         attention_full = attention_full.at[:, prefill_length_i].set(1)
+        if print_timing:
+            jax.block_until_ready(token_buffer)
+            jax.block_until_ready(attention_full)
+        _toc("write_first_token_s", t0)
 
         sample_state = SampleState(
             decoding_step=jnp.asarray(prefill_length_i, dtype=jnp.int32),
@@ -146,11 +204,46 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
         )
 
         decode_fn = _get_decode_fn(self, prefill_length=prefill_length_i, max_length=max_length_i)
+        t0 = _tic()
         sample_state = decode_fn(sample_state, params)
+        if print_timing:
+            jax.block_until_ready(sample_state.sample_steps)
+        _toc("decode_s", t0)
 
+        t0 = _tic()
         local_sample_step = collect_process_data(sample_state.sample_steps)
         local_token_buffer = collect_process_data(sample_state.token_buffer)
         local_attention_mask = collect_process_data(sample_state.attention_mask)
+        _toc("collect_outputs_s", t0)
+
+        _toc("total_s", t_total0)
+
+        if print_timing:
+            keys = [
+                "host_to_numpy_s",
+                "shard_prompt_s",
+                "host_pad_buffers_s",
+                "shard_buffers_s",
+                "init_cache_s",
+                "prefill_s",
+                "pad_cache_s",
+                "first_token_s",
+                "write_first_token_s",
+                "decode_s",
+                "collect_outputs_s",
+                "total_s",
+            ]
+            parts = [
+                "[sampler.generate_fast]",
+                f"batch={batch_size}",
+                f"prefill={prefill_length_i}",
+                f"max_length={max_length_i}",
+                f"bucket={max_length_ceiled}",
+            ]
+            for k in keys:
+                if k in timing:
+                    parts.append(f"{k}={timing[k]:.3f}s")
+            print(" ".join(parts))
 
         self.key = sample_state.key
         return {

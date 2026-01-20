@@ -669,6 +669,11 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 f"dt={t_step:.2f}s",
             ]
             if os.environ.get("PRINT_TRAIN_TIME_BREAKDOWN") == "1":
+                max_length_sample = int(cfg.rollout.max_length_sample)
+                if completion_len_global.size == 0:
+                    completion_hit_max_frac = float("nan")
+                else:
+                    completion_hit_max_frac = float((completion_len_global >= max_length_sample).mean())
                 parts.extend(
                     [
                         f"rollout={t_rollout:.2f}s",
@@ -680,6 +685,10 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                         f"advantages={t_adv:.2f}s",
                         f"shard={t_shard:.2f}s",
                         f"update={t_update:.2f}s",
+                        f"prompt_len_mean={prompt_stats['mean']:.1f}",
+                        f"completion_len_mean={completion_stats['mean']:.1f}",
+                        f"completion_len_max={completion_stats['max']:.0f}",
+                        f"completion_hit_max_frac={completion_hit_max_frac:.2f}",
                     ]
                 )
             print(" ".join(parts))

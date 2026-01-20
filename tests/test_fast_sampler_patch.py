@@ -22,3 +22,17 @@ def test_patch_sampler_generate_fast_is_idempotent():
     saved2 = sampler._fast_generate_original  # type: ignore[attr-defined]
     assert getattr(saved2, "__self__", None) is sampler
     assert getattr(saved2, "__func__", None) is original_func
+
+
+def test_fast_generate_timing_is_guarded_by_env_var():
+    from plugins.training.rollout_optimizations import patch_sampler_generate_fast
+
+    class DummySampler:
+        def generate(self, *args, **kwargs):
+            return {"ok": True}
+
+    sampler = DummySampler()
+    patch_sampler_generate_fast(sampler)
+
+    code = sampler.generate.__func__.__code__
+    assert "PRINT_SAMPLER_GENERATE_TIMING" in code.co_consts

@@ -51,11 +51,64 @@ Start training (nohup):
 Monitor:
 - `gcloud alpha compute tpus tpu-vm ssh root@vllm-tpu-v4-8-bench --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:+bwuNJF6xP/ysxYGNxZbQNPaH/vjTYB+GCqVxhuFveI --command "set -euo pipefail; cd /root/MLLM-JAX; grep -n \"^step=\" logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.log | tail -n 10 || true"`
 - `gcloud alpha compute tpus tpu-vm ssh root@vllm-tpu-v4-8-bench --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:+bwuNJF6xP/ysxYGNxZbQNPaH/vjTYB+GCqVxhuFveI --command "set -euo pipefail; cd /root/MLLM-JAX; cat logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.exit 2>/dev/null || true"`  # expect `0` when complete
+- `gcloud alpha compute tpus tpu-vm ssh root@vllm-tpu-v4-8-bench --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:+bwuNJF6xP/ysxYGNxZbQNPaH/vjTYB+GCqVxhuFveI --command "ps -p <PID> -o pid=,etime=,cmd= || echo process_not_running"`
+- `gcloud alpha compute tpus tpu-vm ssh root@vllm-tpu-v4-8-bench --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:+bwuNJF6xP/ysxYGNxZbQNPaH/vjTYB+GCqVxhuFveI --command "cd /root/MLLM-JAX; tail -n 120 logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.log"`
+
+### 5) (Local) Compare with `origin/john-dev-attention`
+
+List branches:
+- `git fetch --all --prune`
+- `git branch -r | findstr /i attention`
+
+Inspect John’s attention module (plugin-based):
+- `git show origin/john-dev-attention:plugins/attention/tpu_attention.py | Select-Object -First 220`
+- `git show origin/john-dev-attention:plugins/attention/tpu_attention.py | Select-Object -Skip 185 -First 140`  # `_tpu_splash_sdpa` + `scaled_dot_product_attention`
+
+Compare callsites:
+- `git diff origin/john-dev-attention..refactor-attention -- MLLM_JAX/language/llama/llama.py`
+- `git diff origin/john-dev-attention..refactor-attention -- MLLM_JAX/language/qwen2/modular_qwen2.py`
+
+### 6) (Local) Port John’s attention backend into `MLLM_JAX/` + push
+
+- `python -m py_compile MLLM_JAX/language/attention.py MLLM_JAX/language/llama/llama.py MLLM_JAX/language/qwen2/modular_qwen2.py`
+- `python -m pytest -q`
+- `git commit -m "refactor(attention): port john-dev attention backend"`
+- `git push origin refactor-attention`
+
+### 7) (TPU) Sync the new commit + re-run
+
+Git sync (again, after pushing the port):
+- `gcloud alpha compute tpus tpu-vm ssh root@vllm-tpu-v4-8-bench --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:+bwuNJF6xP/ysxYGNxZbQNPaH/vjTYB+GCqVxhuFveI --command "set -euo pipefail; cd /root/MLLM-JAX; git fetch --all --prune; git checkout refactor-attention; git reset --hard origin/refactor-attention; git clean -fd; git rev-parse --short HEAD"`
+
+Start training (nohup):
+- `gcloud alpha compute tpus tpu-vm ssh root@vllm-tpu-v4-8-bench --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:+bwuNJF6xP/ysxYGNxZbQNPaH/vjTYB+GCqVxhuFveI --command "set -euo pipefail; cd /root/MLLM-JAX; export HF_HUB_ENABLE_HF_TRANSFER=1; export TOKENIZERS_PARALLELISM=false; bash scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_nohup.sh"`
+
+### 8) (TPU) Stop the run + delete the TPU VM
+
+Stop (kill the child python PID under the printed nohup PID):
+- `gcloud alpha compute tpus tpu-vm ssh root@vllm-tpu-v4-8-bench --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:+bwuNJF6xP/ysxYGNxZbQNPaH/vjTYB+GCqVxhuFveI --command 'set -euo pipefail; parent=53589; child_pids=$(ps --ppid \"$parent\" -o pid= | xargs echo || true); if [ -n \"${child_pids:-}\" ]; then kill -KILL $child_pids || true; fi; sleep 2; if ps -p \"$parent\" >/dev/null 2>&1; then kill -KILL $parent || true; fi; ps -p \"$parent\" -o pid=,cmd= || echo parent_stopped'`
+
+Delete TPU VM:
+- `gcloud alpha compute tpus tpu-vm delete vllm-tpu-v4-8-bench --project civil-rarity-482610-s5 --zone us-central2-b --quiet`
 
 ## Expected Result
 
 - A W&B run appears under `johntitordemon2036/mllm-jax-grpo-gsm8k`.
 - TPU log prints `step=<n> ...` lines and eventually writes a `*.exit` file containing `0`.
+
+## Results (verified in this run)
+
+- Run A (before porting John’s attention backend):
+  - TPU `v4-8` run completed with exit code `0` and reached `step=99`.
+  - W&B run: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/9bp9rrac`
+- Run B (after porting John’s attention backend, commit `fb9984d`):
+  - TPU run reached `step=89` (within the “85–95” sanity range) and was stopped manually (exit code `137`).
+  - W&B run: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/ha8wtj4g`
+
+## Notes: Differences vs `origin/john-dev-attention`
+
+- John’s branch keeps attention in `plugins/attention/tpu_attention.py` with `scaled_dot_product_attention()` + `AttentionSpec`.
+- This branch ports that implementation into `MLLM_JAX/language/attention.py` (same core features, but without the plugin boundary), and keeps the single callsite via `LlamaAttention`/`Qwen2Attention` with small per-model overrides (`use_block_sizes` and `mask_value`).
 
 ## Troubleshooting
 
@@ -67,4 +120,3 @@ Monitor:
 - MaxText repo: https://github.com/google/maxtext
 - `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
 - `scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_nohup.sh`
-

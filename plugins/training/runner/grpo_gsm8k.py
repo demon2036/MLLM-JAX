@@ -347,7 +347,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     from plugins.training.rollout_backends import create_rollout_backend
 
     rollout_backend_name = str(cfg.rollout.backend).strip().lower()
-    use_sglang_jax = rollout_backend_name in {"sglang_jax", "sglang-jax", "sglang"}
+    if rollout_backend_name == "":
+        rollout_backend_name = "naive"
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_path, trust_remote_code=True)
     pad_token_id = getattr(tokenizer, "pad_token_id", None)
@@ -357,129 +358,22 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         pad_token_id = 0
     pad_token_id = int(pad_token_id)
 
-    if use_sglang_jax:
-        def _setdefault_env(name: str, value: str) -> None:
-            if os.environ.get(name) in {None, ""}:
-                os.environ[name] = value
-
-        def _ceil_to_bucket(value: int) -> int:
-            for b in (128, 256, 512, 1024, 2048, 4096, 8192):
-                if int(b) >= int(value):
-                    return int(b)
-            return int(value)
-
-        # Co-located training + rollout is HBM sensitive on v4-8. Provide safe
-        # defaults unless the user has explicitly overridden them via env vars.
-        prompt_len_bucket = _ceil_to_bucket(int(cfg.rollout.global_length))
-        completion_len_bucket = _ceil_to_bucket(int(cfg.rollout.max_length_sample))
-        context_length = _ceil_to_bucket(prompt_len_bucket + completion_len_bucket)
-        max_total_tokens = min(16384, max(8192, context_length * 8))
-        rollout_sequences = int(local_batch_per_pass)
-        default_chunk = min(rollout_sequences, local_device_count)
-        if default_chunk <= 0:
-            default_chunk = max(1, local_device_count)
-        capped_max_total_tokens = min(max_total_tokens, context_length * default_chunk)
-        if capped_max_total_tokens < context_length:
-            capped_max_total_tokens = context_length
-
-        _setdefault_env("SGLANG_JAX_DTYPE", "bfloat16")
-        _setdefault_env("SGLANG_JAX_CONTEXT_LENGTH", str(context_length))
-        _setdefault_env("SGLANG_JAX_MAX_TOTAL_TOKENS", str(capped_max_total_tokens))
-        _setdefault_env("SGLANG_JAX_MAX_RUNNING_REQUESTS", str(default_chunk))
-        _setdefault_env("SGLANG_JAX_ROLLOUT_CHUNK_SIZE", str(default_chunk))
-        # When the Engine is initialized after the training state, available HBM
-        # is already reduced. Use a conservative mem_fraction_static so training
-        # keeps headroom; max_total_tokens still caps actual KV usage.
-        _setdefault_env("SGLANG_JAX_MEM_FRACTION_STATIC", "0.5")
-        _setdefault_env("SGLANG_JAX_DISABLE_PRECOMPILE", "1")
-
-        rollout_backend = create_rollout_backend(
-            name=rollout_backend_name,
-            sampler=None,
-            tokenizer=tokenizer,
-            model_path=cfg.model_path,
-        )
-        state, sampler, _state_sharding = get_state(
-            mesh,
-            training_steps=cfg.steps,
-            grad_accum_steps=grad_accum_steps,
-            model_path=cfg.model_path,
-            num_pre_q=cfg.rollout.num_pre_q,
-            max_lengths=cfg.train.max_length_total,
-            beta=cfg.train.beta,
-            create_sampler=False,
-        )
-
-        # Pre-compile the training step BEFORE initializing the sglang-jax Engine.
-        #
-        # On v4-8, the Engine consumes HBM; if we JIT the training step after
-        # Engine initialization (and after rollouts), XLA may fail to reserve
-        # enough contiguous memory at the bottom of HBM when loading the
-        # `jit_training_step` program.
-        if os.environ.get("SGLANG_JAX_PRECOMPILE_TRAIN_STEP", "1").strip().lower() not in {"0", "false", "no", "off"}:
-            seq_len = _ceil_to_bucket(int(cfg.rollout.global_length)) + _ceil_to_bucket(int(cfg.rollout.max_length_sample))
-            micro_batch = int(cfg.train.micro_batch_size or (local_batch // int(grad_accum_steps)))
-            if micro_batch <= 0:
-                raise ValueError(f"Invalid derived micro_batch={micro_batch}")
-
-            dummy_np = {
-                "input_ids": np.zeros((micro_batch, seq_len), dtype=np.int32),
-                "attention_mask": np.ones((micro_batch, seq_len), dtype=np.int32),
-                "labels": np.ones((micro_batch, seq_len), dtype=np.int32),
-                "rewards": np.zeros((micro_batch,), dtype=np.float32),
-                "advantages": np.zeros((micro_batch,), dtype=np.float32),
-                "group_ids": np.zeros((micro_batch,), dtype=np.int32),
-            }
-            dummy = jax.tree_util.tree_map_with_path(_form_training_global_array, dummy_np)
-            dummy["total_valid_token_count"] = dummy["labels"][:, 1:].sum()
-
-            if jax.process_index() == 0:
-                print(f"precompile_training_step=1 micro_batch={micro_batch} seq_len={seq_len}")
-            # NOTE: `lower(...).compile()` may not load the executable onto TPU.
-            # Execute exactly one micro-step to force program loading while the
-            # Engine has not yet consumed HBM. This is safe when grad accumulation
-            # is enabled because the first micro-step does not apply gradients.
-            if getattr(state, "grad_accum", None) is None:
-                if jax.process_index() == 0:
-                    print("precompile_training_step_skip_reason=no_grad_accum")
-            else:
-                state_warm, warm_meta = train_fn(state, dummy)
-                jax.block_until_ready(warm_meta["loss"])
-                zero = jnp.asarray(0, dtype=getattr(getattr(state_warm, "micro_step", 0), "dtype", jnp.int32))
-                state = state_warm.replace(micro_step=zero)
-                if jax.process_index() == 0:
-                    print("precompile_training_step_done=1")
-
-        # Allocate sglang-jax's model + KV cache after the training executable is ready.
-        if hasattr(rollout_backend, "initialize"):
-            rollout_backend.initialize()  # type: ignore[attr-defined]
-
-        # Eliminate persistent weight duplication as early as possible (before
-        # compiling the training step): swap Engine weights to the freshly
-        # created training params, then flush any KV/cache allocations.
-        if hasattr(rollout_backend, "sync_weights"):
-            rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
-        if hasattr(rollout_backend, "flush_cache"):
-            rollout_backend.flush_cache()  # type: ignore[attr-defined]
-        if hasattr(rollout_backend, "release_weights"):
-            rollout_backend.release_weights()  # type: ignore[attr-defined]
-    else:
-        state, sampler, _state_sharding = get_state(
-            mesh,
-            training_steps=cfg.steps,
-            grad_accum_steps=grad_accum_steps,
-            model_path=cfg.model_path,
-            num_pre_q=cfg.rollout.num_pre_q,
-            max_lengths=cfg.train.max_length_total,
-            beta=cfg.train.beta,
-            create_sampler=True,
-        )
-        rollout_backend = create_rollout_backend(
-            name=rollout_backend_name,
-            sampler=sampler,
-            tokenizer=None,
-            model_path=cfg.model_path,
-        )
+    state, sampler, _state_sharding = get_state(
+        mesh,
+        training_steps=cfg.steps,
+        grad_accum_steps=grad_accum_steps,
+        model_path=cfg.model_path,
+        num_pre_q=cfg.rollout.num_pre_q,
+        max_lengths=cfg.train.max_length_total,
+        beta=cfg.train.beta,
+        create_sampler=True,
+    )
+    rollout_backend = create_rollout_backend(
+        name=rollout_backend_name,
+        sampler=sampler,
+        tokenizer=None,
+        model_path=cfg.model_path,
+    )
 
     wandb = _maybe_init_wandb(cfg)
 

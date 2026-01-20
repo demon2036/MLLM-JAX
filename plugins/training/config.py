@@ -19,7 +19,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "rollout": {
         # Rollout backend selector (swappable generation engine).
         # - "naive": in-process sampler (current default)
-        # - Future: "sglang_jax", "vllm", ...
+        # - Future: other engines (e.g. vllm)
         "backend": "naive",
         # Optional: total prompts per training step (global, across all processes).
         # If set, runner will do multiple rollout passes and may pad up to the next

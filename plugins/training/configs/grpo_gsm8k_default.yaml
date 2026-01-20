@@ -12,7 +12,7 @@ steps: 20
 rollout:
   # Rollout backend selector (swappable generation engine).
   # - naive: current in-process sampler
-  # - future: sglang_jax, vllm, ...
+  # - future: vllm, ...
   backend: naive
   # Optional: total prompts per training step (global, across all processes).
   # If set, runner will do multiple rollout passes and may pad up to the next

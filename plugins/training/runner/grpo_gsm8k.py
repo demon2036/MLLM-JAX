@@ -608,27 +608,27 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
         train_log: dict[str, Any] = {
             # Other
-            "train/other/loss": loss_value,
-            "train/other/entropy": entropy_value,
-            "train/other/batch_global": global_batch,
-            "train/other/batch_local": int(local_batch),
-            "train/other/total_valid_token_count": valid_tokens_global,
+            "train-other/loss": loss_value,
+            "train-other/entropy": entropy_value,
+            "train-other/batch_global": global_batch,
+            "train-other/batch_local": int(local_batch),
+            "train-other/total_valid_token_count": valid_tokens_global,
             # Reward / advantage
-            "train/reward/total/mean": reward_global_stats["mean"],
-            "train/reward/total/std": reward_global_stats["std"],
-            "train/reward/total/min": reward_global_stats["min"],
-            "train/reward/total/max": reward_global_stats["max"],
-            "train/reward/advantage/mean": adv_global_stats["mean"],
-            "train/reward/advantage/std": adv_global_stats["std"],
-            "train/reward/advantage/min": adv_global_stats["min"],
-            "train/reward/advantage/max": adv_global_stats["max"],
+            "train-reward/total/mean": reward_global_stats["mean"],
+            "train-reward/total/std": reward_global_stats["std"],
+            "train-reward/total/min": reward_global_stats["min"],
+            "train-reward/total/max": reward_global_stats["max"],
+            "train-reward/advantage/mean": adv_global_stats["mean"],
+            "train-reward/advantage/std": adv_global_stats["std"],
+            "train-reward/advantage/min": adv_global_stats["min"],
+            "train-reward/advantage/max": adv_global_stats["max"],
             # Seq lengths
-            "train/seq_len/prompt/mean": prompt_stats["mean"],
-            "train/seq_len/prompt/max": prompt_stats["max"],
-            "train/seq_len/completion/mean": completion_stats["mean"],
-            "train/seq_len/completion/max": completion_stats["max"],
-            "train/seq_len/total/mean": total_len_stats["mean"],
-            "train/seq_len/total/max": total_len_stats["max"],
+            "train-seq_len/prompt/mean": prompt_stats["mean"],
+            "train-seq_len/prompt/max": prompt_stats["max"],
+            "train-seq_len/completion/mean": completion_stats["mean"],
+            "train-seq_len/completion/max": completion_stats["max"],
+            "train-seq_len/total/mean": total_len_stats["mean"],
+            "train-seq_len/total/max": total_len_stats["max"],
             # Timing
             "time/train/rollout_s": float(t_rollout),
             "time/train/rollout_sync_s": float(t_rollout_sync),
@@ -644,7 +644,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         if len(step_times) >= 10:
             train_log["time/train/step_avg_last10_s"] = float(sum(step_times[-10:]) / 10.0)
         for name, mean_value in zip(reward_func_names, per_func_means):
-            train_log[f"train/reward/func/{name}/mean"] = float(mean_value)
+            train_log[f"train-reward/func/{name}/mean"] = float(mean_value)
 
         if t_step > 0:
             train_log["throughput/train/valid_tokens_per_s"] = float(valid_tokens_global) / float(t_step)

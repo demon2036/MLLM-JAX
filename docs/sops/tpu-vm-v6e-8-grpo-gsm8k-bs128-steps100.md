@@ -73,7 +73,7 @@ Config notes:
 
 ### 9) Extract final metrics from `wandb-summary.json` (no W&B API needed)
 
-- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command "set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; python -c 'import json,sys; d=json.load(open(sys.argv[1])); [print(k, d.get(k)) for k in sys.argv[2:]]' /root/MLLM-JAX/wandb/latest-run/files/wandb-summary.json train/reward/func/reward_correct/mean eval/reward/func/reward_correct/mean train/reward/total/mean eval/reward/total/mean time/train/step_avg_last10_s train/other/batch_local train/other/batch_global"`
+- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command "set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; python -c 'import json,sys; d=json.load(open(sys.argv[1])); [print(k, d.get(k)) for k in sys.argv[2:]]' /root/MLLM-JAX/wandb/latest-run/files/wandb-summary.json train-reward/func/reward_correct/mean eval/reward/func/reward_correct/mean train-reward/total/mean eval/reward/total/mean time/train/step_avg_last10_s train-other/batch_local train-other/batch_global"`
 
 ## Expected Result
 

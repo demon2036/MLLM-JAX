@@ -30,3 +30,16 @@
   - `docs/sops/tpu-vm-lifecycle.md`
   - `docs/sops/tpu-vm-delete-all.md`
 
+## 实测记录（2026-01-21）
+
+本次在 `civil-rarity-482610-s5 / us-central2-b` 尝试新建 `v4-8`：
+
+- **v4-8 on-demand**：创建失败（zone 无容量）
+  - 命令：`gcloud alpha compute tpus tpu-vm create mllm-jax-v4-8-260121230956 --project=civil-rarity-482610-s5 --zone=us-central2-b --accelerator-type=v4-8 --version=tpu-ubuntu2204-base --quiet`
+  - 返回：`There is no more capacity in the zone "us-central2-b"`
+- **v4-8 spot**：创建失败（v4 spot quota 超限）
+  - 命令：`gcloud alpha compute tpus tpu-vm create mllm-jax-v4-8-260121231053 --project=civil-rarity-482610-s5 --zone=us-central2-b --accelerator-type=v4-8 --version=tpu-ubuntu2204-base --spot --quiet`
+  - 返回：`Quota limit 'TPUV4sPreemptiblePodPerProjectPerRegionForTPUAPI,TPUV4sPreemptiblePodPerProjectPerZoneForTPUAPI' has been exceeded. Limit: 64,64 in region us-central2,zone us-central2-b.`
+
+结论：当前无法在该 project/zone 新建 `v4-8`；可改用可用的 `v6e-8`，或等待容量恢复/申请 quota（若要继续用 spot，可能需要清理已 `PREEMPTED` 的旧 TPU 以释放配额占用）。
+

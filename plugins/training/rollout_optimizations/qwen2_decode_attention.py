@@ -43,13 +43,23 @@ def patch_qwen2_attention_decode_fast() -> None:
                 dtype=dtype,
             )
 
-        # Key change vs baseline: keep QK^T and (softmax @ V) matmuls in model dtype.
-        attn_weights = query_states @ key_states.swapaxes(2, 3)
+        # Key change vs baseline: avoid float32 matmul operands, but keep the
+        # *accumulation/output* for attention scores in float32 to preserve
+        # numeric fidelity (avoids rounding the [B,H,1,S] score matrix to bf16).
+        #
+        # On TPU, this stays fast while matching the float32 result for bf16
+        # inputs (see docs/SOPs for a tiny repro snippet).
+        attn_weights = attention_mod.jax.lax.dot_general(
+            query_states,
+            key_states,
+            dimension_numbers=(((3,), (3,)), ((0, 1), (0, 1))),
+            preferred_element_type=attention_mod.jnp.float32,
+        )
         scale = attention_mod.jnp.asarray(
             1.0 / attention_mod.math.sqrt(head_dim),
             dtype=attention_mod.jnp.float32,
         )
-        attn_weights = attn_weights.astype(attention_mod.jnp.float32) * scale
+        attn_weights = attn_weights * scale
 
         if attn_mask is not None:
             attn_weights = attn_weights + attn_mask.astype(attention_mod.jnp.float32)

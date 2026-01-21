@@ -829,8 +829,32 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     #
     # Enable via: `EVAL_FULL_SWEEP=1` (no YAML edits required).
     if full_sweep_enabled and eval_qas:
-        prompt_batch_size = int(cfg.rollout.prompt_batch_size)
-        num_pre_q = int(cfg.rollout.num_pre_q)
+        # Full-sweep eval is intended to match the "full test split, each
+        # question once" metric expectation:
+        # - run the entire `eval_split`
+        # - generate exactly 1 completion per question by default
+        #
+        # To keep compilation stable and reuse the same per-process sequence
+        # batch size as training, we adjust the prompt batch size so that:
+        #   (prompt_batch_size_eval * num_pre_q_eval) == local_seq_batch_train
+        #
+        # Optional override:
+        #   EVAL_FULL_NUM_PRE_Q=<int>  (default: 1)
+        train_prompt_batch_size = int(cfg.rollout.prompt_batch_size)
+        train_num_pre_q = int(cfg.rollout.num_pre_q)
+        local_seq_batch_train = train_prompt_batch_size * train_num_pre_q
+
+        num_pre_q_env = os.environ.get("EVAL_FULL_NUM_PRE_Q")
+        num_pre_q = int(num_pre_q_env) if num_pre_q_env is not None else 1
+        if num_pre_q < 1:
+            raise ValueError(f"EVAL_FULL_NUM_PRE_Q must be >= 1, got {num_pre_q}")
+        if local_seq_batch_train % num_pre_q != 0:
+            raise ValueError(
+                "EVAL_FULL_NUM_PRE_Q must divide the per-process sequence batch size: "
+                f"{num_pre_q=} local_seq_batch_train={local_seq_batch_train}"
+            )
+
+        prompt_batch_size = local_seq_batch_train // num_pre_q
         reward_weights = cfg.reward_weights
 
         t_eval0 = time.perf_counter()
@@ -841,9 +865,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         t_eval_release_s = 0.0
 
         local_question_count = int(len(eval_qas))
-        local_prompt_sum_pass_at_1 = 0.0
-        local_prompt_sum_pass_at_k = 0.0
-        local_prompt_sum_mean_at_k = 0.0
+        local_prompt_sum_accuracy = 0.0
+        local_prompt_count = 0
 
         local_completion_sum_correct = 0.0
         local_completion_sum_format = 0.0
@@ -901,13 +924,16 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             prompt_mask[:valid_prompts] = 1.0
             completion_mask = np.repeat(prompt_mask, num_pre_q)
 
-            pass_at_1, pass_at_k, mean_at_k = _group_correct_per_prompt(correct_per_completion, num_pre_q=num_pre_q)
-            s1, _ = _masked_sum_and_count_1d(pass_at_1, prompt_mask)
-            sk, _ = _masked_sum_and_count_1d(pass_at_k, prompt_mask)
-            sm, _ = _masked_sum_and_count_1d(mean_at_k, prompt_mask)
-            local_prompt_sum_pass_at_1 += s1
-            local_prompt_sum_pass_at_k += sk
-            local_prompt_sum_mean_at_k += sm
+            # "Accuracy" is defined as correctness of the first (or only)
+            # completion per prompt, matching the "each question once" metric.
+            if num_pre_q == 1:
+                local_prompt_sum_accuracy += float((correct_per_completion * prompt_mask).sum())
+            else:
+                pass_at_1, _pass_at_k, _mean_at_k = _group_correct_per_prompt(
+                    correct_per_completion, num_pre_q=num_pre_q
+                )
+                local_prompt_sum_accuracy += float((pass_at_1 * prompt_mask).sum())
+            local_prompt_count += int(valid_prompts)
 
             local_completion_sum_correct += float((correct_per_completion * completion_mask).sum())
             local_completion_sum_format += float((format_per_completion * completion_mask).sum())
@@ -920,13 +946,19 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         t_eval_release_s += time.perf_counter() - t0
 
         # Aggregate across processes.
-        # Order: [question_count, prompt_sum_pass1, prompt_sum_passk, prompt_sum_mean, completion_count, completion_sum_correct, completion_sum_format, completion_sum_tag]
+        # Order:
+        # - question_count
+        # - prompt_count
+        # - prompt_sum_accuracy
+        # - completion_count
+        # - completion_sum_correct
+        # - completion_sum_format
+        # - completion_sum_tag
         local_stats = np.asarray(
             [
                 float(local_question_count),
-                float(local_prompt_sum_pass_at_1),
-                float(local_prompt_sum_pass_at_k),
-                float(local_prompt_sum_mean_at_k),
+                float(local_prompt_count),
+                float(local_prompt_sum_accuracy),
                 float(local_completion_count),
                 float(local_completion_sum_correct),
                 float(local_completion_sum_format),
@@ -938,21 +970,18 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         global_stats = gathered.sum(axis=0)
 
         global_question_count = int(global_stats[0])
-        global_prompt_sum_pass_at_1 = float(global_stats[1])
-        global_prompt_sum_pass_at_k = float(global_stats[2])
-        global_prompt_sum_mean_at_k = float(global_stats[3])
-        global_completion_count = int(global_stats[4])
-        global_completion_sum_correct = float(global_stats[5])
-        global_completion_sum_format = float(global_stats[6])
-        global_completion_sum_tag = float(global_stats[7])
+        global_prompt_count = int(global_stats[1])
+        global_prompt_sum_accuracy = float(global_stats[2])
+        global_completion_count = int(global_stats[3])
+        global_completion_sum_correct = float(global_stats[4])
+        global_completion_sum_format = float(global_stats[5])
+        global_completion_sum_tag = float(global_stats[6])
 
         t_eval_s = time.perf_counter() - t_eval0
-        prompt_denom = max(global_question_count, 1)
+        prompt_denom = max(global_prompt_count, 1)
         completion_denom = max(global_completion_count, 1)
 
-        pass_at_1_global = global_prompt_sum_pass_at_1 / float(prompt_denom)
-        pass_at_k_global = global_prompt_sum_pass_at_k / float(prompt_denom)
-        mean_at_k_global = global_prompt_sum_mean_at_k / float(prompt_denom)
+        accuracy_global = global_prompt_sum_accuracy / float(prompt_denom)
         mean_correct_per_completion = global_completion_sum_correct / float(completion_denom)
         mean_format_per_completion = global_completion_sum_format / float(completion_denom)
         mean_tag_per_completion = global_completion_sum_tag / float(completion_denom)
@@ -961,10 +990,10 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             "eval_full/enabled": 1,
             "eval_full/split": str(cfg.eval_split),
             "eval_full/questions_global": global_question_count,
-            "eval_full/k": int(num_pre_q),
-            "eval_full/accuracy/pass_at_1": float(pass_at_1_global),
-            "eval_full/accuracy/pass_at_k": float(pass_at_k_global),
-            "eval_full/accuracy/mean_at_k": float(mean_at_k_global),
+            "eval_full/samples_per_question": int(num_pre_q),
+            "eval_full/accuracy": float(accuracy_global),
+            # Backward-compatible alias (previously logged as pass@1).
+            "eval_full/accuracy/pass_at_1": float(accuracy_global),
             # Per-completion means (kept for reference; NOT the main "accuracy").
             "eval_full/reward_correct/mean_per_completion": float(mean_correct_per_completion),
             "eval_full/reward_format/mean_per_completion": float(mean_format_per_completion),
@@ -985,10 +1014,10 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 "eval/accuracy/full_sweep": 1,
                 "eval/accuracy/split": str(cfg.eval_split),
                 "eval/accuracy/questions_global": global_question_count,
-                "eval/accuracy/k": int(num_pre_q),
-                "eval/accuracy/pass_at_1": float(pass_at_1_global),
-                "eval/accuracy/pass_at_k": float(pass_at_k_global),
-                "eval/accuracy/mean_at_k": float(mean_at_k_global),
+                "eval/accuracy/samples_per_question": int(num_pre_q),
+                "eval/accuracy/accuracy": float(accuracy_global),
+                # Backward-compatible alias (previously logged as pass@1).
+                "eval/accuracy/pass_at_1": float(accuracy_global),
             }
         )
 
@@ -999,10 +1028,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                     [
                         f"split={cfg.eval_split}",
                         f"questions={global_question_count}",
-                        f"k={num_pre_q}",
-                        f"pass@1={pass_at_1_global:.4f}",
-                        f"pass@{num_pre_q}={pass_at_k_global:.4f}",
-                        f"mean@{num_pre_q}={mean_at_k_global:.4f}",
+                        f"samples_per_question={num_pre_q}",
+                        f"accuracy={accuracy_global:.4f}",
                         f"t={t_eval_s:.2f}s",
                     ]
                 )

@@ -199,8 +199,8 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
             attention_mask=attention_full,
             next_token_buffer=first_token,
             key=self.key,
-            dones=jnp.zeros((batch_size,), dtype=jnp.bool_),
-            sample_steps=jnp.zeros((batch_size,), dtype=jnp.int32),
+            dones=jnp.zeros_like(first_token, dtype=jnp.bool_),
+            sample_steps=jnp.zeros_like(first_token, dtype=jnp.int32),
         )
 
         decode_fn = _get_decode_fn(self, prefill_length=prefill_length_i, max_length=max_length_i)

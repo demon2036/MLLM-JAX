@@ -105,6 +105,18 @@ Notes:
   - `logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.exit` is `0`
   - `time/train/step_avg_last10_s = 12.13907113699679` (avg of steps 90-99)
 
+### 7) Full 100-step W&B run (Opt 1 + Opt 2, fp32 attention-score output on TPU)
+
+- W&B: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/d7cl9smf`
+- Commit: `3cf1aa5`
+- Command (on TPU VM):
+  - `cd /root/MLLM-JAX; rm -f /tmp/libtpu_lockfile || true; export WANDB_MODE=online WANDB_PROJECT=mllm-jax-grpo-gsm8k TOKENIZERS_PARALLELISM=false PRINT_TRAIN_TIME_BREAKDOWN=1 ROLLOUT_FAST_GENERATE=1 ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1; ts=$(date -u +%Y%m%d_%H%M%S); commit=$(git rev-parse --short HEAD); export WANDB_NAME="grpo_gsm8k_v6e8_qwen25_3b_fp32scores_${commit}_${ts}"; unset STEPS PRINT_SAMPLER_GENERATE_TIMING; bash scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_nohup.sh`
+  - Secrets: ensure `WANDB_API_KEY` is set (example used here: `/root/.env`).
+- Verified:
+  - `logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.exit` is `0`
+  - `time/train/step_avg_last10_s = 12.67789875749877` (avg of steps 90-99)
+  - `eval/reward/func/reward_correct/mean = 0.8046875`
+
 ## Expected Result
 
 - The runner prints per-step breakdown when `PRINT_TRAIN_TIME_BREAKDOWN=1`, including:

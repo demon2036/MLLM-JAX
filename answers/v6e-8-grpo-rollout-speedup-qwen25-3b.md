@@ -18,6 +18,7 @@ This note documents:
 - Commits:
   - `b341e45` (Runs A-D)
   - `883c018` (Run E; after attention modularization)
+  - `3cf1aa5` (Run F; fp32 attention-score output on TPU)
 - Python/JAX on TPU: Python `3.12.12`, `jax==0.8.2`, `jaxlib==0.8.2`
 
 ## Config (kept constant)
@@ -62,7 +63,7 @@ Rollout is dominated by **decode** (one-token-at-a-time generation):
 - Patch target (current): `MLLM_JAX/language/attention.py:_naive_sdpa` (decode fallback when `q_len=1`)
 - Patch target (legacy, before attention modularization): `MLLM_JAX/language/qwen2/modular_qwen2.py:Qwen2Attention.__call__`
 - Implementation: `plugins/training/rollout_optimizations/qwen2_decode_attention.py`
-- Approach: in the `q_len=1` fallback path, keep attention matmuls in `bf16` (softmax stays in `fp32`).
+- Approach: in the `q_len=1` fallback path, keep BF16 operands but compute attention-score output in `fp32` (via `lax.dot_general(preferred_element_type=jnp.float32)`); softmax stays `fp32`.
 - Expected effect: reduce per-token attention cost during decode.
 
 ## Experiments (all on W&B, v6e-8, Qwen2.5-3B)
@@ -132,6 +133,21 @@ Implementation difference:
   - `time/train/step_avg_last10_s = 12.13907113699679`
   - `eval/reward/func/reward_correct/mean = 0.78125`
 
+### Run F: Opt 1 + Opt 2 (100 steps, fp32 attention-score output on TPU)
+
+This is the same Opt 1 + Opt 2 condition, but with an updated Opt 2 that keeps
+BF16 operands while producing FP32 attention-score output (to reduce score
+rounding error) on TPU.
+
+- W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/d7cl9smf
+- `wandb_name`: `grpo_gsm8k_v6e8_qwen25_3b_fp32scores_3cf1aa5_20260121_045609`
+- Env flags:
+  - `ROLLOUT_FAST_GENERATE=1`
+  - `ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1`
+- Summary metrics (`wandb-summary.json`):
+  - `time/train/step_avg_last10_s = 12.67789875749877`
+  - `eval/reward/func/reward_correct/mean = 0.8046875`
+
 ## Results (aligned)
 
 ### Overall step time (steady-state)
@@ -148,6 +164,7 @@ Using `time/train/step_avg_last10_s` (avg of steps 10-19):
 
 - Run D (steps=100) `time/train/step_avg_last10_s` (avg of steps 90-99): `12.890168357500807` (W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/zy9aibuc)
 - Run E (steps=100, after attention modularization) `time/train/step_avg_last10_s` (avg of steps 90-99): `12.13907113699679` (W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/b4yhlcce)
+- Run F (steps=100, fp32 attention-score output on TPU) `time/train/step_avg_last10_s` (avg of steps 90-99): `12.67789875749877` (W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/d7cl9smf)
 
 ### Per-step breakdown (representative `step=10`)
 

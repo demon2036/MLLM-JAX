@@ -1,4 +1,4 @@
-﻿# TPU: sglang-jax Qwen3-4B weight-swap inference (Engine param replacement)
+﻿﻿# TPU: sglang-jax Qwen3-4B weight-swap inference (Engine param replacement)
 
 - **Title**: SOP: Run Qwen/Qwen3-4B on TPU via sglang-jax, then swap weights into a dummy Engine and generate “你是谁”
   **Prereqs**:
@@ -11,11 +11,13 @@
   - Project: `civil-rarity-482610-s5`
   - Zone: `us-central2-b`
   - TPU: `v4-8`
+  - TPU name: `mllm-jax-v4-8-260121152542`
   - TPU VM OS: Ubuntu `22.04.2`
   - Conda env: `sglang-jax` (Python `3.12.12`)
   - JAX: `0.8.1` (TPU backend)
   - sglang-jax commit (pinned): `bd09a87fc6e86c21ce14edd66948ac5dea3a4360`
-  - Repo commit (runner script): `d70e7ff`
+  - Repo commit (runner script): `ff483b81b3c228fc16a9fc0d7b195f9f76f75348`
+  - TPU log (runner output): `/root/MLLM-JAX/workdir/sglang_jax_qwen3_4b_param_swap_260121075159.log`
 
 ## Steps
 
@@ -27,14 +29,14 @@ Commands run:
 gcloud auth list --format='table(account,status)'
 gcloud config get-value project
 gcloud compute tpus accelerator-types list --zone=us-central2-b --format='value(name)'
-gcloud alpha compute tpus tpu-vm create mllm-jax-v4-8-260121114749 \
+gcloud alpha compute tpus tpu-vm create mllm-jax-v4-8-260121152542 \
   --project=civil-rarity-482610-s5 \
   --zone=us-central2-b \
   --accelerator-type=v4-8 \
   --version=tpu-ubuntu2204-base \
   --spot \
   --quiet
-gcloud alpha compute tpus tpu-vm describe mllm-jax-v4-8-260121114749 \
+gcloud alpha compute tpus tpu-vm describe mllm-jax-v4-8-260121152542 \
   --project=civil-rarity-482610-s5 \
   --zone=us-central2-b \
   --format='value(state,acceleratorType)'
@@ -45,12 +47,13 @@ gcloud alpha compute tpus tpu-vm describe mllm-jax-v4-8-260121114749 \
 Commands run (Windows/plink hostkey pin for this TPU instance):
 
 ```bash
-gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v4-8-260121114749 \
+gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v4-8-260121152542 \
   --project=civil-rarity-482610-s5 \
   --zone=us-central2-b \
   --quiet \
+  --ssh-flag='-batch' \
   --ssh-flag='-hostkey' \
-  --ssh-flag='SHA256:ct25E/bBAKMPmAYdkuZUesmzNqZWV7XzseQKxTkc26o' \
+  --ssh-flag='SHA256:JCfjmt0S9L+0Bu2z6ES346z4XWbgvOQH5fVPPXf820s' \
   --command 'whoami; hostname; cat /etc/os-release | head -n 5'
 ```
 
@@ -90,8 +93,8 @@ Commands run:
 git clone https://github.com/demon2036/MLLM-JAX.git /root/MLLM-JAX
 cd /root/MLLM-JAX
 git fetch --all --prune
-git checkout d70e7ff
-mkdir -p /root/MLLM-JAX/workdir
+git checkout ff483b81b3c228fc16a9fc0d7b195f9f76f75348
+mkdir -p /root/MLLM-JAX/workdir /root/MLLM-JAX/workdir/hf_download /root/MLLM-JAX/workdir/hf_models
 
 # Clone sglang-jax into local scratch
 git clone https://github.com/sgl-project/sglang-jax.git /root/MLLM-JAX/workdir/sglang-jax
@@ -119,7 +122,11 @@ Commands run:
 source /root/miniconda3/etc/profile.d/conda.sh
 conda activate sglang-jax
 cd /root/MLLM-JAX
-PYTHONUNBUFFERED=1 timeout 7200 python -u tests/run_sglang_jax_qwen3_4b_param_swap.py
+TS=$(date +%y%m%d%H%M%S)
+LOG=/root/MLLM-JAX/workdir/sglang_jax_qwen3_4b_param_swap_${TS}.log
+PYTHONUNBUFFERED=1 HF_HUB_ENABLE_HF_TRANSFER=1 timeout 7200 \
+  python -u tests/run_sglang_jax_qwen3_4b_param_swap.py 2>&1 | tee "$LOG"
+echo "log_path=$LOG"
 ```
 
 ## Expected Result

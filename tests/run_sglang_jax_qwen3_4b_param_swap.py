@@ -197,6 +197,7 @@ def main() -> None:
     wandb_step = 0
 
     wandb = None
+    wandb_service = None
     if args.wandb:
         try:
             import jax
@@ -228,6 +229,12 @@ def main() -> None:
 
                 _wandb.init(**init_kwargs)
                 wandb = _wandb
+                try:
+                    run = getattr(wandb, "run", None)
+                    backend = getattr(run, "_backend", None)
+                    wandb_service = getattr(backend, "_service", None)
+                except Exception:
+                    wandb_service = None
                 mem = _collect_memory_snapshot()
                 elapsed_s = time.time() - t0
                 print(
@@ -434,6 +441,11 @@ def main() -> None:
         if wandb is not None:
             try:
                 wandb.finish()
+            except Exception:
+                pass
+            try:
+                if wandb_service is not None and hasattr(wandb_service, "teardown"):
+                    wandb_service.teardown(0)
             except Exception:
                 pass
         engine.shutdown()

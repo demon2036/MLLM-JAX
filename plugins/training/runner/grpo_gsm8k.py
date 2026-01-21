@@ -415,7 +415,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
         patch_qwen2_attention_decode_fast()
         if jax.process_index() == 0:
-            print("rollout_fast_qwen2_decode_attention=1 (patched Qwen2Attention.__call__)")
+            print("rollout_fast_qwen2_decode_attention=1 (patched attention._naive_sdpa for decode)")
     if os.environ.get("ROLLOUT_FAST_GENERATE") == "1":
         from plugins.training.rollout_optimizations import patch_sampler_generate_fast
 

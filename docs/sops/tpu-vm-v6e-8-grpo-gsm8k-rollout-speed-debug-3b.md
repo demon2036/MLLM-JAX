@@ -54,6 +54,43 @@ This keeps `rollout.max_length_sample=1024` (from `plugins/training/configs/grpo
 - `unset PRINT_SAMPLER_GENERATE_TIMING`
 - `python -u scripts/run_grpo_gsm8k_training.py --config plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml --set steps=4 --set model_path=Qwen/Qwen2.5-3B-Instruct 2>&1 | tee /root/rollout_logs/fast_generate_decodeattn_3b_steps4.log`
 
+### 4) W&B-backed timing comparison runs (20 steps; same `max_length_sample=1024`)
+
+These are the W&B-online runs used to produce the aligned timing comparison in:
+- `answers/v6e-8-grpo-rollout-speedup-qwen25-3b.md`
+
+Notes:
+- Config file used (unchanged): `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
+- For faster iteration, `STEPS=20` was exported via env (no YAML edits).
+- W&B API key is loaded from `/root/.env` by `scripts/run_grpo_gsm8k_training.py` (never commit secrets).
+
+**Baseline (no patches)**
+
+- W&B: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/xbeufmfo`
+- Command (on TPU VM):
+  - `cd /root/MLLM-JAX; export WANDB_MODE=online WANDB_PROJECT=mllm-jax-grpo-gsm8k WANDB_NAME=grpo_gsm8k_v6e8_qwen25_3b_baseline_b341e45_20260120_145313 STEPS=20 PRINT_TRAIN_TIME_BREAKDOWN=1 TOKENIZERS_PARALLELISM=false; unset ROLLOUT_FAST_GENERATE ROLLOUT_FAST_QWEN2_DECODE_ATTENTION PRINT_SAMPLER_GENERATE_TIMING; bash scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_nohup.sh`
+
+**Opt 1 only (`ROLLOUT_FAST_GENERATE=1`)**
+
+- W&B: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/wnlkdhdr`
+- Command (on TPU VM):
+  - `cd /root/MLLM-JAX; export WANDB_MODE=online WANDB_PROJECT=mllm-jax-grpo-gsm8k WANDB_NAME=grpo_gsm8k_v6e8_qwen25_3b_fastgen_b341e45_20260120_150735 STEPS=20 PRINT_TRAIN_TIME_BREAKDOWN=1 TOKENIZERS_PARALLELISM=false ROLLOUT_FAST_GENERATE=1; unset ROLLOUT_FAST_QWEN2_DECODE_ATTENTION PRINT_SAMPLER_GENERATE_TIMING; bash scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_nohup.sh`
+
+**Opt 1 + Opt 2 (`ROLLOUT_FAST_GENERATE=1`, `ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1`)**
+
+- W&B: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/5toqx4ph`
+- Command (on TPU VM):
+  - `cd /root/MLLM-JAX; export WANDB_MODE=online WANDB_PROJECT=mllm-jax-grpo-gsm8k WANDB_NAME=grpo_gsm8k_v6e8_qwen25_3b_rolloutfast_b341e45_20260120_143527 STEPS=20 PRINT_TRAIN_TIME_BREAKDOWN=1 TOKENIZERS_PARALLELISM=false ROLLOUT_FAST_GENERATE=1 ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1; unset PRINT_SAMPLER_GENERATE_TIMING; bash scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_nohup.sh`
+
+### 5) Full 100-step W&B run (Opt 1 + Opt 2; same `max_length_sample=1024`)
+
+- W&B: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/zy9aibuc`
+- Command (on TPU VM):
+  - `cd /root/MLLM-JAX; ts=$(date -u +%Y%m%d_%H%M%S); commit=$(git rev-parse --short HEAD); export WANDB_MODE=online WANDB_PROJECT=mllm-jax-grpo-gsm8k WANDB_NAME="grpo_gsm8k_v6e8_qwen25_3b_opt2_steps100_${commit}_${ts}" TOKENIZERS_PARALLELISM=false PRINT_TRAIN_TIME_BREAKDOWN=1 ROLLOUT_FAST_GENERATE=1 ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1; unset STEPS; bash scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_nohup.sh`
+- Verified:
+  - `logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.exit` is `0`
+  - `time/train/step_avg_last10_s = 12.890168357500807` (avg of steps 90-99)
+
 ## Expected Result
 
 - The runner prints per-step breakdown when `PRINT_TRAIN_TIME_BREAKDOWN=1`, including:
@@ -76,4 +113,3 @@ This keeps `rollout.max_length_sample=1024` (from `plugins/training/configs/grpo
 - `plugins/training/rollout_optimizations/qwen2_decode_attention.py`
 - `MLLM_JAX/sample/sample_state_right_padding2.py`
 - `MLLM_JAX/language/qwen2/modular_qwen2.py`
-

@@ -163,6 +163,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt", default="你是谁")
     parser.add_argument(
+        "--tp-size",
+        type=int,
+        default=0,
+        help="Tensor parallel size. 0 means auto (= jax.device_count()).",
+    )
+    parser.add_argument("--dp-size", type=int, default=1)
+    parser.add_argument(
         "--wandb",
         action="store_true",
         help="启用 Weights & Biases 记录（仅 jax.process_index()==0）。",
@@ -193,6 +200,27 @@ def main() -> None:
     from sgl_jax.version import __version__ as sglang_jax_version
     from sgl_jax.srt.entrypoints.engine import Engine
 
+    try:
+        import jax
+
+        device_count = int(jax.device_count())
+        process_index = int(jax.process_index())
+    except Exception:
+        device_count = None
+        process_index = 0
+
+    tp_size = int(args.tp_size)
+    dp_size = int(args.dp_size)
+    if tp_size <= 0:
+        tp_size = int(device_count) if device_count is not None else 4
+    if dp_size <= 0:
+        raise ValueError(f"--dp-size must be > 0, got {dp_size}")
+    if device_count is not None and tp_size * dp_size != device_count:
+        raise ValueError(
+            f"tp_size*dp_size must match jax.device_count() "
+            f"(tp_size={tp_size}, dp_size={dp_size}, device_count={device_count})"
+        )
+
     t0 = time.time()
     wandb_step = 0
 
@@ -200,9 +228,7 @@ def main() -> None:
     wandb_service = None
     if args.wandb:
         try:
-            import jax
-
-            if jax.process_index() == 0 and os.environ.get("WANDB_MODE") != "disabled":
+            if process_index == 0 and os.environ.get("WANDB_MODE") != "disabled":
                 import wandb as _wandb
 
                 run_name = str(args.wandb_name).strip()
@@ -216,8 +242,8 @@ def main() -> None:
                     "name": run_name,
                     "config": {
                         "model_id": model_id,
-                        "tp_size": 4,
-                        "dp_size": 1,
+                        "tp_size": tp_size,
+                        "dp_size": dp_size,
                         "dtype": "bfloat16",
                         "load_format": "dummy",
                     },
@@ -305,8 +331,8 @@ def main() -> None:
         tokenizer_path=model_id,
         trust_remote_code=True,
         device="tpu",
-        tp_size=4,
-        dp_size=1,
+        tp_size=tp_size,
+        dp_size=dp_size,
         enable_single_process=True,
         load_format="dummy",
         dtype="bfloat16",
@@ -330,8 +356,8 @@ def main() -> None:
                     "phase": "engine_ready_dummy",
                     "model_id": model_id,
                     "device": "tpu",
-                    "tp_size": 4,
-                    "dp_size": 1,
+                    "tp_size": tp_size,
+                    "dp_size": dp_size,
                     "dtype": "bfloat16",
                     "load_format": "dummy",
                     "download_dir": str(download_dir),

@@ -2,7 +2,7 @@
 
 ## 目标
 
-在 TPU `v4-8` 上验证：
+在 TPU 上验证（先 `v4-8`，后补充 `v6e-8` online 复验）：
 
 1) 用 `load_format="dummy"` 初始化 `sglang-jax` 的 `Engine`（快速完成形状准备/编译初始化）。
 2) 从 Hugging Face safetensors 加载真实 `Qwen/Qwen3-4B` 权重到内存模型。
@@ -78,6 +78,7 @@
 在 `tests/run_sglang_jax_qwen3_4b_param_swap.py` 中：
 
 - 增加 `--prompt` CLI 覆盖（默认 `你是谁`）。
+- 增加 `--tp-size/--dp-size`：默认 `--tp-size=0` 自动取 `jax.device_count()`，并校验 `tp_size*dp_size == jax.device_count()`。
 - HF cache/download 目录改为 repo 相对路径（`<repo>/workdir/...`），避免硬编码 `/root/MLLM-JAX/...`。
 - `engine_ready_dummy` JSON 增加元信息字段：
   - `model_id`, `tp_size`, `dp_size`, `dtype`, `load_format`, `download_dir`, `hf_cache_dir`, `sgl_jax_version`
@@ -132,7 +133,7 @@ timeout 7200 python -u tests/run_sglang_jax_qwen3_4b_param_swap.py \
   - `/root/MLLM-JAX/workdir/sglang_jax_qwen3_4b_param_swap_nwandb_260121120224.log`
   - `/root/MLLM-JAX/workdir/sglang_jax_qwen3_4b_param_swap_wandb_offline_260121120625.log`
 - W&B offline run dir：`/root/MLLM-JAX/workdir/wandb/wandb/offline-run-20260121_120631-hm401xup`
-- 备注：若要实时同步到云端，需要在 TPU 环境里配置 `WANDB_API_KEY` 并使用 `WANDB_MODE=online`；本次仅完成 offline 验证（退出码=0，且无 traceback）。
+- 备注：W&B online 需要在 TPU 环境里配置 `WANDB_API_KEY` 并使用 `WANDB_MODE=online`；下文已补充一轮 `v6e-8` online 实测。
 - 用于 swap 的 HF snapshot：`/root/MLLM-JAX/workdir/hf_models/models--Qwen--Qwen3-4B/snapshots/1cfa9a7208912126459214e8b04321603b3df60c`
 
 **关键 JSON 行（从日志摘录）**
@@ -153,9 +154,80 @@ timeout 7200 python -u tests/run_sglang_jax_qwen3_4b_param_swap.py \
 
 同时 `weights_swapped` 阶段的 `peak_bytes_in_use_max≈3.90 GiB/device`，而稳态 `bytes_in_use≈2.01 GiB/device`，说明 swap 过程中存在**短暂的额外峰值分配**（并非两套 params 长期常驻）。
 
+## 补充：TPU v6e-8 + W&B online 实测（最新）
+
+> 背景：近期 `v4-8 spot` 多次 `PREEMPTED`，且 `us-central2-b` 容量/配额不稳定；因此使用现成 `v6e-8` 在 `tp_size=8` 上做一次 online 复验，确保能在 W&B 云端实时看到分阶段内存。
+
+**TPU**
+
+- Zone：`us-east1-d`
+- TPU 名称：`mllm-jax-v6e-8-260120021350`
+- 加速器：`v6e-8`（`jax.device_count()==8`）
+
+**Python/JAX**
+
+- Conda env：`mllm-jax`
+- Python：`3.12.12`
+- JAX：`0.8.2`
+
+**代码版本**
+
+- `sglang-jax` commit：`bd09a87fc6e86c21ce14edd66948ac5dea3a4360`（editable install，`sgl_jax` version `0.0.2`）
+- 本仓库 commit：`8f47868`（`--tp-size=0` 自动适配 `jax.device_count()`）
+
+**W&B**
+
+- project：`sglang-jax-qwen3-4b-weight-swap-memory-online`
+- run id：`15ukva9g`
+- run url：`https://wandb.ai/johntitordemon2036/sglang-jax-qwen3-4b-weight-swap-memory-online/runs/15ukva9g`
+
+**运行命令（TPU VM 上，W&B online）**
+
+```bash
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate mllm-jax
+cd /root/MLLM-JAX
+set -a
+source /root/.env_wandb_sglang_jax
+set +a
+export WANDB_MODE=online
+export PYTHONUNBUFFERED=1
+export HF_HUB_ENABLE_HF_TRANSFER=1
+TS=$(date +%y%m%d%H%M%S)
+LOG=/root/MLLM-JAX/workdir/sglang_jax_qwen3_4b_param_swap_wandb_online_${TS}.log
+timeout 7200 python -u tests/run_sglang_jax_qwen3_4b_param_swap.py \
+  --wandb \
+  --wandb-project sglang-jax-qwen3-4b-weight-swap-memory-online \
+  --wandb-name qwen3_4b_v6e8_${TS} \
+  2>&1 | tee $LOG
+echo log_path=$LOG
+```
+
+**产物（TPU VM 上）**
+
+- 完整日志：`/root/MLLM-JAX/workdir/sglang_jax_qwen3_4b_param_swap_wandb_online_260121145251.log`
+- W&B run dir：`/root/MLLM-JAX/workdir/wandb/wandb/run-20260121_145336-15ukva9g`
+
+**关键结果（从 online 日志摘录）**
+
+- `engine_ready_dummy`：`tp_size=8`，`num_model_state_leaves=398`
+- `weights_swapped`：替换后 `num_model_state_leaves=398`
+- `generate_result.text`（提示词 `你是谁`）：
+  - `？我需要一个能帮我写代码的AI助手。我需要你能够理解我的需求，然后生成正确的代码。我需要你能够处理各种编程语言，比如Python、Java、C++、JavaScript等。我需要你能够处理各种编程任务，比如算法题、数据结构、Web开发、`
+
+## 分阶段内存结论补充（TPU v6e-8 HBM）
+
+以下为 `v6e-8` online run 的 `jax_device_memory_summary`（8 device 合计）：
+
+- `engine_ready_dummy`：`bytes_in_use_sum=8652901376`（≈ `8.06 GiB`，≈ `1.01 GiB/device`）
+- `weights_swapped`：`bytes_in_use_sum=8655358976`（≈ `8.06 GiB`）
+  - `peak_bytes_in_use_max=2094266368`（≈ `1.95 GiB/device`，说明 swap 期间仍有**短暂额外峰值**）
+- `generate_result`：`bytes_in_use_sum=9164978176`（≈ `8.54 GiB`，相比 `weights_swapped` 增量 ≈ `0.47 GiB`）
+
 ## 结论
 
 - 通过替换 `model_state_leaves` 的方式对 `Engine` 做运行时参数替换，对 `Qwen/Qwen3-4B` 在 TPU `v4-8`（`tp_size=4`）上是**可行**的。
+- 同样的脚本在 TPU `v6e-8`（`tp_size=8`，W&B online）上也**跑通**，且 W&B 能实时看到分阶段内存曲线。
 - 替换成功且**未改变**模型状态结构：替换前后 `num_model_state_leaves` 都是 `398`。
 - 替换后 `engine.generate()` 对提示词 `你是谁` 返回非空输出（本次运行设置 `max_new_tokens=64`，因此被长度截断）。
 - 备注：本次使用的是纯文本 prompt（非 chat template）。若想更符合“助手自我介绍”的聊天效果，建议走 chat serving/template 路径，而不是直接 `Engine.generate(text=...)`。

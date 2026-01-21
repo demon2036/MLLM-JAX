@@ -25,3 +25,14 @@
   **Troubleshooting**: 需要在同一目录切分支时，先 `git status` 确认无未提交修改；必要时用 `git stash -u` 暂存
   **References**: https://git-scm.com/docs/git-switch ; https://git-scm.com/docs/git-checkout
 
+- **Title**: SOP: Worktree 场景下把 feature 分支合到 `main`
+  **Prereqs**: 本机已有 `main` worktree（`main` 已在另一个目录被 checkout）
+  **Steps**:
+  - 进入 `main` 所在 worktree：`cd <repo-main-worktree>`
+  - 同步远端并 fast-forward 合并：`git fetch --all --prune`，`git merge --ff-only origin/<feature-branch>`
+  - 跑本地校验：`python -m pytest -q`
+  - 推送到远端：`git push origin main`
+  **Expected Result**: `main` 更新到 feature 分支对应提交，并且测试通过
+  **Troubleshooting**:
+  - 如果在另一个 worktree 里执行 `git checkout main` 报错 `fatal: 'main' is already used by worktree ...`，说明 `main` 已被别的 worktree 占用；去 `main` 的 worktree 目录里合并即可。
+

@@ -15,7 +15,9 @@ This note documents:
 
 - TPU VM: `v6e-8` (1 host, 8 chips), zone `us-east1-d`, project `civil-rarity-482610-s5`
 - Repo branch: `improve-rollout`
-- Commit: `b341e45`
+- Commits:
+  - `b341e45` (Runs A-D)
+  - `883c018` (Run E; after attention modularization)
 - Python/JAX on TPU: Python `3.12.12`, `jax==0.8.2`, `jaxlib==0.8.2`
 
 ## Config (kept constant)
@@ -57,7 +59,8 @@ Rollout is dominated by **decode** (one-token-at-a-time generation):
 
 ### Opt 2: `ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1` (bf16 matmuls in decode attention)
 
-- Patch target: `MLLM_JAX/language/qwen2/modular_qwen2.py:Qwen2Attention.__call__`
+- Patch target (current): `MLLM_JAX/language/attention.py:_naive_sdpa` (decode fallback when `q_len=1`)
+- Patch target (legacy, before attention modularization): `MLLM_JAX/language/qwen2/modular_qwen2.py:Qwen2Attention.__call__`
 - Implementation: `plugins/training/rollout_optimizations/qwen2_decode_attention.py`
 - Approach: in the `q_len=1` fallback path, keep attention matmuls in `bf16` (softmax stays in `fp32`).
 - Expected effect: reduce per-token attention cost during decode.
@@ -110,6 +113,25 @@ This is the same Opt 1 + Opt 2 condition as Run C, but run for the full `steps=1
   - `time/train/step_avg_last10_s = 12.890168357500807`
   - `eval/reward/func/reward_correct/mean = 0.7421875`
 
+### Run E: Opt 1 + Opt 2 (100 steps, after attention modularization)
+
+This reruns the same Opt 1 + Opt 2 condition after absorbing `main`'s
+"attention as a standalone module" refactor (adds `MLLM_JAX/language/attention.py`).
+
+Implementation difference:
+- Before: Opt 2 patched `Qwen2Attention.__call__` (in `modular_qwen2.py`).
+- After: Opt 2 patches `MLLM_JAX/language/attention.py:_naive_sdpa` for `q_len=1`
+  (decode fallback), keeping matmuls in model dtype.
+
+- W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/b4yhlcce
+- `wandb_name`: `grpo_gsm8k_qwen25_3b_bs128_steps100_len1024_883c018_20260121_030815`
+- Env flags:
+  - `ROLLOUT_FAST_GENERATE=1`
+  - `ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1`
+- Summary metrics (`wandb-summary.json`):
+  - `time/train/step_avg_last10_s = 12.13907113699679`
+  - `eval/reward/func/reward_correct/mean = 0.78125`
+
 ## Results (aligned)
 
 ### Overall step time (steady-state)
@@ -125,6 +147,7 @@ Using `time/train/step_avg_last10_s` (avg of steps 10-19):
 ### 100-step confirmation run
 
 - Run D (steps=100) `time/train/step_avg_last10_s` (avg of steps 90-99): `12.890168357500807` (W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/zy9aibuc)
+- Run E (steps=100, after attention modularization) `time/train/step_avg_last10_s` (avg of steps 90-99): `12.13907113699679` (W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/b4yhlcce)
 
 ### Per-step breakdown (representative `step=10`)
 

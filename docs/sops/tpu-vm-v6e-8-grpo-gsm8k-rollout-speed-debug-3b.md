@@ -54,6 +54,10 @@ This keeps `rollout.max_length_sample=1024` (from `plugins/training/configs/grpo
 - `unset PRINT_SAMPLER_GENERATE_TIMING`
 - `python -u scripts/run_grpo_gsm8k_training.py --config plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml --set steps=4 --set model_path=Qwen/Qwen2.5-3B-Instruct 2>&1 | tee /root/rollout_logs/fast_generate_decodeattn_3b_steps4.log`
 
+Notes:
+- After attention modularization (`MLLM_JAX/language/attention.py`), Opt 2 patches the decode fallback (`_naive_sdpa` for `q_len=1`).
+- Before attention modularization (older commits), Opt 2 patched `Qwen2Attention.__call__` directly.
+
 ### 4) W&B-backed timing comparison runs (20 steps; same `max_length_sample=1024`)
 
 These are the W&B-online runs used to produce the aligned timing comparison in:
@@ -91,6 +95,16 @@ Notes:
   - `logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.exit` is `0`
   - `time/train/step_avg_last10_s = 12.890168357500807` (avg of steps 90-99)
 
+### 6) Full 100-step W&B run (Opt 1 + Opt 2, after attention modularization)
+
+- W&B: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/b4yhlcce`
+- Command (on TPU VM):
+  - `cd /root/MLLM-JAX; export WANDB_MODE=online WANDB_PROJECT=mllm-jax-grpo-gsm8k TOKENIZERS_PARALLELISM=false PRINT_TRAIN_TIME_BREAKDOWN=1 ROLLOUT_FAST_GENERATE=1 ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1; unset PRINT_SAMPLER_GENERATE_TIMING; bash scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_nohup.sh`
+  - Secrets: ensure `WANDB_API_KEY` is set in the environment (never commit it).
+- Verified:
+  - `logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.exit` is `0`
+  - `time/train/step_avg_last10_s = 12.13907113699679` (avg of steps 90-99)
+
 ## Expected Result
 
 - The runner prints per-step breakdown when `PRINT_TRAIN_TIME_BREAKDOWN=1`, including:
@@ -103,6 +117,10 @@ Notes:
 
 - `Unable to initialize backend 'tpu' ... already in use`:
   - `rm -f /tmp/libtpu_lockfile` and ensure no other training process is running (`pgrep -af run_grpo_gsm8k_training.py`).
+- `wandb disabled due to init error: API key cannot start or end with whitespace`:
+  - Ensure `WANDB_API_KEY` has no leading/trailing whitespace (common culprit: CRLF `\r` at end of the value).
+- `wandb disabled due to init error: ... 401 ... user is not logged in`:
+  - `WANDB_API_KEY` is invalid/expired; re-login with a valid key.
 - Logs disappearing after repo clean:
   - Keep logs outside the repo dir (example used here: `/root/rollout_logs/`).
 

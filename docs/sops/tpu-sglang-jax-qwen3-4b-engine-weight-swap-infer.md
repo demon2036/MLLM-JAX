@@ -1,4 +1,4 @@
-# TPU: sglang-jax Qwen3-4B weight-swap inference (Engine param replacement)
+﻿# TPU: sglang-jax Qwen3-4B weight-swap inference (Engine param replacement)
 
 - **Title**: SOP: Run Qwen/Qwen3-4B on TPU via sglang-jax, then swap weights into a dummy Engine and generate “你是谁”
   **Prereqs**:

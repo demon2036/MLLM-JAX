@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import sys
@@ -29,13 +30,27 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo_root))
 
+    workdir = repo_root / "workdir"
+    download_dir = workdir / "hf_download"
+    hf_cache_dir = workdir / "hf_models"
+    model_id = "Qwen/Qwen3-4B"
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--prompt", default="你是谁")
+    args = parser.parse_args()
+
     os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
+    workdir.mkdir(parents=True, exist_ok=True)
+    download_dir.mkdir(parents=True, exist_ok=True)
+    hf_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    from sgl_jax.version import __version__ as sglang_jax_version
     from sgl_jax.srt.entrypoints.engine import Engine
 
     engine = Engine(
-        model_path="Qwen/Qwen3-4B",
-        tokenizer_path="Qwen/Qwen3-4B",
+        model_path=model_id,
+        tokenizer_path=model_id,
         trust_remote_code=True,
         device="tpu",
         tp_size=4,
@@ -50,7 +65,7 @@ def main() -> None:
         disable_precompile=True,
         skip_server_warmup=True,
         log_level="info",
-        download_dir="/root/MLLM-JAX/workdir/hf_download",
+        download_dir=str(download_dir),
     )
 
     try:
@@ -59,19 +74,47 @@ def main() -> None:
             json.dumps(
                 {
                     "phase": "engine_ready_dummy",
+                    "model_id": model_id,
+                    "device": "tpu",
+                    "tp_size": 4,
+                    "dp_size": 1,
+                    "dtype": "bfloat16",
+                    "load_format": "dummy",
+                    "download_dir": str(download_dir),
+                    "hf_cache_dir": str(hf_cache_dir),
+                    "sgl_jax_version": sglang_jax_version,
                     "num_model_state_leaves": len(model_runner.model_state_leaves),
                 },
                 ensure_ascii=False,
-            )
+            ),
+            flush=True,
         )
 
         from plugins.sglang_jax_inference.engine_weight_swap import swap_engine_weights_from_hf
 
-        snapshot_dir, num_leaves = swap_engine_weights_from_hf(
-            engine=engine,
-            model_id_or_path="Qwen/Qwen3-4B",
-            cache_dir="/root/MLLM-JAX/workdir/hf_models",
-        )
+        try:
+            snapshot_dir, num_leaves = swap_engine_weights_from_hf(
+                engine=engine,
+                model_id_or_path=model_id,
+                cache_dir=str(hf_cache_dir),
+            )
+        except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "phase": "weights_swap_error",
+                        "error": str(exc),
+                        "hint": (
+                            "If this is an HF download issue, verify TPU egress, "
+                            "ensure `huggingface_hub[hf_transfer]` is installed, "
+                            "and retry with `HF_HUB_ENABLE_HF_TRANSFER=1`."
+                        ),
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            raise
         print(
             json.dumps(
                 {
@@ -80,10 +123,11 @@ def main() -> None:
                     "num_model_state_leaves": num_leaves,
                 },
                 ensure_ascii=False,
-            )
+            ),
+            flush=True,
         )
 
-        prompt = "你是谁"
+        prompt = args.prompt
         sampling_params = {"temperature": 0.0, "max_new_tokens": 64}
 
         result = engine.generate(prompt=prompt, sampling_params=sampling_params)
@@ -98,7 +142,8 @@ def main() -> None:
                 },
                 ensure_ascii=False,
                 default=str,
-            )
+            ),
+            flush=True,
         )
     finally:
         engine.shutdown()

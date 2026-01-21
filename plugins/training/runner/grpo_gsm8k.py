@@ -460,6 +460,46 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         tokenizer=None,
         model_path=cfg.model_path,
     )
+    eval_rollout_backend = rollout_backend
+    eval_greedy_enabled = os.environ.get("EVAL_GREEDY") == "1" or os.environ.get("EVAL_FULL_GREEDY") == "1"
+    if eval_greedy_enabled and eval_qas:
+        from MLLM_JAX.sample.sample_state_right_padding2 import Sampler as SamplerImpl
+        from jax.experimental.shard_map import shard_map
+
+        eval_sampler = SamplerImpl(sampler.model, sampler.tokenizer, mesh=mesh)
+
+        def _greedy_sample(rng, logits):
+            rngs = jax.random.split(rng, jax.device_count())
+
+            def sample_inner(_rng, logits_local):
+                del _rng
+                return jnp.argmax(logits_local, axis=-1)
+
+            sample_fn = shard_map(
+                sample_inner,
+                mesh=mesh,
+                in_specs=(PS(["dp", "fsdp"]), PS(["dp", "fsdp"], "tp")),
+                out_specs=PS(["dp", "fsdp"]),
+                check_rep=False,
+            )
+            return sample_fn(rngs, logits)
+
+        eval_sampler.sample_fn = jax.jit(_greedy_sample)
+        eval_sampler.jit_infer_step = jax.jit(eval_sampler.infer, donate_argnums=(0,))
+
+        if os.environ.get("ROLLOUT_FAST_GENERATE") == "1":
+            from plugins.training.rollout_optimizations import patch_sampler_generate_fast
+
+            patch_sampler_generate_fast(eval_sampler)
+
+        eval_rollout_backend = create_rollout_backend(
+            name=rollout_backend_name,
+            sampler=eval_sampler,
+            tokenizer=None,
+            model_path=cfg.model_path,
+        )
+        if jax.process_index() == 0:
+            print("eval_greedy=1 (eval rollout uses argmax sampling)")
 
     wandb = _maybe_init_wandb(cfg)
 
@@ -752,12 +792,12 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_repeated_items = [item for item in eval_items for _ in range(cfg.rollout.num_pre_q)]
 
                 t_eval_sync0 = time.perf_counter()
-                if hasattr(rollout_backend, "sync_weights"):
-                    rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
+                if hasattr(eval_rollout_backend, "sync_weights"):
+                    eval_rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
                 eval_rollout_sync_s += time.perf_counter() - t_eval_sync0
 
                 t_eval_rollout0 = time.perf_counter()
-                eval_rollout = rollout_backend.rollout(
+                eval_rollout = eval_rollout_backend.rollout(
                     prompts=eval_repeated_prompts,
                     params=state.params,
                     system_prompt=system_prompt,
@@ -768,8 +808,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_rollout_generate_s += time.perf_counter() - t_eval_rollout0
 
                 t_eval_flush0 = time.perf_counter()
-                if hasattr(rollout_backend, "flush_cache"):
-                    rollout_backend.flush_cache()  # type: ignore[attr-defined]
+                if hasattr(eval_rollout_backend, "flush_cache"):
+                    eval_rollout_backend.flush_cache()  # type: ignore[attr-defined]
                 eval_rollout_flush_s += time.perf_counter() - t_eval_flush0
 
                 t_eval_reward0 = time.perf_counter()
@@ -790,8 +830,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_rewards_per_func_all.append(eval_per_func_flat)
 
             t_eval_release0 = time.perf_counter()
-            if hasattr(rollout_backend, "release_weights"):
-                rollout_backend.release_weights()  # type: ignore[attr-defined]
+            if hasattr(eval_rollout_backend, "release_weights"):
+                eval_rollout_backend.release_weights()  # type: ignore[attr-defined]
             eval_rollout_release_s = time.perf_counter() - t_eval_release0
 
             eval_step_s = time.perf_counter() - eval_step0
@@ -875,7 +915,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
         if hasattr(rollout_backend, "sync_weights"):
             t0 = time.perf_counter()
-            rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
+            eval_rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
             t_eval_sync_s += time.perf_counter() - t0
 
         pad_item = eval_qas[0]
@@ -892,7 +932,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             eval_repeated_items = [item for item in batch_items for _ in range(num_pre_q)]
 
             t0 = time.perf_counter()
-            eval_rollout = rollout_backend.rollout(
+            eval_rollout = eval_rollout_backend.rollout(
                 prompts=eval_repeated_prompts,
                 params=state.params,
                 system_prompt=system_prompt,
@@ -903,8 +943,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             t_eval_rollout_generate_s += time.perf_counter() - t0
 
             t0 = time.perf_counter()
-            if hasattr(rollout_backend, "flush_cache"):
-                rollout_backend.flush_cache()  # type: ignore[attr-defined]
+            if hasattr(eval_rollout_backend, "flush_cache"):
+                eval_rollout_backend.flush_cache()  # type: ignore[attr-defined]
             t_eval_rollout_flush_s += time.perf_counter() - t0
 
             t0 = time.perf_counter()
@@ -941,8 +981,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             local_completion_count += int(valid_prompts) * int(num_pre_q)
 
         t0 = time.perf_counter()
-        if hasattr(rollout_backend, "release_weights"):
-            rollout_backend.release_weights()  # type: ignore[attr-defined]
+        if hasattr(eval_rollout_backend, "release_weights"):
+            eval_rollout_backend.release_weights()  # type: ignore[attr-defined]
         t_eval_release_s += time.perf_counter() - t0
 
         # Aggregate across processes.

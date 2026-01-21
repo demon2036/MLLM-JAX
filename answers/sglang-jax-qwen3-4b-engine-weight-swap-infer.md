@@ -1,113 +1,112 @@
-﻿# sglang-jax (JAX/TPU): Qwen3-4B Engine weight-swap inference
+﻿# sglang-jax（JAX/TPU）：Qwen3-4B Engine 权重热替换推理验证
 
-## Goal
+## 目标
 
-On a TPU `v4-8`, validate that we can:
+在 TPU `v4-8` 上验证：
 
-1) Initialize a `sglang-jax` `Engine` with `load_format="dummy"` (fast shape/compile setup).
-2) Load real `Qwen/Qwen3-4B` weights (HF safetensors) into the in-memory model.
-3) Replace the `Engine` runtime parameters (`model_state_leaves`) in-place.
-4) Run a single inference with prompt `你是谁`.
+1) 用 `load_format="dummy"` 初始化 `sglang-jax` 的 `Engine`（快速完成形状准备/编译初始化）。
+2) 从 Hugging Face safetensors 加载真实 `Qwen/Qwen3-4B` 权重到内存模型。
+3) 原地替换 `Engine` 运行时参数（`model_state_leaves`）。
+4) 用提示词 `你是谁` 完成一次推理。
 
-This is a **non-invasive** approach: we do not modify upstream `sglang-jax`; we only add code under `plugins/` and a runnable test script under `tests/`.
+这是一个**非侵入式**方案：不修改上游 `sglang-jax`；只在本仓库 `plugins/` 下新增辅助代码，并在 `tests/` 下提供可直接运行的验证脚本。
 
-## What was already in this repo (baseline)
+## 仓库基线（已有内容）
 
-- Upstream `sglang-jax` is cloned under `workdir/sglang-jax` (gitignored local scratch) at commit:
+- 上游 `sglang-jax` 克隆在 `workdir/sglang-jax`（gitignore 的本地 scratch），固定 commit：
   - `bd09a87fc6e86c21ce14edd66948ac5dea3a4360`
-- A TPU SOP exists that describes the same validation:
+- TPU SOP（描述同一次验证流程）：
   - `docs/sops/tpu-sglang-jax-qwen3-4b-engine-weight-swap-infer.md`
-- The core implementation pieces already existed:
+- 核心实现：
   - `plugins/sglang_jax_inference/engine_weight_swap.py`
   - `tests/run_sglang_jax_qwen3_4b_param_swap.py`
 
-## How sglang-jax enables runtime weight swapping
+## sglang-jax 如何支持运行时权重替换
 
-### 1) Engine composition exposes the in-process scheduler
+### 1) `Engine` 组合结构暴露进程内 scheduler
 
-- File: `workdir/sglang-jax/python/sgl_jax/srt/entrypoints/engine.py`
-- `Engine` keeps an in-process reference `self.scheduler_info` when started with `enable_single_process=True`.
-- That makes it possible (inside the same Python process) to reach:
+- 文件：`workdir/sglang-jax/python/sgl_jax/srt/entrypoints/engine.py`
+- 以 `enable_single_process=True` 启动时，`Engine` 会保留进程内引用 `self.scheduler_info`。
+- 因此在同一 Python 进程里，可以定位到：
   - `engine.scheduler_info["scheduler"].tp_worker.worker.model_runner`
 
-### 2) ModelRunner exports a “leaf list” that is fed into the jitted function
+### 2) `ModelRunner` 导出喂给 jitted 函数的 “leaf list”
 
-- File: `workdir/sglang-jax/python/sgl_jax/srt/model_executor/model_runner.py`
-- In `ModelRunner.initialize_jit()`:
-  - `model_state` is extracted via `nnx.split(self.model)`
-  - `model_state` is flattened via `jax.tree_util.tree_flatten(model_state)`
-  - the flattened list is stored as `self.model_state_leaves`
-- The jitted forward path reconstructs the model state each call using:
+- 文件：`workdir/sglang-jax/python/sgl_jax/srt/model_executor/model_runner.py`
+- `ModelRunner.initialize_jit()` 内部：
+  - 通过 `nnx.split(self.model)` 抽取 `model_state`
+  - 通过 `jax.tree_util.tree_flatten(model_state)` 展平
+  - 展平后的列表保存为 `self.model_state_leaves`
+- jitted 前向每次调用都用以下方式重建模型状态：
   - `jax.tree_util.tree_unflatten(model_state_def, model_state_leaves)`
 
-**Key implication**: if we replace `self.model_state_leaves` with a same-structure list (same tree-def + leaf count/shapes), the compiled function will execute with the new parameters, without recompiling.
+**关键含义**：只要把 `self.model_state_leaves` 替换成“同结构”的 leaf 列表（同 tree-def，leaf 数量与 shape 对齐），编译好的函数就会在**不重新编译**的情况下使用新参数运行。
 
-### 3) Qwen3 weight loading is defined by explicit HF→internal mappings
+### 3) Qwen3 权重加载依赖显式的 HF → 内部映射
 
-- File: `workdir/sglang-jax/python/sgl_jax/srt/models/qwen3.py`
-- `QWen3ForCausalLMModel.load_weights()` builds a `WeightLoader(...)` and calls:
+- 文件：`workdir/sglang-jax/python/sgl_jax/srt/models/qwen3.py`
+- `QWen3ForCausalLMModel.load_weights()` 会构造 `WeightLoader(...)` 并调用：
   - `loader.load_weights_from_safetensors(weight_mappings)`
-- The mapping is produced in `_create_qwen3_weight_mappings()` and layer helpers.
+- 映射由 `_create_qwen3_weight_mappings()` 与各 layer helper 构造。
 
-## What we run on TPU (the actual validation)
+## TPU 上实际跑的验证流程
 
-### 1) Runtime swap helper (plugin)
+### 1) 运行时替换辅助函数（plugin）
 
-- File: `plugins/sglang_jax_inference/engine_weight_swap.py`
-- Responsibilities:
-  1) Download a HF snapshot directory (`snapshot_download`) when given a model id.
-  2) Locate the `model_runner` from an `Engine` (requires `enable_single_process=True`).
-  3) Temporarily update `model_config.model_path` to the snapshot directory.
-  4) Call `model_runner.model.load_weights(model_config)` (sglang-jax’s official loader).
-  5) Rebuild and flatten the nnx state; overwrite `model_runner.model_state_leaves`.
-  6) Sanity-check: leaf count must remain identical (same tree structure).
+- 文件：`plugins/sglang_jax_inference/engine_weight_swap.py`
+- 职责：
+  1) 给定 model id 时下载 HF snapshot（`snapshot_download`）。
+  2) 从 `Engine` 定位 `model_runner`（要求 `enable_single_process=True`）。
+  3) 临时把 `model_config.model_path` 指向 snapshot 目录。
+  4) 调用 `model_runner.model.load_weights(model_config)`（sglang-jax 官方加载逻辑）。
+  5) 重新 split/flatten nnx state，并覆写 `model_runner.model_state_leaves`。
+  6) 一致性校验：leaf 数量必须完全一致（tree 结构不变）。
 
-### 2) End-to-end param-swap inference script
+### 2) 端到端参数替换推理脚本
 
-- File: `tests/run_sglang_jax_qwen3_4b_param_swap.py`
-- Pipeline:
-  1) Create `Engine(... load_format="dummy", enable_single_process=True, device="tpu")`
-  2) Print JSON `engine_ready_dummy` with config + `num_model_state_leaves`
+- 文件：`tests/run_sglang_jax_qwen3_4b_param_swap.py`
+- 流程：
+  1) 创建 `Engine(... load_format="dummy", enable_single_process=True, device="tpu")`
+  2) 打印 JSON phase `engine_ready_dummy`（包含 config + `num_model_state_leaves`）
   3) `swap_engine_weights_from_hf(engine, "Qwen/Qwen3-4B", cache_dir=...)`
-  4) Print JSON `weights_swapped`
+  4) 打印 JSON phase `weights_swapped`
   5) `engine.generate(prompt="你是谁", ...)`
-  6) Print JSON `generate_result`
+  6) 打印 JSON phase `generate_result`
 
-#### Improvements made in this turn
+#### 本轮做的增量改动
 
-In `tests/run_sglang_jax_qwen3_4b_param_swap.py`:
+在 `tests/run_sglang_jax_qwen3_4b_param_swap.py` 中：
 
-- Added `--prompt` CLI override (default: `你是谁`).
-- Switched HF cache/download dirs to be repo-relative (`<repo>/workdir/...`) instead of hardcoding `/root/MLLM-JAX/...`.
-- Added extra metadata fields to the `engine_ready_dummy` JSON:
+- 增加 `--prompt` CLI 覆盖（默认 `你是谁`）。
+- HF cache/download 目录改为 repo 相对路径（`<repo>/workdir/...`），避免硬编码 `/root/MLLM-JAX/...`。
+- `engine_ready_dummy` JSON 增加元信息字段：
   - `model_id`, `tp_size`, `dp_size`, `dtype`, `load_format`, `download_dir`, `hf_cache_dir`, `sgl_jax_version`
-- Made JSON logs more robust for streaming/grepping:
-  - `flush=True` on all phase prints.
-- Added an explicit JSON error phase `weights_swap_error` with a retry hint when HF snapshot download fails.
+- 所有 phase JSON 输出加 `flush=True`，便于 `tee`/`grep` 实时抓取。
+- HF snapshot 下载失败时输出 `weights_swap_error` JSON，并给出重试提示。
 
-## TPU execution record
+## TPU 执行记录
 
 **TPU**
 
-- Project: `civil-rarity-482610-s5`
-- Zone: `us-central2-b`
-- TPU name: `mllm-jax-v4-8-260121152542`
-- Accelerator: `v4-8`
-- Runtime image: `tpu-ubuntu2204-base`
-- OS: Ubuntu `22.04.2`
+- 项目：`civil-rarity-482610-s5`
+- Zone：`us-central2-b`
+- TPU 名称：`mllm-jax-v4-8-260121152542`
+- 加速器：`v4-8`
+- Runtime 镜像：`tpu-ubuntu2204-base`
+- OS：Ubuntu `22.04.2`
 
 **Python/JAX**
 
-- Conda env: `sglang-jax`
-- Python: `3.12.12`
-- JAX: `0.8.1`, `jax.device_count()==4` (v4 chips)
+- Conda env：`sglang-jax`
+- Python：`3.12.12`
+- JAX：`0.8.1`，`jax.device_count()==4`（v4 芯片）
 
-**Code versions**
+**代码版本**
 
-- `sglang-jax` commit: `bd09a87fc6e86c21ce14edd66948ac5dea3a4360` (editable install, `sgl_jax` version `0.0.2`)
-- This repo commit: `ff483b81b3c228fc16a9fc0d7b195f9f76f75348`
+- `sglang-jax` commit：`bd09a87fc6e86c21ce14edd66948ac5dea3a4360`（editable install，`sgl_jax` version `0.0.2`）
+- 本仓库 commit：`ff483b81b3c228fc16a9fc0d7b195f9f76f75348`
 
-**Run command (on TPU VM)**
+**运行命令（TPU VM 上）**
 
 ```bash
 source /root/miniconda3/etc/profile.d/conda.sh
@@ -117,12 +116,12 @@ PYTHONUNBUFFERED=1 HF_HUB_ENABLE_HF_TRANSFER=1 timeout 7200 \
   python -u tests/run_sglang_jax_qwen3_4b_param_swap.py
 ```
 
-**Artifacts (on TPU VM)**
+**产物（TPU VM 上）**
 
-- Full log: `/root/MLLM-JAX/workdir/sglang_jax_qwen3_4b_param_swap_260121075159.log`
-- HF snapshot used for swap: `/root/MLLM-JAX/workdir/hf_models/models--Qwen--Qwen3-4B/snapshots/1cfa9a7208912126459214e8b04321603b3df60c`
+- 完整日志：`/root/MLLM-JAX/workdir/sglang_jax_qwen3_4b_param_swap_260121075159.log`
+- 用于 swap 的 HF snapshot：`/root/MLLM-JAX/workdir/hf_models/models--Qwen--Qwen3-4B/snapshots/1cfa9a7208912126459214e8b04321603b3df60c`
 
-**Key JSON lines (from log)**
+**关键 JSON 行（从日志摘录）**
 
 ```json
 {"phase": "engine_ready_dummy", "model_id": "Qwen/Qwen3-4B", "device": "tpu", "tp_size": 4, "dp_size": 1, "dtype": "bfloat16", "load_format": "dummy", "download_dir": "/root/MLLM-JAX/workdir/hf_download", "hf_cache_dir": "/root/MLLM-JAX/workdir/hf_models", "sgl_jax_version": "0.0.2", "num_model_state_leaves": 398}
@@ -130,9 +129,9 @@ PYTHONUNBUFFERED=1 HF_HUB_ENABLE_HF_TRANSFER=1 timeout 7200 \
 {"phase": "generate_result", "prompt": "你是谁", "sampling_params": {"temperature": 0.0, "max_new_tokens": 64}, "text": "？我需要一个能帮我写代码的AI助手。我需要你能够理解我的需求，然后生成正确的代码。我需要你能够处理各种编程语言，比如Python、Java、C++、JavaScript等。我需要你能够处理各种编程任务，比如算法题、数据结构、系统编程、", "raw": {"text": "？我需要一个能帮我写代码的AI助手。我需要你能够理解我的需求，然后生成正确的代码。我需要你能够处理各种编程语言，比如Python、Java、C++、JavaScript等。我需要你能够处理各种编程任务，比如算法题、数据结构、系统编程、", "output_ids": [11319, 35946, 85106, 46944, 26232, 108965, 61443, 46100, 9370, 15469, 110498, 1773, 35946, 85106, 56568, 100006, 101128, 97611, 100354, 3837, 101889, 43959, 105045, 46100, 1773, 35946, 85106, 56568, 100006, 54542, 100646, 110569, 102064, 3837, 101912, 30280, 5373, 15041, 5373, 34, 1027, 5373, 29475, 49567, 1773, 35946, 85106, 56568, 100006, 54542, 100646, 110569, 88802, 3837, 101912, 107018, 33872, 5373, 20074, 100166, 5373, 72448, 110569, 5373], "meta_info": {"id": "1b5dfb9bba644475a2f097ae90f65b8d", "finish_reason": {"type": "length", "length": 64}, "prompt_tokens": 2, "completion_tokens": 64, "cached_tokens": 0, "routed_experts": null, "cache_miss_count": 0, "e2e_latency": 35.56036972999573}}}
 ```
 
-## Conclusion
+## 结论
 
-- Engine runtime parameter replacement via `model_state_leaves` is **feasible** for `Qwen/Qwen3-4B` on TPU `v4-8` with `tp_size=4`.
-- The swap succeeded **without changing** the model state structure: `num_model_state_leaves` stayed at `398` before and after.
-- After swapping, `engine.generate()` produced a non-empty completion for prompt `你是谁` (the run above was length-capped at `max_new_tokens=64`).
-- Note: we used a raw text prompt (not a chat template). If you want a more “assistant-style” self-introduction, route through the chat serving/template path instead of raw `Engine.generate(text=...)`.
+- 通过替换 `model_state_leaves` 的方式对 `Engine` 做运行时参数替换，对 `Qwen/Qwen3-4B` 在 TPU `v4-8`（`tp_size=4`）上是**可行**的。
+- 替换成功且**未改变**模型状态结构：替换前后 `num_model_state_leaves` 都是 `398`。
+- 替换后 `engine.generate()` 对提示词 `你是谁` 返回非空输出（本次运行设置 `max_new_tokens=64`，因此被长度截断）。
+- 备注：本次使用的是纯文本 prompt（非 chat template）。若想更符合“助手自我介绍”的聊天效果，建议走 chat serving/template 路径，而不是直接 `Engine.generate(text=...)`。

@@ -10,14 +10,14 @@
   **环境（本次实测）**：
   - Project：`civil-rarity-482610-s5`
   - Zone：`us-central2-b`
-  - TPU：`v4-8`
-  - TPU 名称：`mllm-jax-v4-8-260121152542`
+  - TPU：`v4-8`（spot）
+  - TPU 名称：`mllm-jax-v4-8-260121193102`（完成两次 run 后被 maintenance PREEMPTED）
   - TPU VM OS：Ubuntu `22.04.2`
   - Conda env：`sglang-jax`（Python `3.12.12`）
   - JAX：`0.8.1`（TPU backend）
   - sglang-jax commit（固定）：`bd09a87fc6e86c21ce14edd66948ac5dea3a4360`
-  - 本仓库 commit（runner 脚本）：`ff483b81b3c228fc16a9fc0d7b195f9f76f75348`
-  - TPU log（runner 输出）：`/root/MLLM-JAX/workdir/sglang_jax_qwen3_4b_param_swap_260121075159.log`
+  - 本仓库 commit（runner 脚本）：`2ac9ec1`
+  - TPU log（runner 输出）：`/root/MLLM-JAX/workdir/sglang_jax_qwen3_4b_param_swap_nwandb_260121120224.log`
 
 ## 步骤
 
@@ -28,15 +28,14 @@
 ```bash
 gcloud auth list --format='table(account,status)'
 gcloud config get-value project
-gcloud compute tpus accelerator-types list --zone=us-central2-b --format='value(name)'
-gcloud alpha compute tpus tpu-vm create mllm-jax-v4-8-260121152542 \
+gcloud alpha compute tpus tpu-vm create mllm-jax-v4-8-260121193102 \
   --project=civil-rarity-482610-s5 \
   --zone=us-central2-b \
   --accelerator-type=v4-8 \
   --version=tpu-ubuntu2204-base \
   --spot \
   --quiet
-gcloud alpha compute tpus tpu-vm describe mllm-jax-v4-8-260121152542 \
+gcloud alpha compute tpus tpu-vm describe mllm-jax-v4-8-260121193102 \
   --project=civil-rarity-482610-s5 \
   --zone=us-central2-b \
   --format='value(state,acceleratorType)'
@@ -47,13 +46,13 @@ gcloud alpha compute tpus tpu-vm describe mllm-jax-v4-8-260121152542 \
 本次实际执行的命令（Windows/plink hostkey pin，针对该 TPU 实例）：
 
 ```bash
-gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v4-8-260121152542 \
+gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v4-8-260121193102 \
   --project=civil-rarity-482610-s5 \
   --zone=us-central2-b \
   --quiet \
   --ssh-flag='-batch' \
   --ssh-flag='-hostkey' \
-  --ssh-flag='SHA256:JCfjmt0S9L+0Bu2z6ES346z4XWbgvOQH5fVPPXf820s' \
+  --ssh-flag='SHA256:RalpU1z30DMIxdugVxiK76JdZifDqBfkDnJMeNCFB+M' \
   --command 'whoami; hostname; cat /etc/os-release | head -n 5'
 ```
 
@@ -93,7 +92,8 @@ pip install -U hf_transfer
 git clone https://github.com/demon2036/MLLM-JAX.git /root/MLLM-JAX
 cd /root/MLLM-JAX
 git fetch --all --prune
-git checkout ff483b81b3c228fc16a9fc0d7b195f9f76f75348
+git checkout mllm-jax-sglang
+echo HEAD=$(git rev-parse --short HEAD)
 mkdir -p /root/MLLM-JAX/workdir /root/MLLM-JAX/workdir/hf_download /root/MLLM-JAX/workdir/hf_models
 
 # Clone sglang-jax 到本地 scratch
@@ -123,9 +123,11 @@ source /root/miniconda3/etc/profile.d/conda.sh
 conda activate sglang-jax
 cd /root/MLLM-JAX
 TS=$(date +%y%m%d%H%M%S)
-LOG=/root/MLLM-JAX/workdir/sglang_jax_qwen3_4b_param_swap_${TS}.log
-PYTHONUNBUFFERED=1 HF_HUB_ENABLE_HF_TRANSFER=1 timeout 7200 \
-  python -u tests/run_sglang_jax_qwen3_4b_param_swap.py 2>&1 | tee "$LOG"
+LOG=/root/MLLM-JAX/workdir/sglang_jax_qwen3_4b_param_swap_nwandb_${TS}.log
+export WANDB_MODE=disabled
+export PYTHONUNBUFFERED=1
+export HF_HUB_ENABLE_HF_TRANSFER=1
+timeout 7200 python -u tests/run_sglang_jax_qwen3_4b_param_swap.py 2>&1 | tee "$LOG"
 echo "log_path=$LOG"
 ```
 

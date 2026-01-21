@@ -36,3 +36,15 @@
   **Troubleshooting**:
   - 如果在另一个 worktree 里执行 `git checkout main` 报错 `fatal: 'main' is already used by worktree ...`，说明 `main` 已被别的 worktree 占用；去 `main` 的 worktree 目录里合并即可。
 
+- **Title**: SOP: 删除远端分支（先检查 worktree）
+  **Prereqs**: 分支没有被任何 worktree checkout（先确认 `git worktree list`）
+  **Steps**:
+  - 同步并检查 worktree：`git fetch --all --prune`，`git worktree list`
+  - 删除远端分支（本次实操删除 `john-dev-attention`）：`git push origin --delete john-dev-attention`
+  - 清理本地远端引用：`git fetch --prune`
+  - 验证已删除：`git branch -r | findstr /i "john-dev-attention"`
+  **Expected Result**: `origin/john-dev-attention` 不再出现在 `git branch -r` 输出中
+  **Troubleshooting**:
+  - 若提示分支被 worktree 占用：到对应目录先 `git checkout --detach` 或 `git worktree remove <path>` 再删分支
+  - 若远端拒绝删除：检查 GitHub 权限/保护分支规则
+

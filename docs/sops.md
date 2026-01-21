@@ -15,6 +15,7 @@
 - TPU v4-8 GRPO runner smoke (`rollout.backend=naive`): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
 - TPU v6e-8 GRPO train (100 steps, bs=128 seq, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`
 - TPU v6e-8 rollout speed debug (Qwen2.5-3B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
+- TPU v6e-8 full test-set eval sweep (Qwen2.5-3B, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-full-test-eval-sweep.md`
 - TPU bf16 attention-score precision (dot_general fp32 output): `docs/sops/tpu-bf16-attention-score-f32.md`
 - TPU v4-8 timing (len=1024, 20 steps, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`
 - TPU v4-8 timing (bs=32, len=1024, k=1, micro_batch=4, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-bs32-len1024-k1-mb4-20steps-timing.md`

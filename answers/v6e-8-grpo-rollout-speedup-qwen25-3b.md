@@ -19,6 +19,7 @@ This note documents:
   - `b341e45` (Runs A-D)
   - `883c018` (Run E; after attention modularization)
   - `3cf1aa5` (Run F; fp32 attention-score output on TPU)
+  - `143ce86` (Run G; full test-set eval sweep)
 - Python/JAX on TPU: Python `3.12.12`, `jax==0.8.2`, `jaxlib==0.8.2`
 
 ## Config (kept constant)
@@ -148,6 +149,54 @@ rounding error) on TPU.
   - `time/train/step_avg_last10_s = 12.67789875749877`
   - `eval/reward/func/reward_correct/mean = 0.8046875`
 
+### Run G: Opt 1 + Opt 2 (100 steps, full test-set eval sweep)
+
+This run enables a **full eval split sweep** (GSM8K `test`, 1319 questions) and logs
+**per-question** correctness metrics to W&B (instead of the lightweight `eval_batches=1` estimate).
+
+- W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/hfor399o
+- Commit: `143ce86`
+- Env flags:
+  - `ROLLOUT_FAST_GENERATE=1`
+  - `ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1`
+  - `EVAL_FULL_SWEEP=1`
+- Summary metrics (`wandb-summary.json`):
+  - `time/train/step_avg_last10_s = 12.712246937098097`
+  - `eval_full/accuracy/pass_at_1 = 0.800606520090978` (**treat as accuracy**: full test split, one completion per question)
+  - `time/eval_full/step_s = 761.7025823409931` (~12.7 minutes)
+  - `time/eval_full/rollout_generate_s = 756.6426108320011`
+
+### Run H: Opt 1 + Opt 2 (micro_batch_size=64, 100 steps) -> OOM
+
+This is a memory stress test (update micro-batch doubled), launched to see if
+we can reduce grad accumulation steps on `v6e-8` after the rollout bf16 changes.
+
+- W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/b83xx09r
+- Commit: `143ce86`
+- Env flags:
+  - `ROLLOUT_FAST_GENERATE=1`
+  - `ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1`
+  - `EVAL_FULL_SWEEP=1`
+  - `TRAIN_MICRO_BATCH_SIZE=64` (runner infers `grad_accum_steps=2`)
+- Result:
+  - XLA OOM during `jit(training_step)`; exit code `1` written to `logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.exit`
+
+### Run I: Full test split accuracy (each question once)
+
+This validates the updated full-sweep eval metric/logging (commit `b8e232c`):
+- full GSM8K `test` split (1319 questions)
+- `samples_per_question=1`
+- logs `eval_full/accuracy` to W&B
+
+- W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/75542270
+- Commit: `b8e232c`
+- `steps=4` (validation run)
+- Summary metrics (`wandb-summary.json`):
+  - `eval_full/accuracy = 0.6990144048521607`
+  - `eval_full/samples_per_question = 1`
+  - `time/eval_full/step_s = 140.63900410399947`
+  - `time/eval_full/rollout_generate_s = 139.90924680598255`
+
 ## Results (aligned)
 
 ### Overall step time (steady-state)
@@ -165,6 +214,7 @@ Using `time/train/step_avg_last10_s` (avg of steps 10-19):
 - Run D (steps=100) `time/train/step_avg_last10_s` (avg of steps 90-99): `12.890168357500807` (W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/zy9aibuc)
 - Run E (steps=100, after attention modularization) `time/train/step_avg_last10_s` (avg of steps 90-99): `12.13907113699679` (W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/b4yhlcce)
 - Run F (steps=100, fp32 attention-score output on TPU) `time/train/step_avg_last10_s` (avg of steps 90-99): `12.67789875749877` (W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/d7cl9smf)
+- Run G (steps=100, full test-set eval sweep) `time/train/step_avg_last10_s` (avg of steps 90-99): `12.712246937098097` (W&B: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/hfor399o)
 
 ### Per-step breakdown (representative `step=10`)
 
@@ -181,15 +231,20 @@ FASTGEN_DECODE
 step=10 ... dt=13.08s ... rollout_generate=9.12s ... update=3.89s ...
 ```
 
-## Accuracy sanity notes (why it may look < 0.85)
+## Accuracy / eval notes (full test split, each question once)
 
-The metric shown above (`eval/reward/func/reward_correct/mean`) is:
+The legacy eval metric shown in Runs A-F (`eval/reward/func/reward_correct/mean`) is:
 - computed on `eval_batches=1` and inferred `prompt_batch_size=16` (so **16 GSM8K questions**),
 - with `num_pre_q=8` sampled completions per question,
-- and it reports **mean correctness over all sampled completions** (not "best-of-8 per question").
+- and it reports **mean correctness over all sampled completions** (a *mean@K* style metric).
 
-Observed range in these runs is ~`0.74-0.77`.
-If you expect `0.85-0.95`, the next check to add is a **per-question pass@K** metric (any-correct within each K-sample group) and/or a larger eval sample size.
+If you want the common "GSM8K accuracy" style number (full test split, **one completion per question**):
+- enable `EVAL_FULL_SWEEP=1` to run the **entire eval split once** at the end of training,
+- read the logged metric under:
+  - `eval_full/accuracy` (post `b8e232c`; `eval_full/accuracy/pass_at_1` is kept as an alias)
+
+Example (Run G, full `test` set, 1319 questions):
+- `accuracy(pass@1) = 0.8006`
 
 ## Repro (TPU VM)
 
@@ -203,6 +258,7 @@ export WANDB_NAME=<unique_name>
 export TOKENIZERS_PARALLELISM=false
 export PRINT_TRAIN_TIME_BREAKDOWN=1
 export STEPS=20
+export EVAL_FULL_SWEEP=1  # full `eval_split` sweep once at end (adds ~10–15 min)
 
 # Baseline:
 unset ROLLOUT_FAST_GENERATE ROLLOUT_FAST_QWEN2_DECODE_ATTENTION

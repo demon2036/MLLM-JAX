@@ -4,6 +4,8 @@
 
 - 默认按用户需求“一口气”完成：实现、完整验证（端到端能跑）、更新 SOP。
 - 交付前必须把对应的测试/验证 case 全部跑通（本地能跑的先跑，本地跑不了的在 TPU 上跑）；任何 traceback / 非零退出都视为未完成。
+- **TPU-first**：本仓库默认以 TPU VM 作为运行与验收环境；涉及推理/训练/rollout 的端到端验证必须在 TPU 上跑通，本地仅用于静态检查/轻量验证（若可跑）。
+- 默认使用 TPU `v4-8` 做验证（除非任务另有指定）；创建/销毁见 `docs/sops/tpu-vm-create-v4-8-or-v6e-8.md`，推理验证示例见 `docs/sops/tpu-sglang-jax-qwen3-4b-engine-weight-swap-infer.md`。
 - 无论任务大小，若提供 plan/update_plan（或 start plan）函数，每次任务都必须调用；若工具不可用，执行前以清晰优雅的列表列出计划并直接开始执行，不等待用户确认。
 - 尽量不反问用户：先查 `docs/` 里潜在相关经验（优先看 `docs/sops/`），再在仓库内搜索（如 `rg`/`git`），必要时做网络搜索（官方文档/GitHub/PyPI），并把已用链接或命令写入 SOP。
 - 仅在搜索后仍无法推进时才提问，并一次问清最少必要信息。
@@ -68,3 +70,4 @@ Recommended format:
 - **References**: Links or commit SHAs used
 
 Add SOPs under `docs/sops/` (or add a new module) and keep `docs/sops.md` updated; append a short log here only if the entry is very small.
+

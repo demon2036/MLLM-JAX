@@ -1,5 +1,7 @@
 import json
 import os
+import sys
+from pathlib import Path
 
 
 def _best_effort_extract_text(result: object) -> str | None:
@@ -24,6 +26,9 @@ def _best_effort_extract_text(result: object) -> str | None:
 
 
 def main() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(repo_root))
+
     os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
     from sgl_jax.srt.entrypoints.engine import Engine
@@ -101,4 +106,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

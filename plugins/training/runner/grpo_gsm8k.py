@@ -1175,3 +1175,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             )
         if wandb is not None and jax.process_index() == 0:
             wandb.log(full_eval_logs, step=int(cfg.steps) - 1)
+
+    if wandb is not None and jax.process_index() == 0:
+        try:
+            wandb.finish()
+        except Exception as e:
+            print(f"wandb.finish() failed: {e}")

@@ -33,7 +33,9 @@ def _load_dotenv_if_present() -> None:
                 k, v = line.split("=", 1)
                 k = k.strip()
                 v = v.strip().strip('"').strip("'")
-                os.environ.setdefault(k, v)
+                existing = os.environ.get(k)
+                if existing is None or str(existing).strip() == "":
+                    os.environ[k] = v
         return
 
 

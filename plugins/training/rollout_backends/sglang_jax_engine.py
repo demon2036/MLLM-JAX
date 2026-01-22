@@ -120,7 +120,9 @@ def _iter_qwen2_target_param_paths(*, model_config: Any) -> list[str]:
 
 def _qwen2_spec_for_target_path(target_path: str) -> tuple:
     if target_path in ("model.embed_tokens.embedding", "lm_head.embedding"):
-        return ("tensor", None)
+        # Training (MLLM_JAX) partitions embedding hidden-dim on TP, so keep the
+        # same layout to enable zero-copy aliasing.
+        return (None, "tensor")
     if target_path.endswith(".scale"):
         return (None,)
     if target_path.endswith(".bias"):

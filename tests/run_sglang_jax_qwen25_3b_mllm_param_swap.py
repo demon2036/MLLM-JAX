@@ -189,6 +189,12 @@ def main() -> None:
     )
     parser.add_argument("--dp-size", type=int, default=1)
     parser.add_argument(
+        "--max-total-tokens",
+        type=int,
+        default=4096,
+        help="Engine KV cache capacity cap (tokens). Larger => larger preallocated KV cache.",
+    )
+    parser.add_argument(
         "--keep-param-dict",
         action="store_true",
         help=(
@@ -208,6 +214,22 @@ def main() -> None:
         "--mllm-param-dtype",
         default="bfloat16",
         help="Device dtype for injected params: bfloat16/float16/float32.",
+    )
+    parser.add_argument(
+        "--kv-drop-rebuild",
+        action="store_true",
+        help=(
+            "After the first generate(): flush cache, drop KV cache buffers, allocate a second "
+            "param_dict (to simulate two param sets), rebuild KV cache buffers, and generate() again."
+        ),
+    )
+    parser.add_argument(
+        "--kv-drop-clear-jax-caches",
+        action="store_true",
+        help=(
+            "After dropping KV cache buffers, call jax.clear_caches(). "
+            "This may help free memory but can trigger re-compilation later."
+        ),
     )
     parser.add_argument(
         "--wandb",
@@ -283,15 +305,17 @@ def main() -> None:
                 init_kwargs = {
                     "project": str(args.wandb_project),
                     "name": run_name,
-                    "config": {
-                        "model_id": str(args.model_id),
-                        "tp_size": tp_size,
-                        "dp_size": dp_size,
-                        "dtype": str(args.mllm_param_dtype),
-                        "load_format": "dummy",
-                    },
-                    "dir": str(workdir / "wandb"),
-                }
+                        "config": {
+                            "model_id": str(args.model_id),
+                            "tp_size": tp_size,
+                            "dp_size": dp_size,
+                            "dtype": str(args.mllm_param_dtype),
+                            "load_format": "dummy",
+                            "max_total_tokens": int(args.max_total_tokens),
+                            "kv_drop_rebuild": bool(args.kv_drop_rebuild),
+                        },
+                        "dir": str(workdir / "wandb"),
+                    }
                 entity = str(args.wandb_entity).strip()
                 if entity != "":
                     init_kwargs["entity"] = entity
@@ -382,7 +406,7 @@ def main() -> None:
         dtype="bfloat16",
         mem_fraction_static=0.8,
         max_prefill_tokens=1024,
-        max_total_tokens=4096,
+        max_total_tokens=int(args.max_total_tokens),
         max_running_requests=16,
         disable_precompile=True,
         skip_server_warmup=True,
@@ -596,9 +620,10 @@ def main() -> None:
             )
             wandb_step += 1
 
-        # Drop CPU-side param tree; keep on-device arrays (Engine + optional param_dict).
-        del mllm_params
-        gc.collect()
+        if not args.kv_drop_rebuild:
+            # Drop CPU-side param tree; keep on-device arrays (Engine + optional param_dict).
+            del mllm_params
+            gc.collect()
 
         pre_generate_phase = "after_cleanup"
         if not args.keep_param_dict:
@@ -680,6 +705,205 @@ def main() -> None:
                 wandb=wandb,
                 step=wandb_step,
                 phase="after_drop_param_dict",
+                elapsed_s=elapsed_s,
+                mem=mem,
+            )
+            wandb_step += 1
+
+        if args.kv_drop_rebuild:
+            # 1) Ensure engine has no in-flight requests and allocator is reset.
+            flush_out = engine.flush_cache()
+            mem = _collect_memory_snapshot()
+            elapsed_s = time.time() - t0
+            print(
+                json.dumps(
+                    {
+                        "phase": "flush_cache_before_kv_drop",
+                        "flush_cache_output": getattr(flush_out, "__dict__", str(flush_out)),
+                        "elapsed_s": elapsed_s,
+                        "memory": mem,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                flush=True,
+            )
+            _wandb_log_phase(
+                wandb=wandb,
+                step=wandb_step,
+                phase="flush_cache_before_kv_drop",
+                elapsed_s=elapsed_s,
+                mem=mem,
+            )
+            wandb_step += 1
+
+            # 2) Drop KV cache buffers (HBM) while keeping Engine alive.
+            from plugins.sglang_jax_inference.kv_cache_lifecycle import drop_engine_kv_cache
+
+            drop_info = drop_engine_kv_cache(
+                engine=engine,
+                flush_cache=False,
+                clear_jax_caches=bool(args.kv_drop_clear_jax_caches),
+            )
+            gc.collect()
+            mem = _collect_memory_snapshot()
+            elapsed_s = time.time() - t0
+            print(
+                json.dumps(
+                    {
+                        "phase": "kv_cache_dropped",
+                        "drop_info": drop_info,
+                        "elapsed_s": elapsed_s,
+                        "memory": mem,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                flush=True,
+            )
+            _wandb_log_phase(
+                wandb=wandb,
+                step=wandb_step,
+                phase="kv_cache_dropped",
+                elapsed_s=elapsed_s,
+                mem=mem,
+            )
+            wandb_step += 1
+
+            # 3) Allocate a *second* param_dict to simulate two param sets alive.
+            param_dict2 = build_sglang_qwen2_param_dict_from_mllm_params(
+                mllm_params=mllm_params,
+                model_config=model_runner.model_config,
+                mesh=model_runner.mesh,
+                param_dtype=str(args.mllm_param_dtype),
+            )
+            mem = _collect_memory_snapshot()
+            elapsed_s = time.time() - t0
+            print(
+                json.dumps(
+                    {
+                        "phase": "sglang_param_dict2_ready",
+                        "num_params": int(len(param_dict2)),
+                        "elapsed_s": elapsed_s,
+                        "memory": mem,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            _wandb_log_phase(
+                wandb=wandb,
+                step=wandb_step,
+                phase="sglang_param_dict2_ready",
+                elapsed_s=elapsed_s,
+                mem=mem,
+                extra={"num_params": int(len(param_dict2))},
+            )
+            wandb_step += 1
+
+            # CPU-side tree no longer needed after we have two on-device sets.
+            del mllm_params
+            gc.collect()
+
+            mem = _collect_memory_snapshot()
+            elapsed_s = time.time() - t0
+            print(
+                json.dumps(
+                    {
+                        "phase": "after_drop_mllm_params_cpu",
+                        "elapsed_s": elapsed_s,
+                        "memory": mem,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            _wandb_log_phase(
+                wandb=wandb,
+                step=wandb_step,
+                phase="after_drop_mllm_params_cpu",
+                elapsed_s=elapsed_s,
+                mem=mem,
+            )
+            wandb_step += 1
+
+            # 4) Rebuild KV cache buffers and re-run generate().
+            from plugins.sglang_jax_inference.kv_cache_lifecycle import rebuild_engine_kv_cache
+
+            rebuild_info = rebuild_engine_kv_cache(engine=engine)
+            mem = _collect_memory_snapshot()
+            elapsed_s = time.time() - t0
+            print(
+                json.dumps(
+                    {
+                        "phase": "kv_cache_rebuilt",
+                        "rebuild_info": rebuild_info,
+                        "elapsed_s": elapsed_s,
+                        "memory": mem,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                flush=True,
+            )
+            _wandb_log_phase(
+                wandb=wandb,
+                step=wandb_step,
+                phase="kv_cache_rebuilt",
+                elapsed_s=elapsed_s,
+                mem=mem,
+            )
+            wandb_step += 1
+
+            sampling_params2 = {"temperature": 0.0, "max_new_tokens": 16}
+            result2 = engine.generate(prompt=str(args.prompt), sampling_params=sampling_params2)
+            mem = _collect_memory_snapshot()
+            elapsed_s = time.time() - t0
+            print(
+                json.dumps(
+                    {
+                        "phase": "generate_result_after_kv_rebuild",
+                        "prompt": str(args.prompt),
+                        "sampling_params": sampling_params2,
+                        "text": _best_effort_extract_text(result2),
+                        "raw": result2,
+                        "elapsed_s": elapsed_s,
+                        "memory": mem,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                flush=True,
+            )
+            _wandb_log_phase(
+                wandb=wandb,
+                step=wandb_step,
+                phase="generate_result_after_kv_rebuild",
+                elapsed_s=elapsed_s,
+                mem=mem,
+            )
+            wandb_step += 1
+
+            # Cleanup the extra param_dict to return to 1-param steady state.
+            del param_dict2
+            gc.collect()
+            mem = _collect_memory_snapshot()
+            elapsed_s = time.time() - t0
+            print(
+                json.dumps(
+                    {
+                        "phase": "after_drop_param_dict2",
+                        "elapsed_s": elapsed_s,
+                        "memory": mem,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            _wandb_log_phase(
+                wandb=wandb,
+                step=wandb_step,
+                phase="after_drop_param_dict2",
                 elapsed_s=elapsed_s,
                 mem=mem,
             )

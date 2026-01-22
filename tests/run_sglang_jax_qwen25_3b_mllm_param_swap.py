@@ -29,6 +29,26 @@ def _best_effort_extract_text(result: object) -> str | None:
     return None
 
 
+def _get_nnx_state_leaf(params_state: object, path: str):
+    """Traverse an NNX state tree using a dot-separated path."""
+
+    keys = path.split(".")
+    current_level = params_state
+
+    for key in keys:
+        if key.isdigit():
+            current_level = current_level[int(key)]
+            continue
+        if hasattr(current_level, "__contains__") and key in current_level:
+            current_level = current_level[key]
+        elif hasattr(current_level, key):
+            current_level = getattr(current_level, key)
+        else:
+            raise ValueError(f"{path} is not a valid param path")
+
+    return current_level
+
+
 def _get_process_rss_bytes() -> int | None:
     """Best-effort process RSS (bytes). Works on Linux; returns None elsewhere."""
 
@@ -168,6 +188,22 @@ def main() -> None:
         help="Tensor parallel size. 0 means auto (= jax.device_count()).",
     )
     parser.add_argument("--dp-size", type=int, default=1)
+    parser.add_argument(
+        "--keep-param-dict",
+        action="store_true",
+        help=(
+            "Keep the injected param_dict alive through generate() "
+            "to verify Engine shares the same jax.Arrays (no copy)."
+        ),
+    )
+    parser.add_argument(
+        "--verify-param-sharing",
+        action="store_true",
+        help=(
+            "Verify Engine Param.value is the exact same jax.Array object as "
+            "param_dict[path] for a small sample."
+        ),
+    )
     parser.add_argument(
         "--mllm-param-dtype",
         default="bfloat16",
@@ -510,17 +546,73 @@ def main() -> None:
         )
         wandb_step += 1
 
-        # Drop CPU-side param tree; keep only Engine leaves.
+        if args.verify_param_sharing:
+            from flax import nnx
+
+            params_state = nnx.state(model_runner.model)
+            sample_paths = [
+                "model.embed_tokens.embedding",
+                "model.norm.scale",
+                "model.layers.0.self_attn.q_proj.weight",
+                "model.layers.0.self_attn.k_proj.weight",
+                "model.layers.0.mlp.gate_proj.weight",
+            ]
+            results: dict[str, object] = {}
+            for path in sample_paths:
+                try:
+                    leaf = _get_nnx_state_leaf(params_state, str(path))
+                    if not hasattr(leaf, "value"):
+                        results[str(path)] = {"is_param": False}
+                        continue
+                    expected = param_dict.get(str(path))
+                    engine_value = getattr(leaf, "value", None)
+                    results[str(path)] = {
+                        "found_in_param_dict": expected is not None,
+                        "same_object": bool(expected is engine_value) if expected is not None else False,
+                    }
+                except Exception as exc:
+                    results[str(path)] = {"error": str(exc)}
+
+            mem = _collect_memory_snapshot()
+            elapsed_s = time.time() - t0
+            print(
+                json.dumps(
+                    {
+                        "phase": "param_sharing_check",
+                        "elapsed_s": elapsed_s,
+                        "memory": mem,
+                        "results": results,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            _wandb_log_phase(
+                wandb=wandb,
+                step=wandb_step,
+                phase="param_sharing_check",
+                elapsed_s=elapsed_s,
+                mem=mem,
+            )
+            wandb_step += 1
+
+        # Drop CPU-side param tree; keep on-device arrays (Engine + optional param_dict).
         del mllm_params
-        del param_dict
         gc.collect()
+
+        pre_generate_phase = "after_cleanup"
+        if not args.keep_param_dict:
+            del param_dict
+            gc.collect()
+        else:
+            pre_generate_phase = "before_generate_param_dict_kept"
 
         mem = _collect_memory_snapshot()
         elapsed_s = time.time() - t0
         print(
             json.dumps(
                 {
-                    "phase": "after_cleanup",
+                    "phase": pre_generate_phase,
                     "elapsed_s": elapsed_s,
                     "memory": mem,
                 },
@@ -531,7 +623,7 @@ def main() -> None:
         _wandb_log_phase(
             wandb=wandb,
             step=wandb_step,
-            phase="after_cleanup",
+            phase=pre_generate_phase,
             elapsed_s=elapsed_s,
             mem=mem,
         )
@@ -565,6 +657,33 @@ def main() -> None:
             mem=mem,
         )
         wandb_step += 1
+
+        if args.keep_param_dict:
+            # Drop the Python-side dict after generate; Engine keeps references.
+            del param_dict
+            gc.collect()
+
+            mem = _collect_memory_snapshot()
+            elapsed_s = time.time() - t0
+            print(
+                json.dumps(
+                    {
+                        "phase": "after_drop_param_dict",
+                        "elapsed_s": elapsed_s,
+                        "memory": mem,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            _wandb_log_phase(
+                wandb=wandb,
+                step=wandb_step,
+                phase="after_drop_param_dict",
+                elapsed_s=elapsed_s,
+                mem=mem,
+            )
+            wandb_step += 1
     finally:
         if wandb is not None:
             try:
@@ -581,4 +700,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

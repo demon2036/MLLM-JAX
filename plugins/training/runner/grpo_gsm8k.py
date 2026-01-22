@@ -191,10 +191,28 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+    require_process_count_raw = os.environ.get("REQUIRE_JAX_PROCESS_COUNT")
+    require_process_count = int(require_process_count_raw) if require_process_count_raw else 0
+
     try:
         jax.distributed.initialize()
-    except Exception:
-        pass
+    except Exception as e:
+        if require_process_count > 0:
+            raise RuntimeError(
+                "jax.distributed.initialize() failed but REQUIRE_JAX_PROCESS_COUNT is set. "
+                "If this is a multi-host TPU (e.g. v6e-16), start the job on all workers "
+                "(`gcloud ... tpu-vm ssh --worker=all`) or launch one process per worker."
+            ) from e
+        if os.environ.get("PRINT_JAX_DISTRIBUTED_INIT_ERROR") == "1":
+            print(f"jax.distributed.initialize() skipped: {e}")
+
+    if require_process_count > 0:
+        actual_process_count = int(jax.process_count())
+        if actual_process_count != require_process_count:
+            raise RuntimeError(
+                f"Expected jax.process_count()=={require_process_count} (from REQUIRE_JAX_PROCESS_COUNT), "
+                f"got {actual_process_count}. This usually means only a subset of TPU workers launched the program."
+            )
 
     mesh = get_jax_mesh2(cfg.mesh_shape)
     local_device_count = len(mesh.local_devices)

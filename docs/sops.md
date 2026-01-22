@@ -5,6 +5,7 @@
 - Repo setup: `docs/sops/repo-setup.md`
 - Network checks: `docs/sops/network-checks.md`
 - Update repo via `git pull`: `docs/sops/git-pull-update.md`
+- Inspect diffs via `git diff`: `docs/sops/git-diff-inspect.md`
 - Commit and push to GitHub: `docs/sops/github-push.md`
 - Backup `main`, replace it with `john`, and delete `join`: `docs/sops/git-main-copy-and-switch-to-john.md`
 - Reinstall Electerm (AppImage): `docs/sops/electerm-reinstall-appimage.md`
@@ -37,6 +38,7 @@
 ### Git
 
 - `docs/sops/git-pull-update.md`
+- `docs/sops/git-diff-inspect.md`
 - `docs/sops/git-main-copy-and-switch-to-john.md`
 - `docs/sops/git-worktrees.md`
 - `docs/sops/github-push.md`

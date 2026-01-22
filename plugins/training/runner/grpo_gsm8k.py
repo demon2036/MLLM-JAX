@@ -18,33 +18,39 @@ from plugins.training.grpo.update import ppo_update
 
 @dataclass(frozen=True)
 class GRPORolloutConfig:
-    # Optional: global sequences per training step (across all processes).
-    # If None, runner does a single rollout pass using `prompt_batch_size`.
+    # Optional: batch sizes for sequences (one sequence = one (prompt, completion) sample).
     #
-    # A "sequence" here means one (prompt, completion) sample.
-    batch_size: int | None
-    num_pre_q: int
-    global_length: int
-    max_length_sample: int
-    # Optional: prompts per process per rollout pass.
-    # If unset, runner derives a value from `batch_size`, `num_pre_q`, and `process_count`.
-    prompt_batch_size: int | None = None
-    # Optional: prompts per device per rollout pass (forward-only).
-    per_device_batch_size: int | None = None
+    # Only ONE of these needs to be set; the others are derived at runtime:
+    # - batch_size: global sequences per training step (across all processes)
+    # - batch_size_per_process: sequences per step per process
+    # - batch_size_per_device: sequences per step per device
+    batch_size: int | None = None
+    batch_size_per_process: int | None = None
+    batch_size_per_device: int | None = None
+    # Optional: prompts per rollout pass (KV-cache footprint control).
+    # If unset, runner derives a value from batch targets and `process_count`.
+    prompts_per_pass_per_process: int | None = None
+    prompts_per_pass_per_device: int | None = None
+    # Number of samples per prompt (GRPO group size, a.k.a. K).
+    n: int = 8
+    global_length: int = 512
+    max_length_sample: int = 64
     # Rollout backend selector (swappable generation engine).
     backend: str = "naive"
 
 
 @dataclass(frozen=True)
 class GRPOTrainConfig:
-    # Optional: if set, split the rollout batch into smaller micro-batches for update.
-    micro_batch_size: int | None
-    max_length_total: int
-    ppo_epochs: int
-    grad_accum_steps: int
-    beta: float
+    # Optional: global sequences per micro-step (across all processes).
+    global_micro_batch_size: int | None = None
+    # Optional: sequences per process per micro-step (backward).
+    micro_batch_size_per_process: int | None = None
     # Optional: sequences per device per micro-step (backward).
-    per_device_micro_batch_size: int | None = None
+    micro_batch_size_per_device: int | None = None
+    max_length_total: int = 0
+    ppo_epochs: int = 1
+    grad_accum_steps: int = 1
+    beta: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -59,7 +65,7 @@ class GRPOGsm8kConfig:
     wandb_name: str
     reward_weights: tuple[float, float, float] = (1.0, 0.5, 0.5)
     eval_every_steps: int = 0
-    eval_batches: int = 1
+    eval_batches_per_process: int = 1
     eval_split: str = "test"
 
 
@@ -115,6 +121,37 @@ def _pad_2d_right(x: np.ndarray, target_len: int, pad_value: int) -> np.ndarray:
     if cur > target:
         raise ValueError(f"Cannot pad to a smaller length: {cur} -> {target}")
     return np.pad(x, ((0, 0), (0, target - cur)), constant_values=pad_value)
+
+
+def _group_correct_per_prompt(correct_per_completion: np.ndarray, *, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Convert per-completion correctness into per-prompt metrics.
+
+    Returns three float32 vectors of shape [prompt_batch_size]:
+    - pass@1: correctness of the first completion in each group
+    - pass@K: any correctness within the group
+    - mean@K: mean correctness within the group
+    """
+    correct_per_completion = np.asarray(correct_per_completion, dtype=np.float32).reshape(-1)
+    k = int(n)
+    if k <= 0:
+        raise ValueError("n must be > 0")
+    if correct_per_completion.size % k != 0:
+        raise ValueError(f"Expected correct_per_completion.size divisible by n={k}, got size={correct_per_completion.size}")
+    prompt_batch_size = int(correct_per_completion.size // k)
+    grouped = correct_per_completion.reshape(prompt_batch_size, k)
+    pass_at_1 = grouped[:, 0]
+    pass_at_k = grouped.max(axis=1)
+    mean_at_k = grouped.mean(axis=1)
+    return pass_at_1, pass_at_k, mean_at_k
+
+
+def _masked_sum_and_count_1d(values: np.ndarray, mask: np.ndarray) -> tuple[float, int]:
+    values = np.asarray(values, dtype=np.float32).reshape(-1)
+    mask = np.asarray(mask, dtype=np.float32).reshape(-1)
+    if values.shape != mask.shape:
+        raise ValueError(f"values and mask must have the same shape, got {values.shape} vs {mask.shape}")
+    masked = values * mask
+    return float(masked.sum()), int(mask.sum())
 
 
 def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
@@ -216,77 +253,150 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         return jax.make_array_from_single_device_arrays(global_shape, sharding, local_device_buffers)
 
     # --- Resolve rollout batch sizes ---
-    num_pre_q = int(cfg.rollout.num_pre_q)
-    if num_pre_q <= 0:
-        raise ValueError("rollout.num_pre_q must be > 0")
+    n = int(cfg.rollout.n)
+    if n <= 0:
+        raise ValueError("rollout.n must be > 0")
 
-    global_seq_target = cfg.rollout.batch_size
-    global_prompt_target: int | None
-    if global_seq_target is not None:
-        global_seq_target = int(global_seq_target)
-        if global_seq_target <= 0:
-            raise ValueError("rollout.batch_size must be > 0")
-        if global_seq_target % num_pre_q != 0:
-            raise ValueError(
-                f"rollout.batch_size={global_seq_target} must be divisible by rollout.num_pre_q={num_pre_q} "
-                "(each prompt has exactly num_pre_q samples)."
-            )
-        global_prompt_target = global_seq_target // num_pre_q
+    seq_targets: list[int] = []
+    if cfg.rollout.batch_size is not None:
+        seq_targets.append(int(cfg.rollout.batch_size))
+    if cfg.rollout.batch_size_per_process is not None:
+        seq_targets.append(int(cfg.rollout.batch_size_per_process) * int(process_count))
+    if cfg.rollout.batch_size_per_device is not None:
+        seq_targets.append(int(cfg.rollout.batch_size_per_device) * int(local_device_count) * int(process_count))
+
+    global_seq_target: int | None
+    if not seq_targets:
+        global_seq_target = None
     else:
-        global_prompt_target = None
+        if any(int(x) <= 0 for x in seq_targets):
+            raise ValueError("rollout.batch_size targets must be > 0")
+        if len({int(x) for x in seq_targets}) != 1:
+            raise ValueError(
+                "Conflicting rollout batch size targets: "
+                f"batch_size={cfg.rollout.batch_size} "
+                f"batch_size_per_process={cfg.rollout.batch_size_per_process} "
+                f"batch_size_per_device={cfg.rollout.batch_size_per_device} "
+                f"(process_count={process_count}, local_device_count={local_device_count})"
+            )
+        global_seq_target = int(seq_targets[0])
 
-    prompt_batch_size = cfg.rollout.prompt_batch_size
-    if cfg.rollout.per_device_batch_size is not None:
-        per_device_rollout = int(cfg.rollout.per_device_batch_size)
-        if per_device_rollout <= 0:
-            raise ValueError("rollout.per_device_batch_size must be > 0")
-        prompt_batch_size = per_device_rollout * local_device_count
+    global_prompt_target: int | None = None
+    if global_seq_target is not None:
+        if global_seq_target % n != 0:
+            raise ValueError(
+                f"rollout.batch_size={global_seq_target} must be divisible by rollout.n={n} "
+                "(each prompt has exactly n samples)."
+            )
+        global_prompt_target = global_seq_target // n
 
-    if prompt_batch_size is None:
+    prompts_per_pass = cfg.rollout.prompts_per_pass_per_process
+    if cfg.rollout.prompts_per_pass_per_device is not None:
+        per_device_prompts = int(cfg.rollout.prompts_per_pass_per_device)
+        if per_device_prompts <= 0:
+            raise ValueError("rollout.prompts_per_pass_per_device must be > 0")
+        expected_prompts_per_pass = per_device_prompts * local_device_count
+        if prompts_per_pass is not None and int(prompts_per_pass) != expected_prompts_per_pass:
+            raise ValueError(
+                "rollout.prompts_per_pass_per_process must match "
+                "rollout.prompts_per_pass_per_device * local_device_count, got "
+                f"{int(prompts_per_pass)} vs {int(per_device_prompts)}*{int(local_device_count)} ({expected_prompts_per_pass})."
+            )
+        prompts_per_pass = expected_prompts_per_pass
+
+    if prompts_per_pass is None:
         if global_prompt_target is not None:
-            prompt_batch_size = max(1, (int(global_prompt_target) + int(process_count) - 1) // int(process_count))
+            prompts_per_pass = max(1, (int(global_prompt_target) + int(process_count) - 1) // int(process_count))
         else:
-            prompt_batch_size = 1
+            prompts_per_pass = 1
 
-    prompt_batch_size = int(prompt_batch_size)
-    if prompt_batch_size <= 0:
-        raise ValueError("rollout.prompt_batch_size must be > 0")
+    prompts_per_pass = int(prompts_per_pass)
+    if prompts_per_pass <= 0:
+        raise ValueError("rollout.prompts_per_pass_per_process must be > 0")
 
     # Ensure per-pass local batch (sequences) can be evenly split across local devices.
-    required_multiple = local_device_count // math.gcd(num_pre_q, local_device_count)
+    required_multiple = local_device_count // math.gcd(n, local_device_count)
     if required_multiple <= 0:
         raise ValueError("Invalid rollout batching: local_device_count must be > 0")
-    if prompt_batch_size % required_multiple != 0:
-        padded_prompt_batch_size = ((prompt_batch_size + required_multiple - 1) // required_multiple) * required_multiple
+    if prompts_per_pass % required_multiple != 0:
+        padded_prompts_per_pass = ((prompts_per_pass + required_multiple - 1) // required_multiple) * required_multiple
         print(
-            f"Padding rollout.prompt_batch_size {prompt_batch_size} -> {padded_prompt_batch_size} so that "
-            f"prompt_batch_size * rollout.num_pre_q is divisible by local_device_count={local_device_count}."
+            f"Padding rollout.prompts_per_pass_per_process {prompts_per_pass} -> {padded_prompts_per_pass} so that "
+            f"prompts_per_pass * rollout.n is divisible by local_device_count={local_device_count}."
         )
-        prompt_batch_size = padded_prompt_batch_size
+        prompts_per_pass = padded_prompts_per_pass
 
-    local_batch_per_pass = int(prompt_batch_size) * int(num_pre_q)
+    local_batch_per_pass = int(prompts_per_pass) * int(n)
 
     base_rollout_passes, effective_global_prompts = infer_rollout_passes(
         global_batch_size=global_prompt_target,
-        batch_size_per_process=prompt_batch_size,
+        batch_size_per_process=prompts_per_pass,
         process_count=process_count,
     )
     rollout_passes = int(base_rollout_passes)
 
     # --- Resolve train micro-batch & grad accumulation (sequences) ---
-    micro_batch_size_per_process = cfg.train.micro_batch_size
-    if cfg.train.per_device_micro_batch_size is not None:
-        if micro_batch_size_per_process is not None:
-            raise ValueError("Specify only one of train.micro_batch_size and train.per_device_micro_batch_size.")
-        per_device_micro = int(cfg.train.per_device_micro_batch_size)
-        if per_device_micro <= 0:
-            raise ValueError("train.per_device_micro_batch_size must be > 0.")
-        micro_batch_size_per_process = per_device_micro * local_device_count
+    global_micro_batch_size = cfg.train.global_micro_batch_size
+    if global_micro_batch_size is not None:
+        global_micro_batch_size = int(global_micro_batch_size)
+        if global_micro_batch_size <= 0:
+            raise ValueError("train.global_micro_batch_size must be > 0.")
 
+    micro_batch_size_per_process = cfg.train.micro_batch_size_per_process
     if micro_batch_size_per_process is not None:
         micro_batch_size_per_process = int(micro_batch_size_per_process)
         if micro_batch_size_per_process <= 0:
-            raise ValueError("train.micro_batch_size must be > 0.")
+            raise ValueError("train.micro_batch_size_per_process must be > 0.")
+
+    micro_batch_size_per_device = cfg.train.micro_batch_size_per_device
+    if micro_batch_size_per_device is not None:
+        micro_batch_size_per_device = int(micro_batch_size_per_device)
+        if micro_batch_size_per_device <= 0:
+            raise ValueError("train.micro_batch_size_per_device must be > 0.")
+
+    # Priority: per-device -> per-process -> global.
+    if micro_batch_size_per_device is not None:
+        expected_micro_per_process = int(micro_batch_size_per_device) * int(local_device_count)
+        if micro_batch_size_per_process is not None and int(micro_batch_size_per_process) != expected_micro_per_process:
+            raise ValueError(
+                "train.micro_batch_size_per_process must match train.micro_batch_size_per_device * local_device_count, got "
+                f"{int(micro_batch_size_per_process)} vs {int(micro_batch_size_per_device)}*{int(local_device_count)} "
+                f"({expected_micro_per_process})."
+            )
+        micro_batch_size_per_process = expected_micro_per_process
+
+    if micro_batch_size_per_process is None and global_micro_batch_size is not None:
+        if int(global_micro_batch_size) % int(process_count) != 0:
+            raise ValueError(
+                f"train.global_micro_batch_size={int(global_micro_batch_size)} must be divisible by "
+                f"process_count={int(process_count)} so each process gets an equal micro-batch."
+            )
+        micro_batch_size_per_process = int(global_micro_batch_size) // int(process_count)
+
+    if micro_batch_size_per_process is not None:
+        expected_global_micro = int(micro_batch_size_per_process) * int(process_count)
+        if global_micro_batch_size is not None and int(global_micro_batch_size) != expected_global_micro:
+            raise ValueError(
+                "train.global_micro_batch_size must match train.micro_batch_size_per_process * process_count, got "
+                f"{int(global_micro_batch_size)} vs {int(micro_batch_size_per_process)}*{int(process_count)} "
+                f"({expected_global_micro})."
+            )
+        global_micro_batch_size = expected_global_micro
+
+        expected_micro_per_device: int | None = None
+        if int(micro_batch_size_per_process) % int(local_device_count) == 0:
+            expected_micro_per_device = int(micro_batch_size_per_process) // int(local_device_count)
+        if micro_batch_size_per_device is not None and expected_micro_per_device is not None:
+            if int(micro_batch_size_per_device) != expected_micro_per_device:
+                raise ValueError(
+                    "train.micro_batch_size_per_device must match train.micro_batch_size_per_process / local_device_count, got "
+                    f"{int(micro_batch_size_per_device)} vs {int(micro_batch_size_per_process)}/{int(local_device_count)} "
+                    f"({expected_micro_per_device})."
+                )
+        if micro_batch_size_per_device is None:
+            micro_batch_size_per_device = expected_micro_per_device
+
+    if micro_batch_size_per_process is not None:
         padded_passes = round_up_passes_for_divisibility(
             passes=rollout_passes,
             sequences_per_pass_per_process=local_batch_per_pass,
@@ -295,7 +405,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         if padded_passes != rollout_passes:
             print(
                 f"Padding rollout passes {rollout_passes} -> {padded_passes} so that "
-                f"passes * local_batch_per_pass is divisible by train.micro_batch_size={micro_batch_size_per_process}."
+                f"passes * local_batch_per_pass is divisible by train.micro_batch_size_per_process={micro_batch_size_per_process}."
             )
             rollout_passes = int(padded_passes)
 
@@ -306,26 +416,36 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     if micro_batch_size_per_process is not None:
         if local_batch % micro_batch_size_per_process != 0:
             raise ValueError(
-                f"train.micro_batch_size={micro_batch_size_per_process} must divide local_batch={local_batch} "
-                f"(rollout_passes * rollout.prompt_batch_size * rollout.num_pre_q)."
+                f"train.micro_batch_size_per_process={micro_batch_size_per_process} must divide local_batch={local_batch} "
+                f"(rollout_passes * rollout.prompts_per_pass_per_process * rollout.n)."
             )
         micro_steps = local_batch // micro_batch_size_per_process
         if grad_accum_steps != 1 and grad_accum_steps != micro_steps:
             print(
                 f"Overriding train.grad_accum_steps {grad_accum_steps} -> {micro_steps} "
-                f"to respect train.micro_batch_size={micro_batch_size_per_process}."
+                f"to respect train.micro_batch_size_per_process={micro_batch_size_per_process}."
             )
         grad_accum_steps = micro_steps
 
     if local_batch % grad_accum_steps != 0:
         raise ValueError(
             f"train.grad_accum_steps={grad_accum_steps} must divide local_batch={local_batch} "
-            f"(rollout_passes * rollout.prompt_batch_size * rollout.num_pre_q)."
+            f"(rollout_passes * rollout.prompts_per_pass_per_process * rollout.n)."
         )
 
-    resolved_rollout_batch_size = cfg.rollout.batch_size
-    if resolved_rollout_batch_size is None:
-        resolved_rollout_batch_size = global_batch
+    resolved_batch_size = cfg.rollout.batch_size
+    if resolved_batch_size is None and global_seq_target is not None:
+        resolved_batch_size = int(global_seq_target)
+    if resolved_batch_size is None:
+        resolved_batch_size = int(global_batch)
+
+    resolved_batch_size_per_device: int | None = None
+    if int(local_batch) % int(local_device_count) == 0:
+        resolved_batch_size_per_device = int(local_batch) // int(local_device_count)
+
+    resolved_prompts_per_pass_per_device: int | None = None
+    if int(prompts_per_pass) % int(local_device_count) == 0:
+        resolved_prompts_per_pass_per_device = int(prompts_per_pass) // int(local_device_count)
 
     cfg = GRPOGsm8kConfig(
         **{
@@ -333,14 +453,19 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             "rollout": GRPORolloutConfig(
                 **{
                     **cfg.rollout.__dict__,
-                    "batch_size": resolved_rollout_batch_size,
-                    "prompt_batch_size": prompt_batch_size,
+                    "batch_size": int(resolved_batch_size),
+                    "batch_size_per_process": int(local_batch),
+                    "batch_size_per_device": resolved_batch_size_per_device,
+                    "prompts_per_pass_per_process": int(prompts_per_pass),
+                    "prompts_per_pass_per_device": resolved_prompts_per_pass_per_device,
                 }
             ),
             "train": GRPOTrainConfig(
                 **{
                     **cfg.train.__dict__,
-                    "micro_batch_size": micro_batch_size_per_process,
+                    "global_micro_batch_size": global_micro_batch_size,
+                    "micro_batch_size_per_process": micro_batch_size_per_process,
+                    "micro_batch_size_per_device": micro_batch_size_per_device,
                     "grad_accum_steps": grad_accum_steps,
                 }
             ),
@@ -364,7 +489,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 wandb_name=cfg.wandb_name,
                 reward_weights=cfg.reward_weights,
                 eval_every_steps=cfg.eval_every_steps,
-                eval_batches=cfg.eval_batches,
+                eval_batches_per_process=cfg.eval_batches_per_process,
                 eval_split=cfg.eval_split,
             )
         )
@@ -377,8 +502,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     if not qas:
         raise RuntimeError("No GSM8K data after sharding.")
 
+    full_sweep_enabled = os.environ.get("EVAL_FULL_SWEEP") == "1"
     eval_qas: list[dict[str, str]] = []
-    if int(cfg.eval_every_steps) > 0:
+    if int(cfg.eval_every_steps) > 0 or full_sweep_enabled:
         eval_dataset = load_dataset("openai/gsm8k", "main", split=str(cfg.eval_split))
         eval_qas = [{"Q": q, "A": a.split("####")[-1].strip()} for q, a in zip(eval_dataset["question"], eval_dataset["answer"])]
         if jax.process_count() > 1:
@@ -405,17 +531,69 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         training_steps=cfg.steps,
         grad_accum_steps=grad_accum_steps,
         model_path=cfg.model_path,
-        num_pre_q=cfg.rollout.num_pre_q,
+        num_pre_q=cfg.rollout.n,
         max_lengths=cfg.train.max_length_total,
         beta=cfg.train.beta,
         create_sampler=True,
     )
+    if os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1":
+        from plugins.training.rollout_optimizations import patch_qwen2_attention_decode_fast
+
+        patch_qwen2_attention_decode_fast()
+        if jax.process_index() == 0:
+            print("rollout_fast_qwen2_decode_attention=1 (patched attention._naive_sdpa for decode)")
+    if os.environ.get("ROLLOUT_FAST_GENERATE") == "1":
+        from plugins.training.rollout_optimizations import patch_sampler_generate_fast
+
+        patch_sampler_generate_fast(sampler)
+        if jax.process_index() == 0:
+            print("rollout_fast_generate=1 (patched sampler.generate)")
     rollout_backend = create_rollout_backend(
         name=rollout_backend_name,
         sampler=sampler,
         tokenizer=None,
         model_path=cfg.model_path,
     )
+    eval_rollout_backend = rollout_backend
+    eval_greedy_enabled = os.environ.get("EVAL_GREEDY") == "1" or os.environ.get("EVAL_FULL_GREEDY") == "1"
+    if eval_greedy_enabled and eval_qas:
+        from MLLM_JAX.sample.sample_state_right_padding2 import Sampler as SamplerImpl
+        from jax.experimental.shard_map import shard_map
+
+        eval_sampler = SamplerImpl(sampler.model, sampler.tokenizer, mesh=mesh)
+
+        def _greedy_sample(rng, logits):
+            rngs = jax.random.split(rng, jax.device_count())
+
+            def sample_inner(_rng, logits_local):
+                del _rng
+                return jnp.argmax(logits_local, axis=-1)
+
+            sample_fn = shard_map(
+                sample_inner,
+                mesh=mesh,
+                in_specs=(PS(["dp", "fsdp"]), PS(["dp", "fsdp"], "tp")),
+                out_specs=PS(["dp", "fsdp"]),
+                check_rep=False,
+            )
+            return sample_fn(rngs, logits)
+
+        eval_sampler.sample_fn = jax.jit(_greedy_sample)
+        eval_sampler.jit_infer_step = jax.jit(eval_sampler.infer, donate_argnums=(0,))
+
+        if os.environ.get("ROLLOUT_FAST_GENERATE") == "1":
+            from plugins.training.rollout_optimizations import patch_sampler_generate_fast
+
+            patch_sampler_generate_fast(eval_sampler)
+
+        eval_rollout_backend = create_rollout_backend(
+            name=rollout_backend_name,
+            sampler=eval_sampler,
+            tokenizer=None,
+            model_path=cfg.model_path,
+        )
+        if jax.process_index() == 0:
+            print("eval_greedy=1 (eval rollout uses argmax sampling)")
 
     wandb = _maybe_init_wandb(cfg)
 
@@ -446,14 +624,15 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         t_adv = 0.0
 
         for pass_idx in range(int(rollout_passes)):
-            batch_items = [rng.choice(qas) for _ in range(int(cfg.rollout.prompt_batch_size))]
+            batch_items = [rng.choice(qas) for _ in range(int(cfg.rollout.prompts_per_pass_per_process))]
             prompts_base = [item["Q"] for item in batch_items]
-            repeated_prompts = [p for p in prompts_base for _ in range(cfg.rollout.num_pre_q)]
-            repeated_items = [item for item in batch_items for _ in range(cfg.rollout.num_pre_q)]
+            repeated_prompts = [p for p in prompts_base for _ in range(cfg.rollout.n)]
+            repeated_items = [item for item in batch_items for _ in range(cfg.rollout.n)]
 
             group_ids = np.repeat(
-                np.arange(int(cfg.rollout.prompt_batch_size), dtype=np.int32) + pass_idx * int(cfg.rollout.prompt_batch_size),
-                cfg.rollout.num_pre_q,
+                np.arange(int(cfg.rollout.prompts_per_pass_per_process), dtype=np.int32)
+                + pass_idx * int(cfg.rollout.prompts_per_pass_per_process),
+                cfg.rollout.n,
             )
 
             # --- Rollout (sampling) ---
@@ -655,17 +834,37 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             wandb.log(train_log, step=step)
 
         if jax.process_index() == 0:
-            print(
-                " ".join(
+            parts = [
+                f"step={step}",
+                f"loss={loss_value:.6f}",
+                f"entropy={entropy_value:.4f}",
+                f"reward_mean={reward_global_stats['mean']:.4f}",
+                f"dt={t_step:.2f}s",
+            ]
+            if os.environ.get("PRINT_TRAIN_TIME_BREAKDOWN") == "1":
+                max_length_sample = int(cfg.rollout.max_length_sample)
+                if completion_len_global.size == 0:
+                    completion_hit_max_frac = float("nan")
+                else:
+                    completion_hit_max_frac = float((completion_len_global >= max_length_sample).mean())
+                parts.extend(
                     [
-                        f"step={step}",
-                        f"loss={loss_value:.6f}",
-                        f"entropy={entropy_value:.4f}",
-                        f"reward_mean={reward_global_stats['mean']:.4f}",
-                        f"dt={t_step:.2f}s",
+                        f"rollout={t_rollout:.2f}s",
+                        f"rollout_sync={t_rollout_sync:.2f}s",
+                        f"rollout_generate={t_rollout_generate:.2f}s",
+                        f"rollout_flush={t_rollout_flush:.2f}s",
+                        f"rollout_release={t_rollout_release:.2f}s",
+                        f"reward={t_reward:.2f}s",
+                        f"advantages={t_adv:.2f}s",
+                        f"shard={t_shard:.2f}s",
+                        f"update={t_update:.2f}s",
+                        f"prompt_len_mean={prompt_stats['mean']:.1f}",
+                        f"completion_len_mean={completion_stats['mean']:.1f}",
+                        f"completion_len_max={completion_stats['max']:.0f}",
+                        f"completion_hit_max_frac={completion_hit_max_frac:.2f}",
                     ]
                 )
-            )
+            print(" ".join(parts))
 
         # --- Eval (optional; no updates) ---
         if eval_qas and int(cfg.eval_every_steps) > 0 and ((step + 1) % int(cfg.eval_every_steps) == 0):
@@ -680,20 +879,24 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             eval_rewards_all: list[np.ndarray] = []
             eval_rewards_per_func_all: list[np.ndarray] = []
 
-            for eval_batch_idx in range(int(cfg.eval_batches)):
-                start = (step * int(cfg.eval_batches) + eval_batch_idx) * int(cfg.rollout.prompt_batch_size)
-                eval_items = [eval_qas[(start + i) % len(eval_qas)] for i in range(int(cfg.rollout.prompt_batch_size))]
+            for eval_batch_idx in range(int(cfg.eval_batches_per_process)):
+                start = (step * int(cfg.eval_batches_per_process) + eval_batch_idx) * int(
+                    cfg.rollout.prompts_per_pass_per_process
+                )
+                eval_items = [
+                    eval_qas[(start + i) % len(eval_qas)] for i in range(int(cfg.rollout.prompts_per_pass_per_process))
+                ]
                 eval_prompts_base = [item["Q"] for item in eval_items]
-                eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(cfg.rollout.num_pre_q)]
-                eval_repeated_items = [item for item in eval_items for _ in range(cfg.rollout.num_pre_q)]
+                eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(cfg.rollout.n)]
+                eval_repeated_items = [item for item in eval_items for _ in range(cfg.rollout.n)]
 
                 t_eval_sync0 = time.perf_counter()
-                if hasattr(rollout_backend, "sync_weights"):
-                    rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
+                if hasattr(eval_rollout_backend, "sync_weights"):
+                    eval_rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
                 eval_rollout_sync_s += time.perf_counter() - t_eval_sync0
 
                 t_eval_rollout0 = time.perf_counter()
-                eval_rollout = rollout_backend.rollout(
+                eval_rollout = eval_rollout_backend.rollout(
                     prompts=eval_repeated_prompts,
                     params=state.params,
                     system_prompt=system_prompt,
@@ -704,8 +907,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_rollout_generate_s += time.perf_counter() - t_eval_rollout0
 
                 t_eval_flush0 = time.perf_counter()
-                if hasattr(rollout_backend, "flush_cache"):
-                    rollout_backend.flush_cache()  # type: ignore[attr-defined]
+                if hasattr(eval_rollout_backend, "flush_cache"):
+                    eval_rollout_backend.flush_cache()  # type: ignore[attr-defined]
                 eval_rollout_flush_s += time.perf_counter() - t_eval_flush0
 
                 t_eval_reward0 = time.perf_counter()
@@ -726,8 +929,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_rewards_per_func_all.append(eval_per_func_flat)
 
             t_eval_release0 = time.perf_counter()
-            if hasattr(rollout_backend, "release_weights"):
-                rollout_backend.release_weights()  # type: ignore[attr-defined]
+            if hasattr(eval_rollout_backend, "release_weights"):
+                eval_rollout_backend.release_weights()  # type: ignore[attr-defined]
             eval_rollout_release_s = time.perf_counter() - t_eval_release0
 
             eval_step_s = time.perf_counter() - eval_step0
@@ -756,3 +959,219 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
             if wandb is not None and jax.process_index() == 0:
                 wandb.log(eval_logs, step=step)
+
+    # --- Full eval sweep (optional; no updates) ---
+    #
+    # Motivation: the lightweight eval above uses a small subset of the eval split
+    # (controlled by `eval_batches_per_process`). For stable accuracy, we sometimes want to
+    # run the entire eval split once.
+    #
+    # Enable via: `EVAL_FULL_SWEEP=1` (no YAML edits required).
+    if full_sweep_enabled and eval_qas:
+        # Full-sweep eval is intended to match the "full test split, each
+        # question once" metric expectation:
+        # - run the entire `eval_split`
+        # - generate exactly 1 completion per question by default
+        #
+        # To keep compilation stable and reuse the same per-process sequence
+        # batch size as training, we adjust the prompt batch size so that:
+        #   (prompt_batch_size_eval * n_eval) == local_seq_batch_train
+        #
+        # Optional override:
+        #   EVAL_FULL_NUM_PRE_Q=<int>  (default: 1)
+        train_prompts_per_pass = int(cfg.rollout.prompts_per_pass_per_process)
+        train_n = int(cfg.rollout.n)
+        local_seq_batch_train = train_prompts_per_pass * train_n
+
+        num_pre_q_env = os.environ.get("EVAL_FULL_NUM_PRE_Q")
+        eval_n = int(num_pre_q_env) if num_pre_q_env is not None else 1
+        if eval_n < 1:
+            raise ValueError(f"EVAL_FULL_NUM_PRE_Q must be >= 1, got {eval_n}")
+        if local_seq_batch_train % eval_n != 0:
+            raise ValueError(
+                "EVAL_FULL_NUM_PRE_Q must divide the per-process sequence batch size: "
+                f"{eval_n=} local_seq_batch_train={local_seq_batch_train}"
+            )
+
+        prompt_batch_size = local_seq_batch_train // eval_n
+        reward_weights = cfg.reward_weights
+
+        t_eval0 = time.perf_counter()
+        t_eval_sync_s = 0.0
+        t_eval_rollout_generate_s = 0.0
+        t_eval_rollout_flush_s = 0.0
+        t_eval_reward_s = 0.0
+        t_eval_release_s = 0.0
+
+        local_question_count = int(len(eval_qas))
+        local_prompt_sum_accuracy = 0.0
+        local_prompt_count = 0
+
+        local_completion_sum_correct = 0.0
+        local_completion_sum_format = 0.0
+        local_completion_sum_tag = 0.0
+        local_completion_count = 0
+
+        if hasattr(rollout_backend, "sync_weights"):
+            t0 = time.perf_counter()
+            eval_rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
+            t_eval_sync_s += time.perf_counter() - t0
+
+        pad_item = eval_qas[0]
+        for start in range(0, local_question_count, prompt_batch_size):
+            batch_items = eval_qas[start : start + prompt_batch_size]
+            valid_prompts = int(len(batch_items))
+            if valid_prompts <= 0:
+                continue
+            if valid_prompts < prompt_batch_size:
+                batch_items = batch_items + [pad_item] * (prompt_batch_size - valid_prompts)
+
+            eval_prompts_base = [item["Q"] for item in batch_items]
+            eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(eval_n)]
+            eval_repeated_items = [item for item in batch_items for _ in range(eval_n)]
+
+            t0 = time.perf_counter()
+            eval_rollout = eval_rollout_backend.rollout(
+                prompts=eval_repeated_prompts,
+                params=state.params,
+                system_prompt=system_prompt,
+                global_length=int(cfg.rollout.global_length),
+                max_length_sample=cfg.rollout.max_length_sample,
+            )
+            eval_answers = eval_rollout.answers
+            t_eval_rollout_generate_s += time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            if hasattr(eval_rollout_backend, "flush_cache"):
+                eval_rollout_backend.flush_cache()  # type: ignore[attr-defined]
+            t_eval_rollout_flush_s += time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            eval_rewards_per_func, _eval_rewards_total = compute_weighted_rewards(
+                reward_funcs=reward_funcs,
+                reward_weights=reward_weights,
+                inputs=eval_repeated_items,
+                answers=eval_answers,
+            )
+            t_eval_reward_s += time.perf_counter() - t0
+
+            correct_per_completion = np.asarray(eval_rewards_per_func[0], dtype=np.float32).reshape(-1)
+            format_per_completion = np.asarray(eval_rewards_per_func[1], dtype=np.float32).reshape(-1)
+            tag_per_completion = np.asarray(eval_rewards_per_func[2], dtype=np.float32).reshape(-1)
+
+            prompt_mask = np.zeros((prompt_batch_size,), dtype=np.float32)
+            prompt_mask[:valid_prompts] = 1.0
+            completion_mask = np.repeat(prompt_mask, eval_n)
+
+            # "Accuracy" is defined as correctness of the first (or only)
+            # completion per prompt, matching the "each question once" metric.
+            if eval_n == 1:
+                local_prompt_sum_accuracy += float((correct_per_completion * prompt_mask).sum())
+            else:
+                pass_at_1, _pass_at_k, _mean_at_k = _group_correct_per_prompt(
+                    correct_per_completion, n=eval_n
+                )
+                local_prompt_sum_accuracy += float((pass_at_1 * prompt_mask).sum())
+            local_prompt_count += int(valid_prompts)
+
+            local_completion_sum_correct += float((correct_per_completion * completion_mask).sum())
+            local_completion_sum_format += float((format_per_completion * completion_mask).sum())
+            local_completion_sum_tag += float((tag_per_completion * completion_mask).sum())
+            local_completion_count += int(valid_prompts) * int(eval_n)
+
+        t0 = time.perf_counter()
+        if hasattr(eval_rollout_backend, "release_weights"):
+            eval_rollout_backend.release_weights()  # type: ignore[attr-defined]
+        t_eval_release_s += time.perf_counter() - t0
+
+        # Aggregate across processes.
+        # Order:
+        # - question_count
+        # - prompt_count
+        # - prompt_sum_accuracy
+        # - completion_count
+        # - completion_sum_correct
+        # - completion_sum_format
+        # - completion_sum_tag
+        local_stats = np.asarray(
+            [
+                float(local_question_count),
+                float(local_prompt_count),
+                float(local_prompt_sum_accuracy),
+                float(local_completion_count),
+                float(local_completion_sum_correct),
+                float(local_completion_sum_format),
+                float(local_completion_sum_tag),
+            ],
+            dtype=np.float64,
+        )
+        gathered = np.asarray(process_allgather(local_stats))
+        global_stats = gathered.sum(axis=0)
+
+        global_question_count = int(global_stats[0])
+        global_prompt_count = int(global_stats[1])
+        global_prompt_sum_accuracy = float(global_stats[2])
+        global_completion_count = int(global_stats[3])
+        global_completion_sum_correct = float(global_stats[4])
+        global_completion_sum_format = float(global_stats[5])
+        global_completion_sum_tag = float(global_stats[6])
+
+        t_eval_s = time.perf_counter() - t_eval0
+        prompt_denom = max(global_prompt_count, 1)
+        completion_denom = max(global_completion_count, 1)
+
+        accuracy_global = global_prompt_sum_accuracy / float(prompt_denom)
+        mean_correct_per_completion = global_completion_sum_correct / float(completion_denom)
+        mean_format_per_completion = global_completion_sum_format / float(completion_denom)
+        mean_tag_per_completion = global_completion_sum_tag / float(completion_denom)
+
+        full_eval_logs: dict[str, Any] = {
+            "eval_full/enabled": 1,
+            "eval_full/split": str(cfg.eval_split),
+            "eval_full/questions_global": global_question_count,
+            "eval_full/samples_per_question": int(eval_n),
+            "eval_full/accuracy": float(accuracy_global),
+            # Backward-compatible alias (previously logged as pass@1).
+            "eval_full/accuracy/pass_at_1": float(accuracy_global),
+            # Per-completion means (kept for reference; NOT the main "accuracy").
+            "eval_full/reward_correct/mean_per_completion": float(mean_correct_per_completion),
+            "eval_full/reward_format/mean_per_completion": float(mean_format_per_completion),
+            "eval_full/tag_count_reward/mean_per_completion": float(mean_tag_per_completion),
+            "time/eval_full/sync_s": float(t_eval_sync_s),
+            "time/eval_full/rollout_generate_s": float(t_eval_rollout_generate_s),
+            "time/eval_full/rollout_flush_s": float(t_eval_rollout_flush_s),
+            "time/eval_full/reward_s": float(t_eval_reward_s),
+            "time/eval_full/release_s": float(t_eval_release_s),
+            "time/eval_full/step_s": float(t_eval_s),
+        }
+        if global_question_count > 0:
+            full_eval_logs["time/eval_full/s_per_question"] = float(t_eval_s) / float(global_question_count)
+
+        # Mirror key names under `eval/accuracy/*` so dashboards don't need to change.
+        full_eval_logs.update(
+            {
+                "eval/accuracy/full_sweep": 1,
+                "eval/accuracy/split": str(cfg.eval_split),
+                "eval/accuracy/questions_global": global_question_count,
+                "eval/accuracy/samples_per_question": int(eval_n),
+                "eval/accuracy/accuracy": float(accuracy_global),
+                # Backward-compatible alias (previously logged as pass@1).
+                "eval/accuracy/pass_at_1": float(accuracy_global),
+            }
+        )
+
+        if jax.process_index() == 0:
+            print(
+                "eval_full "
+                + " ".join(
+                    [
+                        f"split={cfg.eval_split}",
+                        f"questions={global_question_count}",
+                        f"samples_per_question={eval_n}",
+                        f"accuracy={accuracy_global:.4f}",
+                        f"t={t_eval_s:.2f}s",
+                    ]
+                )
+            )
+        if wandb is not None and jax.process_index() == 0:
+            wandb.log(full_eval_logs, step=int(cfg.steps) - 1)

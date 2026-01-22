@@ -13,6 +13,7 @@
 - TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
 - TPU sglang-jax Qwen3-4B param-swap inference: `docs/sops/tpu-sglang-jax-qwen3-4b-engine-weight-swap-infer.md`
 - TPU sglang-jax Qwen3-4B W&B memory logging (offline+online): `docs/sops/tpu-sglang-jax-qwen3-4b-wandb-memory-logging.md`
+- TPU sglang-jax Qwen2.5-3B MLLM param-swap memory: `docs/sops/tpu-sglang-jax-qwen25-3b-mllm-param-swap-memory.md`
 - TPU smoke GRPO train (3 steps): `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
 - TPU v4-8 GRPO runner smoke (`rollout.backend=naive`): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
 - TPU v6e-8 GRPO train (100 steps, bs=128 seq, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`
@@ -48,6 +49,7 @@
 - `docs/sops/tpu-vm-create-v4-8-or-v6e-8.md`
 - `docs/sops/tpu-sglang-jax-qwen3-4b-engine-weight-swap-infer.md`
 - `docs/sops/tpu-sglang-jax-qwen3-4b-wandb-memory-logging.md` (offline+online)
+- `docs/sops/tpu-sglang-jax-qwen25-3b-mllm-param-swap-memory.md`
 - `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`

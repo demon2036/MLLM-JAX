@@ -15,6 +15,7 @@
 - TPU sglang-jax Qwen3-4B W&B memory logging (offline+online): `docs/sops/tpu-sglang-jax-qwen3-4b-wandb-memory-logging.md`
 - TPU sglang-jax Qwen2.5-3B MLLM param-swap memory: `docs/sops/tpu-sglang-jax-qwen25-3b-mllm-param-swap-memory.md`
 - TPU sglang-jax Qwen2.5-3B KV drop/rebuild memory: `docs/sops/tpu-sglang-jax-qwen25-3b-kv-drop-rebuild-memory.md`
+- TPU sglang-jax Qwen2.5-3B big-KV KV drop/rebuild + W&B: `docs/sops/tpu-sglang-jax-qwen25-3b-kv-drop-rebuild-wandb-bigkv.md`
 - sglang-jax KV cache sizing (JAX): `docs/sops/sglang-jax-kv-cache-sizing.md`
 - TPU smoke GRPO train (3 steps): `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
 - TPU v4-8 GRPO runner smoke (`rollout.backend=naive`): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
@@ -53,6 +54,7 @@
 - `docs/sops/tpu-sglang-jax-qwen3-4b-wandb-memory-logging.md` (offline+online)
 - `docs/sops/tpu-sglang-jax-qwen25-3b-mllm-param-swap-memory.md`
 - `docs/sops/tpu-sglang-jax-qwen25-3b-kv-drop-rebuild-memory.md`
+- `docs/sops/tpu-sglang-jax-qwen25-3b-kv-drop-rebuild-wandb-bigkv.md`
 - `docs/sops/sglang-jax-kv-cache-sizing.md`
 - `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`

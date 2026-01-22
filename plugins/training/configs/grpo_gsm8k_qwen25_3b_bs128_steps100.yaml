@@ -22,7 +22,9 @@ rollout:
   per_device_batch_size: null
   batch_size: null
   global_prompt_batch_size: 128
-  prompt_batch_size: null
+  # Prompts per process per rollout pass. Keep this small on v6e-16 to limit
+  # per-pass KV-cache memory (runner will increase rollout passes accordingly).
+  prompt_batch_size: 8
   num_pre_q: 8
   global_length: 512
   max_length_sample: 1024

@@ -191,20 +191,28 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+    require_multihost = os.environ.get("REQUIRE_MULTIHOST") == "1"
     require_process_count_raw = os.environ.get("REQUIRE_JAX_PROCESS_COUNT")
     require_process_count = int(require_process_count_raw) if require_process_count_raw else 0
 
     try:
         jax.distributed.initialize()
     except Exception as e:
-        if require_process_count > 0:
+        if require_multihost or require_process_count > 0:
             raise RuntimeError(
-                "jax.distributed.initialize() failed but REQUIRE_JAX_PROCESS_COUNT is set. "
-                "If this is a multi-host TPU (e.g. v6e-16), start the job on all workers "
-                "(`gcloud ... tpu-vm ssh --worker=all`) or launch one process per worker."
+                "jax.distributed.initialize() failed but a multi-host runtime is required "
+                "(REQUIRE_MULTIHOST=1 or REQUIRE_JAX_PROCESS_COUNT is set). "
+                "Start the job on all workers (`gcloud ... tpu-vm ssh --worker=all`) "
+                "or launch one process per worker."
             ) from e
         if os.environ.get("PRINT_JAX_DISTRIBUTED_INIT_ERROR") == "1":
             print(f"jax.distributed.initialize() skipped: {e}")
+
+    if require_multihost and int(jax.process_count()) <= 1:
+        raise RuntimeError(
+            "Expected a multi-host JAX runtime (REQUIRE_MULTIHOST=1) but got jax.process_count()==1. "
+            "This usually means only worker 0 launched the program."
+        )
 
     if require_process_count > 0:
         actual_process_count = int(jax.process_count())

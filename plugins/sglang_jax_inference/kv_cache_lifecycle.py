@@ -111,6 +111,16 @@ def drop_engine_kv_cache(
     )
     dtype = getattr(token_to_kv_pool, "dtype")
     itemsize = int(getattr(dtype, "itemsize", 0) or 0)
+    if itemsize <= 0:
+        for buf in kv_buffer:
+            if buf is None:
+                continue
+            try:
+                itemsize = int(getattr(getattr(buf, "dtype", None), "itemsize", 0) or 0)
+            except Exception:
+                itemsize = 0
+            if itemsize > 0:
+                break
     fused_bytes_per_layer = _int_prod(tuple(int(x) for x in fused_buffer_shape)) * itemsize
     fused_bytes_total = fused_bytes_per_layer * int(len(kv_buffer))
 

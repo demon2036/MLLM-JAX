@@ -725,6 +725,21 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 datas_np["attention_mask"] = _pad_2d_right(datas_np["attention_mask"], seq_len_global, 0)
                 datas_np["labels"] = _pad_2d_right(datas_np["labels"], seq_len_global, 0)
 
+            # Clamp/pad to a fixed training length so the JIT-compiled training
+            # step sees stable shapes across steps (avoids recompiles when rollout
+            # emits variable-length completions).
+            max_length_total = int(getattr(cfg.train, "max_length_total", 0) or 0)
+            if max_length_total > 0:
+                cur_len = int(datas_np["input_ids"].shape[1])
+                if cur_len > max_length_total:
+                    datas_np["input_ids"] = datas_np["input_ids"][:, :max_length_total]
+                    datas_np["attention_mask"] = datas_np["attention_mask"][:, :max_length_total]
+                    datas_np["labels"] = datas_np["labels"][:, :max_length_total]
+                elif cur_len < max_length_total:
+                    datas_np["input_ids"] = _pad_2d_right(datas_np["input_ids"], max_length_total, pad_token_id)
+                    datas_np["attention_mask"] = _pad_2d_right(datas_np["attention_mask"], max_length_total, 0)
+                    datas_np["labels"] = _pad_2d_right(datas_np["labels"], max_length_total, 0)
+
         rewards_global = np.asarray(process_allgather(rewards_np)).reshape(-1)
         reward_global_stats = _stats_1d(rewards_global)
 

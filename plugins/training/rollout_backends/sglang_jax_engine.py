@@ -120,9 +120,7 @@ def _iter_qwen2_target_param_paths(*, model_config: Any) -> list[str]:
 
 def _qwen2_spec_for_target_path(target_path: str) -> tuple:
     if target_path in ("model.embed_tokens.embedding", "lm_head.embedding"):
-        # Training (MLLM_JAX) partitions embedding hidden-dim on TP, so keep the
-        # same layout to enable zero-copy aliasing.
-        return (None, "tensor")
+        return ("tensor", None)
     if target_path.endswith(".scale"):
         return (None,)
     if target_path.endswith(".bias"):
@@ -157,7 +155,12 @@ def _alias_to_engine_mesh(arr: Any, *, mesh: Any, spec: tuple) -> Any:
             "Ensure the rollout engine and training params use the same local devices."
         ) from e
 
-    return jax.make_array_from_single_device_arrays(arr.shape, sharding, local_bufs)
+    try:
+        return jax.make_array_from_single_device_arrays(arr.shape, sharding, local_bufs)
+    except Exception:
+        # Fallback: allow a real reshard/copy when the training sharding does not
+        # match the rollout engine's expected layout.
+        return jax.device_put(arr, sharding)
 
 
 def _get_by_path(tree: Any, path: str) -> Any:
@@ -175,8 +178,67 @@ def _build_sglang_qwen2_param_dict_from_train_params(
     train_params: Any,
     model_config: Any,
     mesh: Any,
+    expected_shapes: Mapping[str, tuple[int, ...]] | None = None,
 ) -> dict[str, Any]:
     """Build an nnx target_path -> jax.Array mapping from training params (no host copy)."""
+
+    import jax.numpy as jnp
+
+    def _validate_shape(target_path: str, value: Any) -> None:
+        if expected_shapes is None:
+            return
+        expected = expected_shapes.get(str(target_path))
+        if expected is None:
+            return
+        got = tuple(int(x) for x in getattr(value, "shape", ()))
+        if got != tuple(int(x) for x in expected):
+            raise ValueError(f"Shape mismatch for {target_path}: expected={tuple(expected)}, got={got}")
+
+    head_dim = int(getattr(model_config, "head_dim", 0) or 0)
+    if head_dim <= 0:
+        hidden_size = int(getattr(model_config, "hidden_size", 0) or 0)
+        num_heads = int(getattr(model_config, "num_attention_heads", 0) or 0)
+        if hidden_size <= 0 or num_heads <= 0:
+            raise ValueError("Cannot infer head_dim from model_config.")
+        head_dim = int(hidden_size // num_heads)
+        if head_dim <= 0:
+            raise ValueError(f"Invalid inferred head_dim={head_dim}.")
+
+    def _kv_expand_2d(arr: Any, *, target: int) -> Any:
+        got = int(arr.shape[1])
+        target = int(target)
+        if got == target:
+            return arr
+        if got > target:
+            return arr[:, :target]
+        if got % head_dim != 0 or target % head_dim != 0:
+            raise ValueError(f"KV expand requires dims divisible by head_dim={head_dim}, got={got}, target={target}.")
+        original_heads = int(got // head_dim)
+        target_heads = int(target // head_dim)
+        if original_heads <= 0 or target_heads <= 0:
+            raise ValueError(f"Invalid KV heads (original={original_heads}, target={target_heads}).")
+        num_replicas = (target_heads + original_heads - 1) // original_heads
+        reshaped = arr.reshape(arr.shape[0], original_heads, head_dim)
+        expanded = jnp.repeat(reshaped, repeats=num_replicas, axis=1)[:, :target_heads, :]
+        return expanded.reshape(arr.shape[0], target_heads * head_dim)
+
+    def _kv_expand_1d(arr: Any, *, target: int) -> Any:
+        got = int(arr.shape[0])
+        target = int(target)
+        if got == target:
+            return arr
+        if got > target:
+            return arr[:target]
+        if got % head_dim != 0 or target % head_dim != 0:
+            raise ValueError(f"KV expand requires dims divisible by head_dim={head_dim}, got={got}, target={target}.")
+        original_heads = int(got // head_dim)
+        target_heads = int(target // head_dim)
+        if original_heads <= 0 or target_heads <= 0:
+            raise ValueError(f"Invalid KV heads (original={original_heads}, target={target_heads}).")
+        num_replicas = (target_heads + original_heads - 1) // original_heads
+        reshaped = arr.reshape(original_heads, head_dim)
+        expanded = jnp.repeat(reshaped, repeats=num_replicas, axis=0)[:target_heads, :]
+        return expanded.reshape(target_heads * head_dim)
 
     out: dict[str, Any] = {}
 
@@ -185,11 +247,13 @@ def _build_sglang_qwen2_param_dict_from_train_params(
         mesh=mesh,
         spec=_qwen2_spec_for_target_path("model.embed_tokens.embedding"),
     )
+    _validate_shape("model.embed_tokens.embedding", out["model.embed_tokens.embedding"])
     out["model.norm.scale"] = _alias_to_engine_mesh(
         _get_by_path(train_params, "model.norm.scale"),
         mesh=mesh,
         spec=_qwen2_spec_for_target_path("model.norm.scale"),
     )
+    _validate_shape("model.norm.scale", out["model.norm.scale"])
 
     tie_word_embeddings = bool(
         getattr(getattr(model_config, "hf_text_config", model_config), "tie_word_embeddings", False)
@@ -208,11 +272,18 @@ def _build_sglang_qwen2_param_dict_from_train_params(
         def _copy(dst_suffix: str, src_suffix: str):
             dst = f"{dst_prefix}.{dst_suffix}"
             src = f"{src_prefix}.{src_suffix}"
-            out[dst] = _alias_to_engine_mesh(
-                _get_by_path(train_params, src),
-                mesh=mesh,
-                spec=_qwen2_spec_for_target_path(dst),
-            )
+            src_value = _get_by_path(train_params, src)
+            if expected_shapes is not None:
+                expected = expected_shapes.get(dst)
+                if expected is not None:
+                    if dst.endswith((".self_attn.k_proj.weight", ".self_attn.v_proj.weight")):
+                        src_value = _kv_expand_2d(src_value, target=int(expected[1]))
+                    elif dst.endswith((".self_attn.k_proj.bias", ".self_attn.v_proj.bias")):
+                        src_value = _kv_expand_1d(src_value, target=int(expected[0]))
+
+            value = _alias_to_engine_mesh(src_value, mesh=mesh, spec=_qwen2_spec_for_target_path(dst))
+            _validate_shape(dst, value)
+            out[dst] = value
 
         _copy("input_layernorm.scale", "input_layernorm.scale")
         _copy("post_attention_layernorm.scale", "post_attention_layernorm.scale")
@@ -349,11 +420,20 @@ class SglangJaxRolloutBackend:
         if self._engine is None or self._model_runner is None:
             raise RuntimeError("Engine is not initialized.")
 
+        expected_shapes: dict[str, tuple[int, ...]] | None = None
+        if self._dummy_param_dict is not None:
+            expected_shapes = {
+                str(k): tuple(int(x) for x in v.shape)
+                for k, v in self._dummy_param_dict.items()
+                if hasattr(v, "shape")
+            }
+
         # Swap Engine weights from the *training* params (no host-side reload).
         param_dict = _build_sglang_qwen2_param_dict_from_train_params(
             train_params=params,
             model_config=self._model_runner.model_config,
             mesh=self._model_runner.mesh,
+            expected_shapes=expected_shapes,
         )
         from plugins.sglang_jax_inference.engine_weight_swap import swap_engine_weights_from_param_dict
 

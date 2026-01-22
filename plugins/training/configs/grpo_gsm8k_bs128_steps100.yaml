@@ -1,15 +1,12 @@
-# GRPO/GSM8K config: global_sequence_batch_size=128 sequences per training step (global)
+# GRPO/GSM8K config: batch_size=128 sequences per training step (global)
 #
 # In this repo:
-# - `rollout.global_sequence_batch_size` is sequences per training step (global, across all processes)
-# - `rollout.prompt_batch_size_per_process` is prompts per rollout pass (per process)
-# - `rollout.num_pre_q` is samples per prompt (GRPO group size, K)
-# - `local_batch` (sequences per step, per process) =
-#     rollout.prompt_batch_size_per_process * rollout.num_pre_q * rollout_passes
+# - `rollout.batch_size` is sequences per training step (global, across all processes)
+# - `rollout.n` is samples per prompt (GRPO group size, K)
+# - prompts per training step (global) = rollout.batch_size / rollout.n
 #
 # This config sets:
-# - rollout.global_sequence_batch_size=128, rollout.num_pre_q=8 -> global_batch=128 sequences
-# - rollout.global_prompt_batch_size=16 (derived)
+# - rollout.batch_size=128, rollout.n=8 -> global prompts/step = 16
 # - train.micro_batch_size_per_process=16 -> runner infers grad_accum_steps so update sees 128 sequences/step
 #
 # Intended use: v6e-8 single-host training (100 steps) with W&B logging.
@@ -20,11 +17,12 @@ steps: 100
 
 rollout:
   backend: naive
-  prompt_batch_size_per_device: null
-  global_sequence_batch_size: 128
-  global_prompt_batch_size: 16
-  prompt_batch_size_per_process: null
-  num_pre_q: 8
+  batch_size: 128
+  batch_size_per_process: null
+  batch_size_per_device: null
+  prompts_per_pass_per_process: null
+  prompts_per_pass_per_device: null
+  n: 8
   global_length: 512
   max_length_sample: 1024
 

@@ -14,21 +14,21 @@ rollout:
   # - naive: current in-process sampler
   # - future: vllm, ...
   backend: naive
-  # Optional: total sequences per training step (global, across all processes).
-  # If set, runner will do multiple rollout passes and may pad up to the next
-  # full pass to keep shapes equal across hosts/devices.
+  # Batch sizes are expressed in "sequences" (one sequence = one (prompt, completion) sample).
   #
-  # A "sequence" here means one (prompt, completion) sample.
-  global_sequence_batch_size: null
-  global_prompt_batch_size: null
-  # Optional: prompts per process per rollout pass (forward-only).
-  # If unset, runner derives a value from global targets and `process_count`.
-  prompt_batch_size_per_process: 32
-  # Optional: prompts per device per rollout pass (forward-only).
-  # Runner uses this to derive `prompt_batch_size_per_process`.
-  prompt_batch_size_per_device: null
+  # Only ONE of these needs to be set; others are derived at runtime:
+  # - batch_size: global sequences per training step (across all processes)
+  # - batch_size_per_process: sequences per step per process
+  # - batch_size_per_device: sequences per step per device
+  batch_size: null
+  batch_size_per_process: null
+  batch_size_per_device: null
+  # Optional: prompts per rollout pass (KV-cache footprint control).
+  # If unset, runner derives a value from batch targets and `process_count`.
+  prompts_per_pass_per_process: 32
+  prompts_per_pass_per_device: null
   # Number of samples per prompt (GRPO group size, a.k.a. K).
-  num_pre_q: 1
+  n: 1
   global_length: 512
   max_length_sample: 1024
 

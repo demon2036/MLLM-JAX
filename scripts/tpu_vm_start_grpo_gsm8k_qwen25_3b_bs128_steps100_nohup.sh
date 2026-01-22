@@ -5,10 +5,10 @@ set -euo pipefail
 # (no training hyperparam env overrides).
 #
 # NOTE: `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` now
-# uses prompt-based semantics:
-# - rollout.global_prompt_batch_size=128 (global prompts/step)
-# - rollout.num_pre_q=8 (K)
-# -> rollout.batch_size = 128 * 8 = 1024 (global sequences/step)
+# uses sequence-based semantics:
+# - rollout.batch_size=128 (global sequences/step)
+# - rollout.n=8 (K)
+# -> global prompts/step = 128 / 8 = 16
 #
 # This script is intended to be executed ON the TPU VM inside a Git-synced repo
 # checkout (e.g. `/root/MLLM-JAX`).
@@ -26,7 +26,7 @@ CONFIG_PATH="${CONFIG_PATH:-plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_
 
 RUN_TS="$(date -u +%Y%m%d_%H%M%S)"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-WANDB_NAME_DEFAULT="grpo_gsm8k_qwen25_3b_prompts128_k8_steps100_len1024_${COMMIT}_${RUN_TS}"
+WANDB_NAME_DEFAULT="grpo_gsm8k_qwen25_3b_bs128_n8_steps100_len1024_${COMMIT}_${RUN_TS}"
 
 PY_ARGS="${PY_ARGS:-}"
 PY_ARGS="$PY_ARGS --set wandb_name=$WANDB_NAME_DEFAULT"
@@ -36,4 +36,3 @@ export CONFIG_PATH
 export PY_ARGS
 
 bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh
-

@@ -122,28 +122,32 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     # Rollout (generation)
     _maybe_override_from_env(cfg, env="ROLLOUT_BACKEND", key_path="rollout.backend", cast=str)
     # Global sequences per training step (across all processes).
-    _maybe_override_from_env(cfg, env="ROLLOUT_GLOBAL_SEQUENCE_BATCH_SIZE", key_path="rollout.global_sequence_batch_size", cast=int)
-    # Backward-compatible alias.
-    _maybe_override_from_env(cfg, env="ROLLOUT_BATCH_SIZE", key_path="rollout.global_sequence_batch_size", cast=int)
+    _maybe_override_from_env(cfg, env="ROLLOUT_GLOBAL_SEQUENCE_BATCH_SIZE", key_path="rollout.batch_size", cast=int)
+    # Preferred name (already means global sequences in this runner).
+    _maybe_override_from_env(cfg, env="ROLLOUT_BATCH_SIZE", key_path="rollout.batch_size", cast=int)
+    _maybe_override_from_env(cfg, env="ROLLOUT_BATCH_SIZE_PER_PROCESS", key_path="rollout.batch_size_per_process", cast=int)
+    _maybe_override_from_env(cfg, env="ROLLOUT_BATCH_SIZE_PER_DEVICE", key_path="rollout.batch_size_per_device", cast=int)
     # Preferred: global prompts per training step (across all processes).
     _maybe_override_from_env(
         cfg, env="ROLLOUT_GLOBAL_PROMPT_BATCH_SIZE", key_path="rollout.global_prompt_batch_size", cast=int
     )
     # Backward-compatible alias.
     _maybe_override_from_env(cfg, env="ROLLOUT_GLOBAL_BATCH_SIZE", key_path="rollout.global_prompt_batch_size", cast=int)
+    # Legacy: prompts per rollout pass (KV-cache footprint control).
     _maybe_override_from_env(
-        cfg, env="ROLLOUT_PROMPT_BATCH_SIZE_PER_DEVICE", key_path="rollout.prompt_batch_size_per_device", cast=int
+        cfg, env="ROLLOUT_PROMPT_BATCH_SIZE_PER_DEVICE", key_path="rollout.prompts_per_pass_per_device", cast=int
     )
-    # Backward-compatible alias.
-    _maybe_override_from_env(cfg, env="ROLLOUT_PER_DEVICE_BATCH_SIZE", key_path="rollout.prompt_batch_size_per_device", cast=int)
-    # Legacy: prompts per rollout pass (per process). Still accepted as `BATCH_SIZE`.
+    _maybe_override_from_env(cfg, env="ROLLOUT_PER_DEVICE_BATCH_SIZE", key_path="rollout.prompts_per_pass_per_device", cast=int)
     _maybe_override_from_env(
-        cfg, env="ROLLOUT_PROMPT_BATCH_SIZE_PER_PROCESS", key_path="rollout.prompt_batch_size_per_process", cast=int
+        cfg, env="ROLLOUT_PROMPT_BATCH_SIZE_PER_PROCESS", key_path="rollout.prompts_per_pass_per_process", cast=int
     )
-    # Backward-compatible aliases.
-    _maybe_override_from_env(cfg, env="BATCH_SIZE", key_path="rollout.prompt_batch_size_per_process", cast=int)
-    _maybe_override_from_env(cfg, env="ROLLOUT_PROMPT_BATCH_SIZE", key_path="rollout.prompt_batch_size_per_process", cast=int)
-    _maybe_override_from_env(cfg, env="NUM_PRE_Q", key_path="rollout.num_pre_q", cast=int)
+    _maybe_override_from_env(cfg, env="BATCH_SIZE", key_path="rollout.prompts_per_pass_per_process", cast=int)
+    _maybe_override_from_env(cfg, env="ROLLOUT_PROMPT_BATCH_SIZE", key_path="rollout.prompts_per_pass_per_process", cast=int)
+    _maybe_override_from_env(cfg, env="ROLLOUT_PROMPTS_PER_PASS_PER_PROCESS", key_path="rollout.prompts_per_pass_per_process", cast=int)
+    _maybe_override_from_env(cfg, env="ROLLOUT_PROMPTS_PER_PASS_PER_DEVICE", key_path="rollout.prompts_per_pass_per_device", cast=int)
+
+    _maybe_override_from_env(cfg, env="ROLLOUT_N", key_path="rollout.n", cast=int)
+    _maybe_override_from_env(cfg, env="NUM_PRE_Q", key_path="rollout.n", cast=int)
     _maybe_override_from_env(cfg, env="GLOBAL_LENGTH", key_path="rollout.global_length", cast=int)
     _maybe_override_from_env(cfg, env="MAX_LENGTH_SAMPLE", key_path="rollout.max_length_sample", cast=int)
 
@@ -190,21 +194,60 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
     model_path = str(cfg.get("model_path") or "Qwen/Qwen2.5-7B-Instruct")
     steps = int(cfg.get("steps") or 20)
 
-    rollout_num_pre_q = _get_int_from_aliases(cfg, label="rollout.num_pre_q", paths=["rollout.num_pre_q"], keys=["num_pre_q"])
-    rollout_num_pre_q = int(rollout_num_pre_q or 8)
-
-    rollout_prompt_batch_size_per_device = _get_int_from_aliases(
+    rollout_n = _get_int_from_aliases(
         cfg,
-        label="rollout.prompt_batch_size_per_device",
-        paths=["rollout.prompt_batch_size_per_device", "rollout.per_device_batch_size"],
-        keys=["rollout_prompt_batch_size_per_device", "rollout_per_device_batch_size", "rollout_per_device_batch_size"],
+        label="rollout.n",
+        paths=["rollout.n", "rollout.num_pre_q"],
+        keys=["rollout_n", "rollout_num_pre_q", "n", "num_pre_q"],
+    )
+    rollout_n = int(rollout_n or 8)
+
+    rollout_batch_size = _get_int_from_aliases(
+        cfg,
+        label="rollout.batch_size",
+        paths=["rollout.batch_size", "rollout.global_sequence_batch_size"],
+        keys=["rollout_batch_size", "rollout_global_sequence_batch_size"],
+    )
+    rollout_batch_size_per_process = _get_int_from_aliases(
+        cfg,
+        label="rollout.batch_size_per_process",
+        paths=["rollout.batch_size_per_process"],
+        keys=["rollout_batch_size_per_process"],
+    )
+    rollout_batch_size_per_device = _get_int_from_aliases(
+        cfg,
+        label="rollout.batch_size_per_device",
+        paths=["rollout.batch_size_per_device"],
+        keys=["rollout_batch_size_per_device"],
     )
 
-    rollout_prompt_batch_size_per_process = _get_int_from_aliases(
+    rollout_prompts_per_pass_per_device = _get_int_from_aliases(
         cfg,
-        label="rollout.prompt_batch_size_per_process",
-        paths=["rollout.prompt_batch_size_per_process", "rollout.prompt_batch_size"],
+        label="rollout.prompts_per_pass_per_device",
+        paths=[
+            "rollout.prompts_per_pass_per_device",
+            # Legacy names:
+            "rollout.prompt_batch_size_per_device",
+            "rollout.per_device_batch_size",
+        ],
         keys=[
+            "rollout_prompts_per_pass_per_device",
+            "rollout_prompt_batch_size_per_device",
+            "rollout_per_device_batch_size",
+        ],
+    )
+
+    rollout_prompts_per_pass_per_process = _get_int_from_aliases(
+        cfg,
+        label="rollout.prompts_per_pass_per_process",
+        paths=[
+            "rollout.prompts_per_pass_per_process",
+            # Legacy names:
+            "rollout.prompt_batch_size_per_process",
+            "rollout.prompt_batch_size",
+        ],
+        keys=[
+            "rollout_prompts_per_pass_per_process",
             "rollout_prompt_batch_size_per_process",
             "rollout_prompt_batch_size",
             "prompt_batch_size",
@@ -213,15 +256,7 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
         ],
     )
 
-    # Global sequences per training step (across all processes).
-    rollout_global_sequence_batch_size = _get_int_from_aliases(
-        cfg,
-        label="rollout.global_sequence_batch_size",
-        paths=["rollout.global_sequence_batch_size", "rollout.batch_size"],
-        keys=["rollout_global_sequence_batch_size", "rollout_batch_size"],
-    )
-
-    # Global prompts per training step (across all processes).
+    # Legacy global prompts per training step (across all processes).
     rollout_global_prompt_batch_size = _get_int_from_aliases(
         cfg,
         label="rollout.global_prompt_batch_size",
@@ -229,25 +264,17 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
         keys=["rollout_global_prompt_batch_size", "rollout_global_batch_size"],
     )
 
-    if rollout_global_sequence_batch_size is not None and rollout_global_prompt_batch_size is not None:
-        expected = int(rollout_global_prompt_batch_size) * int(rollout_num_pre_q)
-        if int(rollout_global_sequence_batch_size) != expected:
+    if rollout_batch_size is not None and rollout_global_prompt_batch_size is not None:
+        expected = int(rollout_global_prompt_batch_size) * int(rollout_n)
+        if int(rollout_batch_size) != expected:
             raise ValueError(
-                "rollout.global_sequence_batch_size (global sequences/step) must match "
-                "rollout.global_prompt_batch_size * rollout.num_pre_q, got "
-                f"{int(rollout_global_sequence_batch_size)} vs {int(rollout_global_prompt_batch_size)}*{int(rollout_num_pre_q)} ({expected})."
+                "rollout.batch_size (global sequences/step) must match "
+                "rollout.global_prompt_batch_size * rollout.n, got "
+                f"{int(rollout_batch_size)} vs {int(rollout_global_prompt_batch_size)}*{int(rollout_n)} ({expected})."
             )
 
-    if rollout_global_sequence_batch_size is None and rollout_global_prompt_batch_size is not None:
-        rollout_global_sequence_batch_size = int(rollout_global_prompt_batch_size) * int(rollout_num_pre_q)
-
-    # If sequences are provided, also derive prompts for clearer printing/debugging.
-    if (
-        rollout_global_prompt_batch_size is None
-        and rollout_global_sequence_batch_size is not None
-        and int(rollout_global_sequence_batch_size) % int(rollout_num_pre_q) == 0
-    ):
-        rollout_global_prompt_batch_size = int(rollout_global_sequence_batch_size) // int(rollout_num_pre_q)
+    if rollout_batch_size is None and rollout_global_prompt_batch_size is not None:
+        rollout_batch_size = int(rollout_global_prompt_batch_size) * int(rollout_n)
 
     global_length = _get_by_path(cfg, "rollout.global_length")
     if global_length is None:
@@ -331,11 +358,12 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
         steps=steps,
         rollout=GRPORolloutConfig(
             backend=rollout_backend,
-            global_sequence_batch_size=rollout_global_sequence_batch_size,
-            global_prompt_batch_size=rollout_global_prompt_batch_size,
-            prompt_batch_size_per_process=rollout_prompt_batch_size_per_process,
-            prompt_batch_size_per_device=rollout_prompt_batch_size_per_device,
-            num_pre_q=rollout_num_pre_q,
+            batch_size=rollout_batch_size,
+            batch_size_per_process=rollout_batch_size_per_process,
+            batch_size_per_device=rollout_batch_size_per_device,
+            prompts_per_pass_per_process=rollout_prompts_per_pass_per_process,
+            prompts_per_pass_per_device=rollout_prompts_per_pass_per_device,
+            n=rollout_n,
             global_length=global_length,
             max_length_sample=max_length_sample,
         ),

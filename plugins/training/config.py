@@ -21,25 +21,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # - "naive": in-process sampler (current default)
         # - Future: other engines (e.g. vllm)
         "backend": "naive",
-        # Optional: total sequences per training step (global, across all processes).
-        # If set, runner will do multiple rollout passes and may pad up to the next
-        # full pass to keep shapes equal across hosts/devices.
+        # Optional: batch sizes (sequences, i.e. (prompt, completion) samples).
         #
-        # A "sequence" here means one (prompt, completion) sample.
-        "global_sequence_batch_size": None,
-        # Optional: total prompts per training step (global, across all processes).
-        # If set, runner derives `batch_size = global_prompt_batch_size * num_pre_q`.
-        #
-        # Prefer this if you think in "prompt count" for GRPO.
-        "global_prompt_batch_size": None,
-        # Optional: prompts per process per rollout pass (forward-only).
-        # If unset, runner derives a value from global targets and `process_count`.
-        "prompt_batch_size_per_process": None,
-        # Optional: prompts per device per rollout pass (forward-only).
-        # Runner uses this to derive `prompt_batch_size_per_process`.
-        "prompt_batch_size_per_device": None,
+        # Only ONE of these needs to be set; others are derived at runtime:
+        # - batch_size: global sequences per training step (across all processes)
+        # - batch_size_per_process: sequences per step per process
+        # - batch_size_per_device: sequences per step per device
+        "batch_size": None,
+        "batch_size_per_process": None,
+        "batch_size_per_device": None,
+        # Optional: prompts per rollout pass (KV-cache footprint control).
+        # If unset, runner derives a value from batch targets and `process_count`.
+        "prompts_per_pass_per_process": None,
+        "prompts_per_pass_per_device": None,
         # Number of samples per prompt (GRPO group size, a.k.a. K).
-        "num_pre_q": 8,
+        "n": 8,
         "global_length": 512,
         "max_length_sample": 64,
     },

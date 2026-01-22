@@ -1,5 +1,6 @@
 import argparse
 import gc
+import hashlib
 import json
 import os
 import sys
@@ -27,6 +28,10 @@ def _best_effort_extract_text(result: object) -> str | None:
                 if isinstance(text, str):
                     return text
     return None
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
 
 
 def _get_nnx_state_leaf(params_state: object, path: str):
@@ -185,6 +190,23 @@ def _truncate_text_middle(text: str, *, max_chars: int) -> tuple[str, bool]:
     return truncated, True
 
 
+def _print_text_block(*, title: str, text: str | None, max_chars: int) -> None:
+    print(f"\n===== {title} =====", flush=True)
+    if text is None:
+        print("<None>", flush=True)
+        print(f"===== END {title} =====\n", flush=True)
+        return
+
+    truncated, was_truncated = _truncate_text_middle(text, max_chars=int(max_chars))
+    print(truncated, flush=True)
+    if was_truncated:
+        print(
+            f"\n...[TRUNCATED: total_chars={len(text)} max_chars={int(max_chars)}]...\n",
+            flush=True,
+        )
+    print(f"===== END {title} =====\n", flush=True)
+
+
 def _wandb_log_text(
     *,
     wandb,
@@ -219,6 +241,97 @@ def _wandb_log_text(
         wandb.log(payload, step=int(step))
     except Exception:
         return
+
+
+def _wandb_log_text_table(
+    *,
+    wandb,
+    step: int,
+    key: str,
+    rows: list[tuple[str, str | None]],
+    max_chars: int = 20000,
+) -> None:
+    if wandb is None:
+        return
+
+    table_cls = getattr(wandb, "Table", None)
+    if table_cls is None:
+        return
+
+    columns = ["kind", "sha256", "chars", "truncated", "text"]
+    data: list[list[object]] = []
+    for kind, text in rows:
+        if text is None:
+            data.append([str(kind), "", 0, 0, ""])
+            continue
+        truncated, was_truncated = _truncate_text_middle(text, max_chars=int(max_chars))
+        data.append(
+            [
+                str(kind),
+                _sha256_text(text),
+                int(len(text)),
+                int(was_truncated),
+                truncated,
+            ]
+        )
+
+    try:
+        table = table_cls(data=data, columns=columns)
+        wandb.log({str(key): table}, step=int(step))
+    except Exception:
+        return
+
+
+def _wandb_save_text_files(
+    *,
+    wandb,
+    workdir: Path,
+    prompt: str,
+    prompt_sha256: str,
+    out_text: str | None,
+    out_text_sha256: str | None,
+    out_text2: str | None,
+    out_text2_sha256: str | None,
+) -> None:
+    if wandb is None:
+        return
+    run = getattr(wandb, "run", None)
+    if run is None:
+        return
+
+    run_id = str(getattr(run, "id", "") or "unknown")
+    sample_dir = Path(workdir) / "wandb_samples" / run_id
+    try:
+        sample_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return
+
+    def _safe_write(name: str, text: str | None) -> Path | None:
+        path = sample_dir / name
+        try:
+            path.write_text(text if text is not None else "<None>", encoding="utf-8")
+            return path
+        except Exception:
+            return None
+
+    paths: list[Path] = []
+    paths.append(_safe_write(f"prompt_sha256_{prompt_sha256}.txt", prompt))
+    if out_text_sha256 is not None:
+        paths.append(_safe_write(f"output_1_sha256_{out_text_sha256}.txt", out_text))
+    else:
+        paths.append(_safe_write("output_1.txt", out_text))
+    if out_text2_sha256 is not None:
+        paths.append(_safe_write(f"output_2_sha256_{out_text2_sha256}.txt", out_text2))
+    else:
+        paths.append(_safe_write("output_2.txt", out_text2))
+
+    for p in paths:
+        if p is None:
+            continue
+        try:
+            wandb.save(str(p), base_path=str(workdir))
+        except Exception:
+            continue
 
 
 def _wandb_summary_set(*, wandb, key: str, value: object) -> None:
@@ -281,6 +394,28 @@ def main() -> None:
         help="Sampling temperature (0.0 is greedy).",
     )
     parser.add_argument(
+        "--check-same-output",
+        action="store_true",
+        help="After KV rebuild: compare output texts between the 1st and 2nd generate() and log hashes.",
+    )
+    parser.add_argument(
+        "--assert-same-output",
+        action="store_true",
+        help="Same as --check-same-output, but exit non-zero if texts differ.",
+    )
+    parser.add_argument(
+        "--print-text-max-chars",
+        type=int,
+        default=20000,
+        help="Max chars to print for prompt/outputs (<=0 disables printing).",
+    )
+    parser.add_argument(
+        "--wandb-text-max-chars",
+        type=int,
+        default=20000,
+        help="Max chars to store per text field in W&B media/table.",
+    )
+    parser.add_argument(
         "--keep-param-dict",
         action="store_true",
         help=(
@@ -338,6 +473,8 @@ def main() -> None:
         help="W&B entity（可选；默认使用当前账号）。",
     )
     args = parser.parse_args()
+    if args.assert_same_output:
+        args.check_same_output = True
 
     prompt = str(args.prompt)
     prompt_file = str(args.prompt_file).strip()
@@ -765,6 +902,8 @@ def main() -> None:
         }
         result = engine.generate(prompt=prompt, sampling_params=sampling_params)
         out_text = _best_effort_extract_text(result)
+        prompt_sha256 = _sha256_text(prompt)
+        out_text_sha256 = _sha256_text(out_text) if out_text is not None else None
         mem = _collect_memory_snapshot()
         elapsed_s = time.time() - t0
         print(
@@ -772,8 +911,10 @@ def main() -> None:
                 {
                     "phase": "generate_result",
                     "prompt": prompt,
+                    "prompt_sha256": prompt_sha256,
                     "sampling_params": sampling_params,
                     "text": out_text,
+                    "text_sha256": out_text_sha256,
                     "raw": result,
                     "elapsed_s": elapsed_s,
                     "memory": mem,
@@ -783,6 +924,17 @@ def main() -> None:
             ),
             flush=True,
         )
+        if int(args.print_text_max_chars) > 0:
+            _print_text_block(
+                title=f"SAMPLE PROMPT sha256={prompt_sha256} chars={len(prompt)}",
+                text=prompt,
+                max_chars=int(args.print_text_max_chars),
+            )
+            _print_text_block(
+                title=f"SAMPLE OUTPUT #1 sha256={out_text_sha256} chars={len(out_text) if out_text is not None else 0}",
+                text=out_text,
+                max_chars=int(args.print_text_max_chars),
+            )
         _wandb_log_phase(
             wandb=wandb,
             step=wandb_step,
@@ -790,10 +942,39 @@ def main() -> None:
             elapsed_s=elapsed_s,
             mem=mem,
         )
-        _wandb_log_text(wandb=wandb, step=wandb_step, key="sample/prompt", text=prompt)
-        _wandb_log_text(wandb=wandb, step=wandb_step, key="sample/output_text", text=out_text)
+        _wandb_log_text(
+            wandb=wandb,
+            step=wandb_step,
+            key="sample/prompt",
+            text=prompt,
+            max_chars=int(args.wandb_text_max_chars),
+        )
+        _wandb_log_text(
+            wandb=wandb,
+            step=wandb_step,
+            key="sample/output_text",
+            text=out_text,
+            max_chars=int(args.wandb_text_max_chars),
+        )
+        _wandb_log_text(
+            wandb=wandb,
+            step=wandb_step,
+            key="sample_prompt",
+            text=prompt,
+            max_chars=int(args.wandb_text_max_chars),
+        )
+        _wandb_log_text(
+            wandb=wandb,
+            step=wandb_step,
+            key="sample_output_text_1",
+            text=out_text,
+            max_chars=int(args.wandb_text_max_chars),
+        )
+        _wandb_summary_set(wandb=wandb, key="sample/prompt_sha256", value=prompt_sha256)
+        if out_text_sha256 is not None:
+            _wandb_summary_set(wandb=wandb, key="sample/output_text_sha256", value=out_text_sha256)
         if out_text is not None:
-            summary_text, _ = _truncate_text_middle(out_text, max_chars=20000)
+            summary_text, _ = _truncate_text_middle(out_text, max_chars=int(args.wandb_text_max_chars))
             _wandb_summary_set(wandb=wandb, key="sample/output_text", value=summary_text)
             _wandb_summary_set(wandb=wandb, key="sample/output_text_chars", value=int(len(out_text)))
         wandb_step += 1
@@ -983,8 +1164,14 @@ def main() -> None:
                 "temperature": float(args.temperature),
                 "max_new_tokens": int(args.max_new_tokens_after_rebuild),
             }
+            if args.check_same_output:
+                sampling_params2 = dict(sampling_params)
             result2 = engine.generate(prompt=prompt, sampling_params=sampling_params2)
             out_text2 = _best_effort_extract_text(result2)
+            out_text2_sha256 = _sha256_text(out_text2) if out_text2 is not None else None
+            same_output = bool(
+                out_text is not None and out_text2 is not None and out_text == out_text2
+            )
             mem = _collect_memory_snapshot()
             elapsed_s = time.time() - t0
             print(
@@ -992,8 +1179,12 @@ def main() -> None:
                     {
                         "phase": "generate_result_after_kv_rebuild",
                         "prompt": prompt,
+                        "prompt_sha256": prompt_sha256,
                         "sampling_params": sampling_params2,
+                        "text_sha256_before": out_text_sha256,
                         "text": out_text2,
+                        "text_sha256": out_text2_sha256,
+                        "same_output": int(same_output),
                         "raw": result2,
                         "elapsed_s": elapsed_s,
                         "memory": mem,
@@ -1003,16 +1194,59 @@ def main() -> None:
                 ),
                 flush=True,
             )
+            print(
+                f"[determinism] same_output={int(same_output)} "
+                f"output1_sha256={out_text_sha256} output2_sha256={out_text2_sha256}",
+                flush=True,
+            )
+            if int(args.print_text_max_chars) > 0:
+                _print_text_block(
+                    title=f"SAMPLE OUTPUT #2 sha256={out_text2_sha256} chars={len(out_text2) if out_text2 is not None else 0}",
+                    text=out_text2,
+                    max_chars=int(args.print_text_max_chars),
+                )
             _wandb_log_phase(
                 wandb=wandb,
                 step=wandb_step,
                 phase="generate_result_after_kv_rebuild",
                 elapsed_s=elapsed_s,
                 mem=mem,
+                extra={
+                    "determinism/same_output": int(same_output),
+                },
             )
-            _wandb_log_text(wandb=wandb, step=wandb_step, key="sample/output_text_after_rebuild", text=out_text2)
+            _wandb_log_text(
+                wandb=wandb,
+                step=wandb_step,
+                key="sample/output_text_after_rebuild",
+                text=out_text2,
+                max_chars=int(args.wandb_text_max_chars),
+            )
+            _wandb_log_text(
+                wandb=wandb,
+                step=wandb_step,
+                key="sample_output_text_2",
+                text=out_text2,
+                max_chars=int(args.wandb_text_max_chars),
+            )
+            _wandb_log_text_table(
+                wandb=wandb,
+                step=wandb_step,
+                key="sample_texts",
+                rows=[
+                    ("prompt", prompt),
+                    ("output_1", out_text),
+                    ("output_2", out_text2),
+                ],
+                max_chars=int(args.wandb_text_max_chars),
+            )
+            _wandb_summary_set(wandb=wandb, key="determinism/same_output", value=int(same_output))
+            if out_text2_sha256 is not None:
+                _wandb_summary_set(
+                    wandb=wandb, key="sample/output_text_after_rebuild_sha256", value=out_text2_sha256
+                )
             if out_text2 is not None:
-                summary_text2, _ = _truncate_text_middle(out_text2, max_chars=20000)
+                summary_text2, _ = _truncate_text_middle(out_text2, max_chars=int(args.wandb_text_max_chars))
                 _wandb_summary_set(
                     wandb=wandb, key="sample/output_text_after_rebuild", value=summary_text2
                 )
@@ -1021,6 +1255,20 @@ def main() -> None:
                     key="sample/output_text_after_rebuild_chars",
                     value=int(len(out_text2)),
                 )
+
+            _wandb_save_text_files(
+                wandb=wandb,
+                workdir=workdir,
+                prompt=prompt,
+                prompt_sha256=prompt_sha256,
+                out_text=out_text,
+                out_text_sha256=out_text_sha256,
+                out_text2=out_text2,
+                out_text2_sha256=out_text2_sha256,
+            )
+
+            if args.assert_same_output and not same_output:
+                raise SystemExit(1)
             wandb_step += 1
 
             # Cleanup the extra param_dict to return to 1-param steady state.

@@ -191,10 +191,16 @@ def rebuild_engine_kv_cache(*, engine) -> dict[str, Any]:
     )
     fused_bytes_total = fused_bytes_per_layer * int(getattr(token_to_kv_pool, "layer_num"))
 
-    make_zero = jax.jit(
-        lambda: jnp.zeros(shape=fused_buffer_shape, dtype=dtype),
-        out_shardings=kv_sharding,
-    )
+    make_zero = getattr(token_to_kv_pool, "_kv_cache_make_zero", None)
+    make_zero_spec = getattr(token_to_kv_pool, "_kv_cache_make_zero_spec", None)
+    spec = (tuple(int(x) for x in fused_buffer_shape), str(jnp.dtype(dtype)))
+    if make_zero is None or make_zero_spec != spec:
+        make_zero = jax.jit(
+            lambda: jnp.zeros(shape=fused_buffer_shape, dtype=dtype),
+            out_shardings=kv_sharding,
+        )
+        setattr(token_to_kv_pool, "_kv_cache_make_zero", make_zero)
+        setattr(token_to_kv_pool, "_kv_cache_make_zero_spec", spec)
 
     layer_num = int(getattr(token_to_kv_pool, "layer_num"))
     with mesh:

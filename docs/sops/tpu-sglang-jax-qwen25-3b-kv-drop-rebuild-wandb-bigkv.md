@@ -16,10 +16,10 @@
 - SSH hostkey (plink): `SHA256:Xy1NoS+m4LpYQNWiLlkc3Co5iIhoPzAFC39CNLmSN3s`
 - JAX: `0.8.1` (backend `tpu`, `jax.device_count()==4`)
 - sglang-jax commit: `bd09a87`
-- Repo branch/commit (W&B run): `mllm-jax-sglang@e85c934`
+- Repo branch/commit (W&B run): `mllm-jax-sglang@ebaf414`
 - Repo bugfix note: `mllm-jax-sglang@78a7e76` fixes `kv_cache_dropped.drop_info.fused_bytes_total` (was 0 when `dtype` is a class).
-- Log: `/root/MLLM-JAX/workdir/sglang_jax_qwen25_3b_kv_big_wandb.log`
-- W&B run: `https://wandb.ai/johntitordemon2036/sglang-jax-qwen25-3b-kv-drop-rebuild-bigkv/runs/85wt8fck`
+- Log: `/root/MLLM-JAX/workdir/sglang_jax_qwen25_3b_kv_big_wandb_det0_same.log`
+- W&B run: `https://wandb.ai/johntitordemon2036/sglang-jax-qwen25-3b-kv-drop-rebuild-bigkv/runs/kja6s32i`
 
 ## Steps (commands actually used)
 
@@ -103,20 +103,19 @@ set +a
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
-rm -f /tmp/libtpu_lockfile || true
 
-LOG=/root/MLLM-JAX/workdir/sglang_jax_qwen25_3b_kv_big_wandb.log
+LOG=/root/MLLM-JAX/workdir/sglang_jax_qwen25_3b_kv_big_wandb_det0_same.log
 timeout 7200 python -u tests/run_sglang_jax_qwen25_3b_mllm_param_swap.py \
   --wandb \
   --wandb-project sglang-jax-qwen25-3b-kv-drop-rebuild-bigkv \
-  --wandb-name qwen25_3b_kv_big_131072 \
+  --wandb-name qwen25_3b_kv_big_131072_det0_same \
   --prompt-file /root/MLLM-JAX/workdir/prompts/complex_code_prompt_4096.txt \
   --max-total-tokens 131072 \
   --max-new-tokens 4096 \
-  --max-new-tokens-after-rebuild 64 \
   --temperature 0.0 \
   --kv-drop-rebuild \
   --verify-param-sharing \
+  --assert-same-output \
   2>&1 | tee "$LOG"
 echo log_path=$LOG
 ```
@@ -125,7 +124,7 @@ echo log_path=$LOG
 
 - Log contains `wandb_init` JSON with a non-null `url`, and W&B UI shows:
   - Per-phase memory metrics (`mem/jax/*`, `mem/process/*`).
-  - Logged text media (`sample/output_text` etc).
+  - Logged text media / table (`sample_texts`, `sample_output_text_*`) and Files (`workdir/wandb_samples/<run_id>/...`).
 - Log contains phase JSON for:
   - `engine_ready_dummy`, `weights_swapped_from_mllm`, `generate_result`
   - `flush_cache_before_kv_drop`, `kv_cache_dropped`
@@ -143,8 +142,11 @@ echo log_path=$LOG
   - `kv_cache_dropped`: `6580944896` bytes (~6.13 GiB)
     - delta: `9663750144` bytes (~9.00 GiB) == KV `fused_bytes_total`
   - `sglang_param_dict2_ready` (two param sets, KV dropped): `12829917184` bytes (~11.95 GiB)
-  - `kv_cache_rebuilt` (two param sets + KV): `22493667328` bytes (~20.95 GiB)
-  - `after_drop_param_dict2`: `16244695040` bytes (~15.13 GiB)
+  - `kv_cache_rebuilt` (two param sets + KV): `22493880320` bytes (~20.95 GiB)
+  - `after_drop_param_dict2`: `16244908032` bytes (~15.13 GiB)
+- Determinism (temperature=0, same sampling params):
+  - `determinism/same_output=1`
+  - `output_1_sha256 == output_2_sha256 == 9e9f6b55176c580c914189b3e40c6f80c58a5d2fa3caf41cab0b4b2cdb36b714`
 
 ## References
 

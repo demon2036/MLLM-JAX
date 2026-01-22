@@ -259,9 +259,9 @@ class SglangJaxRolloutBackend:
     _engine_log_level: str = field(default_factory=lambda: str(os.environ.get("SGLANG_ROLLOUT_LOG_LEVEL", "error")))
     _download_dir: str = field(default_factory=lambda: str(os.environ.get("SGLANG_ROLLOUT_DOWNLOAD_DIR", "")))
 
-    _max_total_tokens: int = field(default_factory=lambda: _env_int("SGLANG_ROLLOUT_MAX_TOTAL_TOKENS", 131072))
+    _max_total_tokens: int = field(default_factory=lambda: _env_int("SGLANG_ROLLOUT_MAX_TOTAL_TOKENS", 262144))
     _max_prefill_tokens: int = field(default_factory=lambda: _env_int("SGLANG_ROLLOUT_MAX_PREFILL_TOKENS", 1024))
-    _max_running_requests: int = field(default_factory=lambda: _env_int("SGLANG_ROLLOUT_MAX_RUNNING_REQUESTS", 64))
+    _max_running_requests: int = field(default_factory=lambda: _env_int("SGLANG_ROLLOUT_MAX_RUNNING_REQUESTS", 256))
     _mem_fraction_static: float = field(default_factory=lambda: _env_float("SGLANG_ROLLOUT_MEM_FRACTION_STATIC", 0.80))
 
     _drop_kv_on_release: bool = field(default_factory=lambda: _env_flag("SGLANG_ROLLOUT_DROP_KV_ON_RELEASE", True))
@@ -422,15 +422,30 @@ class SglangJaxRolloutBackend:
         if len(results) != len(chat_prompts):
             raise RuntimeError(f"Expected {len(chat_prompts)} outputs, got {len(results)}")
 
-        answers: list[str] = []
         output_ids_per_sample: list[list[int]] = []
         for item in results:
-            text = _best_effort_extract_text(item)
             out_ids = _best_effort_extract_output_ids(item)
             if out_ids is None:
                 raise RuntimeError("sglang output missing output_ids; cannot build training batch.")
-            answers.append(text if text is not None else "")
             output_ids_per_sample.append(out_ids)
+
+        # Decode from the *token ids* we will feed into training to keep reward
+        # scoring consistent with the actual sampled tokens.
+        trimmed_output_ids = [ids[: int(max_length_sample)] for ids in output_ids_per_sample]
+        try:
+            decoded = tokenizer.batch_decode(trimmed_output_ids, skip_special_tokens=True)
+            answers = [str(x) for x in decoded]
+        except Exception:
+            answers = []
+            for item, out_ids in zip(results, trimmed_output_ids):
+                text = _best_effort_extract_text(item)
+                if text is None:
+                    try:
+                        text = tokenizer.decode(out_ids, skip_special_tokens=True)
+                    except Exception:
+                        text = ""
+                answers.append(text)
+        output_ids_per_sample = trimmed_output_ids
 
         # Tokenize prompts for prompt lengths + prompt token ids.
         enc = tokenizer(chat_prompts, return_tensors="np", padding=True, padding_side="right")

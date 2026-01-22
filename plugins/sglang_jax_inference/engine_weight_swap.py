@@ -6,6 +6,7 @@ this repo without forcing local installs of `sglang-jax`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import os
 import glob
 import logging
@@ -128,8 +129,106 @@ def swap_engine_weights_from_hf(
     return snapshot_dir, num_leaves
 
 
+def _get_nnx_state_leaf(params_state, path: str):
+    # Copied (with small edits) from sglang-jax WeightLoader._get_param
+    keys = path.split(".")
+    current_level = params_state
+
+    for key in keys:
+        if key.isdigit():
+            current_level = current_level[int(key)]
+        else:
+            if hasattr(current_level, "__contains__") and key in current_level:
+                current_level = current_level[key]
+            elif hasattr(current_level, key):
+                current_level = getattr(current_level, key)
+            else:
+                raise ValueError(f"{path} is not a valid param path")
+
+    return current_level
+
+
+def swap_engine_weights_from_param_dict(
+    *,
+    engine,
+    param_dict: Mapping[str, "jax.Array"],
+    strict: bool = True,
+) -> int:
+    """Swap Engine weights from an in-memory param dict (target_path -> jax.Array).
+
+    This is the core primitive used for "weight hot swap" experiments:
+    - Build Engine with `load_format=dummy` (so it compiles with stable shapes).
+    - Inject real weights by assigning nnx Params, then refresh `model_state_leaves`.
+
+    Args:
+        engine: sglang-jax Engine (must be in-process; `enable_single_process=True`).
+        param_dict: Mapping from nnx param path (e.g. "model.layers.0.self_attn.q_proj.weight")
+            to a sharded `jax.Array` with matching shape/dtype.
+        strict: If True, raise on missing/invalid paths. If False, skip unknown paths.
+
+    Returns:
+        num_leaves: length of `model_runner.model_state_leaves` after refresh.
+    """
+
+    import jax
+    from flax import nnx
+
+    model_runner = _get_model_runner_from_engine(engine)
+    model_config = model_runner.model_config
+    old_len = None
+    if hasattr(model_runner, "model_state_leaves"):
+        try:
+            old_len = len(model_runner.model_state_leaves)
+        except Exception:
+            old_len = None
+
+    # If the Engine was built with `load_format=dummy`, clear the dummy marker.
+    if hasattr(model_config, "_dummy_mode"):
+        delattr(model_config, "_dummy_mode")
+
+    params_state = nnx.state(model_runner.model)
+
+    with jax.set_mesh(model_runner.mesh):
+        for target_path, value in param_dict.items():
+            try:
+                model_param = _get_nnx_state_leaf(params_state, str(target_path))
+            except Exception:
+                if strict:
+                    raise
+                logger.warning("Skipping unknown param path: %s", target_path)
+                continue
+
+            if not hasattr(model_param, "value"):
+                if strict:
+                    raise TypeError(f"Target path is not an nnx Param: {target_path}")
+                logger.warning("Skipping non-Param target path: %s", target_path)
+                continue
+
+            # Keep dtype consistent with the compiled model state.
+            try:
+                target_dtype = getattr(model_param.value, "dtype", None)
+                if target_dtype is not None and getattr(value, "dtype", None) != target_dtype:
+                    value = value.astype(target_dtype)
+            except Exception:
+                pass
+
+            model_param.value = value
+
+        model_state = nnx.split(model_runner.model)[1]
+        model_runner.model_state_leaves, _ = jax.tree_util.tree_flatten(model_state)
+
+    new_len = len(model_runner.model_state_leaves)
+    if old_len is not None and new_len != old_len:
+        raise RuntimeError(
+            f"Model state structure changed after swap (old_len={old_len}, new_len={new_len})."
+        )
+    logger.info("Param-dict swap complete (num_leaves=%s).", new_len)
+    return new_len
+
+
 __all__ = [
     "download_hf_snapshot",
     "swap_engine_weights_from_hf",
     "swap_engine_weights_from_snapshot_dir",
+    "swap_engine_weights_from_param_dict",
 ]

@@ -10,16 +10,18 @@ steps: 20
 
 rollout:
   backend: naive
-  per_device_batch_size: null
-  batch_size: 32
-  prompt_batch_size: null
+  prompt_batch_size_per_device: null
+  global_sequence_batch_size: 32
+  global_prompt_batch_size: 32
+  prompt_batch_size_per_process: null
   num_pre_q: 1
   global_length: 512
   max_length_sample: 1024
 
 train:
-  micro_batch_size: 4
-  per_device_micro_batch_size: null
+  global_micro_batch_size: null
+  micro_batch_size_per_process: 4
+  micro_batch_size_per_device: null
   ppo_epochs: 1
   beta: 0.0
 
@@ -31,6 +33,6 @@ wandb_name: null
 reward_weights: [1.0, 0.5, 0.5]
 
 eval_every_steps: 0
-eval_batches: 1
+eval_batches_per_process: 1
 eval_split: test
 

@@ -26,30 +26,30 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # full pass to keep shapes equal across hosts/devices.
         #
         # A "sequence" here means one (prompt, completion) sample.
-        "batch_size": None,
+        "global_sequence_batch_size": None,
         # Optional: total prompts per training step (global, across all processes).
         # If set, runner derives `batch_size = global_prompt_batch_size * num_pre_q`.
         #
         # Prefer this if you think in "prompt count" for GRPO.
         "global_prompt_batch_size": None,
         # Optional: prompts per process per rollout pass (forward-only).
-        # If unset, runner derives a value from `batch_size`, `num_pre_q`, and `process_count`.
-        "prompt_batch_size": None,
+        # If unset, runner derives a value from global targets and `process_count`.
+        "prompt_batch_size_per_process": None,
         # Optional: prompts per device per rollout pass (forward-only).
-        # Runner uses this to derive `prompt_batch_size`.
-        "per_device_batch_size": None,
+        # Runner uses this to derive `prompt_batch_size_per_process`.
+        "prompt_batch_size_per_device": None,
         # Number of samples per prompt (GRPO group size, a.k.a. K).
         "num_pre_q": 8,
         "global_length": 512,
         "max_length_sample": 64,
     },
     "train": {
-        # If set, split the rollout batch into smaller micro-batches for the update step.
-        # This lets rollout be larger than the per-update memory limit.
-        "micro_batch_size": None,
+        # Optional: global sequences per micro-step (across all processes).
+        "global_micro_batch_size": None,
+        # Optional: sequences per process per micro-step (backward).
+        "micro_batch_size_per_process": None,
         # Optional: sequences per device per micro-step (backward).
-        # Runner uses this to derive `micro_batch_size` and `grad_accum_steps`.
-        "per_device_micro_batch_size": None,
+        "micro_batch_size_per_device": None,
         "ppo_epochs": 1,
         "beta": 0.0,
     },
@@ -63,7 +63,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Eval (optional)
     # Run a lightweight eval rollout+reward every N steps (0 disables).
     "eval_every_steps": 0,
-    "eval_batches": 1,
+    "eval_batches_per_process": 1,
     "eval_split": "test",
 }
 

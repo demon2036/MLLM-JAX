@@ -2,14 +2,15 @@
 #
 # In this repo:
 # - `rollout.global_prompt_batch_size` is prompts per training step (global, across all processes)
-# - `rollout.batch_size` is sequences per training step (global, across all processes)
-# - `rollout.prompt_batch_size` is prompts per rollout pass (per process)
+# - `rollout.global_sequence_batch_size` is sequences per training step (global, across all processes)
+# - `rollout.prompt_batch_size_per_process` is prompts per rollout pass (per process)
 # - `rollout.num_pre_q` is samples per prompt (GRPO group size, K)
-# - `local_batch` (sequences per step, per process) = rollout.prompt_batch_size * rollout.num_pre_q * rollout_passes
+# - `local_batch` (sequences per step, per process) =
+#     rollout.prompt_batch_size_per_process * rollout.num_pre_q * rollout_passes
 #
 # This config sets:
 # - rollout.global_prompt_batch_size=128, rollout.num_pre_q=8 -> global sequences/step = 1024
-# - train.micro_batch_size=32 -> runner infers grad_accum_steps at runtime
+# - train.micro_batch_size_per_device=4 -> runner infers grad_accum_steps at runtime
 #
 # Intended use: v6e-16 multi-host training (100 steps) with W&B logging.
 
@@ -19,19 +20,20 @@ steps: 100
 
 rollout:
   backend: naive
-  per_device_batch_size: null
-  batch_size: null
+  prompt_batch_size_per_device: null
+  global_sequence_batch_size: null
   global_prompt_batch_size: 128
   # Prompts per process per rollout pass. Keep this small on v6e-16 to limit
   # per-pass KV-cache memory (runner will increase rollout passes accordingly).
-  prompt_batch_size: 8
+  prompt_batch_size_per_process: 8
   num_pre_q: 8
   global_length: 512
   max_length_sample: 1024
 
 train:
-  micro_batch_size: 32
-  per_device_micro_batch_size: null
+  global_micro_batch_size: null
+  micro_batch_size_per_process: null
+  micro_batch_size_per_device: 4
   ppo_epochs: 1
   beta: 0.0
 
@@ -43,5 +45,5 @@ wandb_name: null
 reward_weights: [1.0, 0.5, 0.5]
 
 eval_every_steps: 10
-eval_batches: 1
+eval_batches_per_process: 1
 eval_split: test

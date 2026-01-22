@@ -5,9 +5,10 @@ from typing import Any
 from plugins.training.api import RolloutSampler
 from plugins.training.rollout_backends.base import RolloutBackend
 from plugins.training.rollout_backends.naive_sampler import NaiveSamplerRolloutBackend
+from plugins.training.rollout_backends.sglang_jax_engine import SglangJaxRolloutBackend
 
 
-SUPPORTED_ROLLOUT_BACKENDS = ("naive",)
+SUPPORTED_ROLLOUT_BACKENDS = ("naive", "sglang")
 
 
 def create_rollout_backend(
@@ -23,4 +24,10 @@ def create_rollout_backend(
         if sampler is None:
             raise ValueError("rollout.backend='naive' requires a sampler.")
         return NaiveSamplerRolloutBackend(sampler=sampler)
+    if key in {"sglang", "sglang-jax", "sglang_jax"}:
+        if sampler is None:
+            raise ValueError("rollout.backend='sglang' requires a sampler.")
+        if model_path is None:
+            raise ValueError("rollout.backend='sglang' requires model_path.")
+        return SglangJaxRolloutBackend(sampler=sampler, model_path=str(model_path))
     raise ValueError(f"Unknown rollout.backend={name!r}. Supported backends: {SUPPORTED_ROLLOUT_BACKENDS}")

@@ -26,6 +26,10 @@ class GRPORolloutConfig:
     num_pre_q: int
     global_length: int
     max_length_sample: int
+    # Optional: global prompts per training step (across all processes).
+    # If set, runner will treat it as a "prompt count" target and derive
+    # `batch_size = global_prompt_batch_size * num_pre_q`.
+    global_prompt_batch_size: int | None = None
     # Optional: prompts per process per rollout pass.
     # If unset, runner derives a value from `batch_size`, `num_pre_q`, and `process_count`.
     prompt_batch_size: int | None = None
@@ -252,7 +256,21 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         raise ValueError("rollout.num_pre_q must be > 0")
 
     global_seq_target = cfg.rollout.batch_size
-    global_prompt_target: int | None
+    global_prompt_target = cfg.rollout.global_prompt_batch_size
+
+    if global_prompt_target is not None:
+        global_prompt_target = int(global_prompt_target)
+        if global_prompt_target <= 0:
+            raise ValueError("rollout.global_prompt_batch_size must be > 0")
+        expected_seq_target = int(global_prompt_target) * int(num_pre_q)
+        if global_seq_target is not None and int(global_seq_target) != expected_seq_target:
+            raise ValueError(
+                "rollout.batch_size (global sequences) must match "
+                "rollout.global_prompt_batch_size * rollout.num_pre_q, got "
+                f"{int(global_seq_target)} vs {int(global_prompt_target)}*{int(num_pre_q)} ({expected_seq_target})."
+            )
+        global_seq_target = expected_seq_target
+
     if global_seq_target is not None:
         global_seq_target = int(global_seq_target)
         if global_seq_target <= 0:
@@ -262,7 +280,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 f"rollout.batch_size={global_seq_target} must be divisible by rollout.num_pre_q={num_pre_q} "
                 "(each prompt has exactly num_pre_q samples)."
             )
-        global_prompt_target = global_seq_target // num_pre_q
+        derived_prompt_target = global_seq_target // num_pre_q
+        if global_prompt_target is None:
+            global_prompt_target = derived_prompt_target
     else:
         global_prompt_target = None
 
@@ -355,6 +375,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         )
 
     resolved_rollout_batch_size = cfg.rollout.batch_size
+    if resolved_rollout_batch_size is None and global_prompt_target is not None:
+        resolved_rollout_batch_size = int(global_prompt_target) * int(num_pre_q)
     if resolved_rollout_batch_size is None:
         resolved_rollout_batch_size = global_batch
 
@@ -365,6 +387,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 **{
                     **cfg.rollout.__dict__,
                     "batch_size": resolved_rollout_batch_size,
+                    "global_prompt_batch_size": global_prompt_target,
                     "prompt_batch_size": prompt_batch_size,
                 }
             ),

@@ -27,6 +27,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         #
         # A "sequence" here means one (prompt, completion) sample.
         "batch_size": None,
+        # Optional: total prompts per training step (global, across all processes).
+        # If set, runner derives `batch_size = global_prompt_batch_size * num_pre_q`.
+        #
+        # Prefer this if you think in "prompt count" for GRPO.
+        "global_prompt_batch_size": None,
         # Optional: prompts per process per rollout pass (forward-only).
         # If unset, runner derives a value from `batch_size`, `num_pre_q`, and `process_count`.
         "prompt_batch_size": None,

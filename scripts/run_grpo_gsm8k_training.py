@@ -82,8 +82,12 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     _maybe_override_from_env(cfg, env="ROLLOUT_BACKEND", key_path="rollout.backend", cast=str)
     # New-style: global sequences per training step (across all processes).
     _maybe_override_from_env(cfg, env="ROLLOUT_BATCH_SIZE", key_path="rollout.batch_size", cast=int)
-    # Legacy: global prompts per training step (across all processes). Still accepted.
-    _maybe_override_from_env(cfg, env="ROLLOUT_GLOBAL_BATCH_SIZE", key_path="rollout.global_batch_size", cast=int)
+    # Preferred: global prompts per training step (across all processes).
+    _maybe_override_from_env(
+        cfg, env="ROLLOUT_GLOBAL_PROMPT_BATCH_SIZE", key_path="rollout.global_prompt_batch_size", cast=int
+    )
+    # Backward-compatible alias.
+    _maybe_override_from_env(cfg, env="ROLLOUT_GLOBAL_BATCH_SIZE", key_path="rollout.global_prompt_batch_size", cast=int)
     _maybe_override_from_env(cfg, env="ROLLOUT_PER_DEVICE_BATCH_SIZE", key_path="rollout.per_device_batch_size", cast=int)
     # Legacy: prompts per rollout pass (per process). Still accepted as `BATCH_SIZE`.
     _maybe_override_from_env(cfg, env="BATCH_SIZE", key_path="rollout.prompt_batch_size", cast=int)
@@ -153,15 +157,38 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
         rollout_prompt_batch_size_raw = cfg.get("batch_size")
     rollout_prompt_batch_size = int(rollout_prompt_batch_size_raw) if rollout_prompt_batch_size_raw is not None else None
 
-    # Legacy: global prompts per training step (across all processes).
-    rollout_global_prompt_batch_size_raw = _get_by_path(cfg, "rollout.global_batch_size")
+    # Global prompts per training step (across all processes).
+    rollout_global_prompt_batch_size_raw = _get_by_path(cfg, "rollout.global_prompt_batch_size")
+    if rollout_global_prompt_batch_size_raw is None:
+        rollout_global_prompt_batch_size_raw = cfg.get("rollout_global_prompt_batch_size")
+    # Backward-compatible alias for older configs / SOPs.
+    if rollout_global_prompt_batch_size_raw is None:
+        rollout_global_prompt_batch_size_raw = _get_by_path(cfg, "rollout.global_batch_size")
     if rollout_global_prompt_batch_size_raw is None:
         rollout_global_prompt_batch_size_raw = cfg.get("rollout_global_batch_size")
     rollout_global_prompt_batch_size = (
         int(rollout_global_prompt_batch_size_raw) if rollout_global_prompt_batch_size_raw is not None else None
     )
+
+    if rollout_batch_size is not None and rollout_global_prompt_batch_size is not None:
+        expected = int(rollout_global_prompt_batch_size) * int(rollout_num_pre_q)
+        if int(rollout_batch_size) != expected:
+            raise ValueError(
+                "rollout.batch_size (global sequences/step) must match "
+                "rollout.global_prompt_batch_size * rollout.num_pre_q, got "
+                f"{int(rollout_batch_size)} vs {int(rollout_global_prompt_batch_size)}*{int(rollout_num_pre_q)} ({expected})."
+            )
+
     if rollout_batch_size is None and rollout_global_prompt_batch_size is not None:
         rollout_batch_size = int(rollout_global_prompt_batch_size) * int(rollout_num_pre_q)
+
+    # If sequences are provided, also derive prompts for clearer printing/debugging.
+    if (
+        rollout_global_prompt_batch_size is None
+        and rollout_batch_size is not None
+        and int(rollout_batch_size) % int(rollout_num_pre_q) == 0
+    ):
+        rollout_global_prompt_batch_size = int(rollout_batch_size) // int(rollout_num_pre_q)
 
     global_length = _get_by_path(cfg, "rollout.global_length")
     if global_length is None:
@@ -233,6 +260,7 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
         rollout=GRPORolloutConfig(
             backend=rollout_backend,
             batch_size=rollout_batch_size,
+            global_prompt_batch_size=rollout_global_prompt_batch_size,
             prompt_batch_size=rollout_prompt_batch_size,
             per_device_batch_size=rollout_per_device_batch_size,
             num_pre_q=rollout_num_pre_q,

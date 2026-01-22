@@ -1,16 +1,17 @@
-# GRPO/GSM8K config (Qwen2.5-3B-Instruct): batch_size=128 sequences per training step (global)
+# GRPO/GSM8K config (Qwen2.5-3B-Instruct): global_prompt_batch_size=128 prompts per training step (global)
 #
 # In this repo:
+# - `rollout.global_prompt_batch_size` is prompts per training step (global, across all processes)
 # - `rollout.batch_size` is sequences per training step (global, across all processes)
 # - `rollout.prompt_batch_size` is prompts per rollout pass (per process)
 # - `rollout.num_pre_q` is samples per prompt (GRPO group size, K)
 # - `local_batch` (sequences per step, per process) = rollout.prompt_batch_size * rollout.num_pre_q * rollout_passes
 #
 # This config sets:
-# - rollout.batch_size=128, rollout.num_pre_q=8 -> global_batch=128 sequences
-# - train.micro_batch_size=32 -> runner infers grad_accum_steps=4
+# - rollout.global_prompt_batch_size=128, rollout.num_pre_q=8 -> global sequences/step = 1024
+# - train.micro_batch_size=32 -> runner infers grad_accum_steps at runtime
 #
-# Intended use: v6e-8 single-host training (100 steps) with W&B logging.
+# Intended use: v6e-16 multi-host training (100 steps) with W&B logging.
 
 model_path: Qwen/Qwen2.5-3B-Instruct
 
@@ -19,7 +20,8 @@ steps: 100
 rollout:
   backend: naive
   per_device_batch_size: null
-  batch_size: 128
+  batch_size: null
+  global_prompt_batch_size: 128
   prompt_batch_size: null
   num_pre_q: 8
   global_length: 512

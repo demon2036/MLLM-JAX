@@ -412,7 +412,8 @@ class SglangJaxRolloutBackend:
 
         sampling_params = {
             "temperature": float(self._temperature),
-            "top_k": int(self._top_k),
+            # sglang-jax expects top_k == -1 to disable; many configs use 0.
+            "top_k": -1 if int(self._top_k) == 0 else int(self._top_k),
             "top_p": float(self._top_p),
             "max_new_tokens": int(max_length_sample),
         }

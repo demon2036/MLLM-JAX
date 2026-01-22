@@ -1181,3 +1181,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             wandb.finish()
         except Exception as e:
             print(f"wandb.finish() failed: {e}")
+        try:
+            wandb.teardown()
+        except Exception as e:
+            print(f"wandb.teardown() failed: {e}")

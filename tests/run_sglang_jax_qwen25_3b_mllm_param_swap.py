@@ -170,6 +170,69 @@ def _wandb_log_phase(
         return
 
 
+def _truncate_text_middle(text: str, *, max_chars: int) -> tuple[str, bool]:
+    if max_chars <= 0:
+        return "", True
+    if len(text) <= max_chars:
+        return text, False
+    head_chars = max_chars // 2
+    tail_chars = max_chars - head_chars
+    truncated = (
+        text[:head_chars]
+        + "\n\n...[TRUNCATED]...\n\n"
+        + text[-tail_chars:]
+    )
+    return truncated, True
+
+
+def _wandb_log_text(
+    *,
+    wandb,
+    step: int,
+    key: str,
+    text: str | None,
+    max_chars: int = 20000,
+    as_html: bool = True,
+) -> None:
+    if wandb is None or text is None:
+        return
+
+    truncated, was_truncated = _truncate_text_middle(text, max_chars=max_chars)
+
+    value: object = truncated
+    if as_html:
+        try:
+            html_cls = getattr(wandb, "Html", None)
+            if html_cls is not None:
+                import html as _html
+
+                value = html_cls(f"<pre>{_html.escape(truncated)}</pre>")
+        except Exception:
+            value = truncated
+
+    payload: dict[str, object] = {
+        key: value,
+        f"{key}_chars": int(len(text)),
+        f"{key}_truncated": int(was_truncated),
+    }
+    try:
+        wandb.log(payload, step=int(step))
+    except Exception:
+        return
+
+
+def _wandb_summary_set(*, wandb, key: str, value: object) -> None:
+    if wandb is None:
+        return
+    run = getattr(wandb, "run", None)
+    if run is None:
+        return
+    try:
+        run.summary[str(key)] = value
+    except Exception:
+        return
+
+
 def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo_root))
@@ -182,6 +245,11 @@ def main() -> None:
     parser.add_argument("--model-id", default="Qwen/Qwen2.5-3B-Instruct")
     parser.add_argument("--prompt", default="你是谁")
     parser.add_argument(
+        "--prompt-file",
+        default="",
+        help="Load prompt from a UTF-8 text file (overrides --prompt).",
+    )
+    parser.add_argument(
         "--tp-size",
         type=int,
         default=0,
@@ -193,6 +261,24 @@ def main() -> None:
         type=int,
         default=4096,
         help="Engine KV cache capacity cap (tokens). Larger => larger preallocated KV cache.",
+    )
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=4096,
+        help="Generation cap for the first generate() (tokens).",
+    )
+    parser.add_argument(
+        "--max-new-tokens-after-rebuild",
+        type=int,
+        default=128,
+        help="Generation cap for the post-rebuild generate() (tokens).",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.0,
+        help="Sampling temperature (0.0 is greedy).",
     )
     parser.add_argument(
         "--keep-param-dict",
@@ -253,6 +339,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    prompt = str(args.prompt)
+    prompt_file = str(args.prompt_file).strip()
+    if prompt_file != "":
+        prompt_path = Path(prompt_file)
+        if not prompt_path.is_absolute():
+            prompt_path = repo_root / prompt_path
+        prompt = prompt_path.read_text(encoding="utf-8")
+
     os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
     os.environ.setdefault("HF_HOME", str(hf_cache_dir))
     os.environ.setdefault("HF_HUB_CACHE", str(hf_cache_dir))
@@ -305,17 +399,23 @@ def main() -> None:
                 init_kwargs = {
                     "project": str(args.wandb_project),
                     "name": run_name,
-                        "config": {
-                            "model_id": str(args.model_id),
-                            "tp_size": tp_size,
-                            "dp_size": dp_size,
-                            "dtype": str(args.mllm_param_dtype),
-                            "load_format": "dummy",
-                            "max_total_tokens": int(args.max_total_tokens),
-                            "kv_drop_rebuild": bool(args.kv_drop_rebuild),
-                        },
-                        "dir": str(workdir / "wandb"),
-                    }
+                    "config": {
+                        "model_id": str(args.model_id),
+                        "tp_size": tp_size,
+                        "dp_size": dp_size,
+                        "dtype": str(args.mllm_param_dtype),
+                        "load_format": "dummy",
+                        "max_total_tokens": int(args.max_total_tokens),
+                        "max_new_tokens": int(args.max_new_tokens),
+                        "max_new_tokens_after_rebuild": int(args.max_new_tokens_after_rebuild),
+                        "temperature": float(args.temperature),
+                        "kv_drop_rebuild": bool(args.kv_drop_rebuild),
+                        "kv_drop_clear_jax_caches": bool(args.kv_drop_clear_jax_caches),
+                        "prompt_file": prompt_file,
+                        "prompt_chars": int(len(prompt)),
+                    },
+                    "dir": str(workdir / "wandb"),
+                }
                 entity = str(args.wandb_entity).strip()
                 if entity != "":
                     init_kwargs["entity"] = entity
@@ -353,6 +453,11 @@ def main() -> None:
                     elapsed_s=elapsed_s,
                     mem=mem,
                 )
+                _wandb_summary_set(wandb=wandb, key="wandb/url", value=getattr(wandb.run, "url", None))
+                _wandb_summary_set(wandb=wandb, key="wandb/id", value=getattr(wandb.run, "id", None))
+                _wandb_summary_set(wandb=wandb, key="prompt/chars", value=int(len(prompt)))
+                if prompt_file != "":
+                    _wandb_summary_set(wandb=wandb, key="prompt/file", value=prompt_file)
                 wandb_step += 1
         except Exception as exc:
             print(
@@ -654,17 +759,21 @@ def main() -> None:
         )
         wandb_step += 1
 
-        sampling_params = {"temperature": 0.0, "max_new_tokens": 64}
-        result = engine.generate(prompt=str(args.prompt), sampling_params=sampling_params)
+        sampling_params = {
+            "temperature": float(args.temperature),
+            "max_new_tokens": int(args.max_new_tokens),
+        }
+        result = engine.generate(prompt=prompt, sampling_params=sampling_params)
+        out_text = _best_effort_extract_text(result)
         mem = _collect_memory_snapshot()
         elapsed_s = time.time() - t0
         print(
             json.dumps(
                 {
                     "phase": "generate_result",
-                    "prompt": str(args.prompt),
+                    "prompt": prompt,
                     "sampling_params": sampling_params,
-                    "text": _best_effort_extract_text(result),
+                    "text": out_text,
                     "raw": result,
                     "elapsed_s": elapsed_s,
                     "memory": mem,
@@ -681,6 +790,12 @@ def main() -> None:
             elapsed_s=elapsed_s,
             mem=mem,
         )
+        _wandb_log_text(wandb=wandb, step=wandb_step, key="sample/prompt", text=prompt)
+        _wandb_log_text(wandb=wandb, step=wandb_step, key="sample/output_text", text=out_text)
+        if out_text is not None:
+            summary_text, _ = _truncate_text_middle(out_text, max_chars=20000)
+            _wandb_summary_set(wandb=wandb, key="sample/output_text", value=summary_text)
+            _wandb_summary_set(wandb=wandb, key="sample/output_text_chars", value=int(len(out_text)))
         wandb_step += 1
 
         if args.keep_param_dict:
@@ -767,6 +882,11 @@ def main() -> None:
                 phase="kv_cache_dropped",
                 elapsed_s=elapsed_s,
                 mem=mem,
+                extra={
+                    "kv/fused_bytes_total": int(drop_info.get("fused_bytes_total", 0)),
+                    "kv/fused_bytes_per_layer": int(drop_info.get("fused_bytes_per_layer", 0)),
+                    "kv/deleted_buffers": int(drop_info.get("deleted_buffers", 0)),
+                },
             )
             wandb_step += 1
 
@@ -852,20 +972,28 @@ def main() -> None:
                 phase="kv_cache_rebuilt",
                 elapsed_s=elapsed_s,
                 mem=mem,
+                extra={
+                    "kv/fused_bytes_total": int(rebuild_info.get("fused_bytes_total", 0)),
+                    "kv/fused_bytes_per_layer": int(rebuild_info.get("fused_bytes_per_layer", 0)),
+                },
             )
             wandb_step += 1
 
-            sampling_params2 = {"temperature": 0.0, "max_new_tokens": 16}
-            result2 = engine.generate(prompt=str(args.prompt), sampling_params=sampling_params2)
+            sampling_params2 = {
+                "temperature": float(args.temperature),
+                "max_new_tokens": int(args.max_new_tokens_after_rebuild),
+            }
+            result2 = engine.generate(prompt=prompt, sampling_params=sampling_params2)
+            out_text2 = _best_effort_extract_text(result2)
             mem = _collect_memory_snapshot()
             elapsed_s = time.time() - t0
             print(
                 json.dumps(
                     {
                         "phase": "generate_result_after_kv_rebuild",
-                        "prompt": str(args.prompt),
+                        "prompt": prompt,
                         "sampling_params": sampling_params2,
-                        "text": _best_effort_extract_text(result2),
+                        "text": out_text2,
                         "raw": result2,
                         "elapsed_s": elapsed_s,
                         "memory": mem,
@@ -882,6 +1010,17 @@ def main() -> None:
                 elapsed_s=elapsed_s,
                 mem=mem,
             )
+            _wandb_log_text(wandb=wandb, step=wandb_step, key="sample/output_text_after_rebuild", text=out_text2)
+            if out_text2 is not None:
+                summary_text2, _ = _truncate_text_middle(out_text2, max_chars=20000)
+                _wandb_summary_set(
+                    wandb=wandb, key="sample/output_text_after_rebuild", value=summary_text2
+                )
+                _wandb_summary_set(
+                    wandb=wandb,
+                    key="sample/output_text_after_rebuild_chars",
+                    value=int(len(out_text2)),
+                )
             wandb_step += 1
 
             # Cleanup the extra param_dict to return to 1-param steady state.

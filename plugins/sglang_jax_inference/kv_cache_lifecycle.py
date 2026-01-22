@@ -21,6 +21,13 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _int_prod(values: tuple[int, ...]) -> int:
+    out = 1
+    for v in values:
+        out *= int(v)
+    return int(out)
+
+
 def _get_model_runner_from_engine(engine):
     scheduler_info = getattr(engine, "scheduler_info", None)
     if not isinstance(scheduler_info, dict):
@@ -97,6 +104,16 @@ def drop_engine_kv_cache(
     if not isinstance(kv_buffer, list) or not kv_buffer:
         raise RuntimeError("token_to_kv_pool.kv_buffer is empty; nothing to drop.")
 
+    fused_buffer_shape = (
+        int(getattr(token_to_kv_pool, "size")) + int(getattr(token_to_kv_pool, "page_size")),
+        int(getattr(token_to_kv_pool, "head_num")) * 2,
+        int(getattr(token_to_kv_pool, "head_dim")),
+    )
+    dtype = getattr(token_to_kv_pool, "dtype")
+    itemsize = int(getattr(dtype, "itemsize", 0) or 0)
+    fused_bytes_per_layer = _int_prod(tuple(int(x) for x in fused_buffer_shape)) * itemsize
+    fused_bytes_total = fused_bytes_per_layer * int(len(kv_buffer))
+
     deleted = 0
     missing_delete = 0
     for idx, buf in enumerate(list(kv_buffer)):
@@ -119,6 +136,10 @@ def drop_engine_kv_cache(
     info: dict[str, Any] = {
         "kv_pool_type": type(token_to_kv_pool).__name__,
         "layer_num": int(getattr(token_to_kv_pool, "layer_num")),
+        "fused_buffer_shape": tuple(int(x) for x in fused_buffer_shape),
+        "dtype": str(dtype),
+        "fused_bytes_per_layer": int(fused_bytes_per_layer),
+        "fused_bytes_total": int(fused_bytes_total),
         "deleted_buffers": int(deleted),
         "missing_delete_method": int(missing_delete),
         "clear_jax_caches": bool(clear_jax_caches),
@@ -155,6 +176,10 @@ def rebuild_engine_kv_cache(*, engine) -> dict[str, Any]:
         int(getattr(token_to_kv_pool, "head_dim")),
     )
     dtype = getattr(token_to_kv_pool, "dtype")
+    fused_bytes_per_layer = (
+        _int_prod(tuple(int(x) for x in fused_buffer_shape)) * int(jnp.dtype(dtype).itemsize)
+    )
+    fused_bytes_total = fused_bytes_per_layer * int(getattr(token_to_kv_pool, "layer_num"))
 
     make_zero = jax.jit(
         lambda: jnp.zeros(shape=fused_buffer_shape, dtype=dtype),
@@ -177,7 +202,8 @@ def rebuild_engine_kv_cache(*, engine) -> dict[str, Any]:
         "layer_num": layer_num,
         "fused_buffer_shape": tuple(int(x) for x in fused_buffer_shape),
         "dtype": str(jnp.dtype(dtype)),
+        "fused_bytes_per_layer": int(fused_bytes_per_layer),
+        "fused_bytes_total": int(fused_bytes_total),
     }
     logger.info("Rebuilt KV cache buffers: %s", info)
     return info
-

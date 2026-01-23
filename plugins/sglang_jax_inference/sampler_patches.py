@@ -6,7 +6,6 @@ small monkey-patches at runtime from `plugins/`.
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 
 logger = logging.getLogger(__name__)
@@ -15,22 +14,29 @@ logger = logging.getLogger(__name__)
 def patch_sglang_sampler_penalty_cond_sharding() -> bool:
     """Fix a TPU crash in sglang-jax Sampler when `do_penalties=False`.
 
-    Some sglang-jax versions build `logits` without an explicit sharding annotation,
-    but the `_apply_linear_penalty` branch produces `@tensor`-sharded logits. JAX
-    requires `lax.cond` branches to return identical abstract types (including
-    sharding), otherwise it raises:
+    Root cause (sglang-jax):
+    - `SamplingMetadata.linear_penalty` is always a sharded `jax.Array` with
+      `PartitionSpec(None, "tensor")` (even when it's all zeros).
+    - `SamplingMetadata.do_penalties` can be False, so `Sampler.__call__` uses:
 
-      TypeError: cond branches must have equal output types but they differ.
+        lax.cond(do_penalties, _apply_linear_penalty, lambda: logits)
 
-    We enforce `@tensor` sharding on `logits_output.next_token_logits` before the
-    penalty cond so both branches see a consistently sharded logits input.
+      which makes the `True` branch return `@tensor`-sharded logits (due to the
+      sharded penalty add) but the `False` branch return an *unsharded* logits.
+      JAX requires both `lax.cond` branches to return identical abstract types
+      (including sharding), so this crashes on TPU with explicit sharding.
+
+    Patch strategy:
+    - Replace the penalty `lax.cond` with an unconditional penalty add.
+      When penalties are disabled, `linear_penalty` is the cached all-zero buffer,
+      so semantics are unchanged while sharding becomes consistent.
     """
 
     try:
         import jax
-        from jax.sharding import NamedSharding
-        from jax.sharding import PartitionSpec as P
+        from jax import lax
 
+        from sgl_jax.srt.constrained.bitmask_ops import apply_token_bitmask
         from sgl_jax.srt.layers.sampler import Sampler as SglangSampler
     except Exception as e:  # pragma: no cover
         logger.warning("sglang-jax sampler patch skipped (import failed): %s", e)
@@ -39,20 +45,39 @@ def patch_sglang_sampler_penalty_cond_sharding() -> bool:
     if getattr(SglangSampler, "_mllm_jax_patched_penalty_cond_sharding", False):
         return True
 
-    orig_call = SglangSampler.__call__
-
     def patched_call(self, logits_output, sampling_metadata, use_sort_for_toppk_minp):  # noqa: ANN001
-        try:
-            logits = getattr(logits_output, "next_token_logits", None)
-            mesh = getattr(self, "mesh", None)
-            if logits is not None and mesh is not None:
-                target = NamedSharding(mesh, P(None, "tensor"))
-                logits = jax.lax.with_sharding_constraint(logits, target)
-                logits_output = dataclasses.replace(logits_output, next_token_logits=logits)
-        except Exception:
-            # Best-effort patch: if anything goes wrong, fall back to upstream behavior.
-            pass
-        return orig_call(self, logits_output, sampling_metadata, use_sort_for_toppk_minp)
+        # Unconditionally apply linear penalty (all-zero penalty when disabled).
+        logits = self._apply_linear_penalty((logits_output.next_token_logits, sampling_metadata))
+
+        # Apply grammar-constrained vocab mask.
+        logits = lax.cond(
+            sampling_metadata.apply_vocab_mask,
+            lambda operands: apply_token_bitmask(operands[0], operands[1]),
+            lambda operands: operands[0],
+            (logits, sampling_metadata.vocab_mask),
+        )
+
+        _, rng = jax.random.split(self.rngs.params())
+        operands = (logits, sampling_metadata, rng)
+        regular_fn = lambda op: self._regular_sampling((*op, use_sort_for_toppk_minp))
+        batch_next_token_ids, logprobs = lax.cond(
+            sampling_metadata.is_all_greedy,
+            self._greedy_sampling,
+            regular_fn,
+            operands,
+        )
+
+        logprob_operands = (
+            logits_output,
+            sampling_metadata,
+            batch_next_token_ids,
+            logprobs,
+        )
+        new_logits_output = None
+        if sampling_metadata.return_logprob:
+            new_logits_output = self._process_logprob_results(logprob_operands)
+
+        return batch_next_token_ids, logprobs, new_logits_output
 
     SglangSampler.__call__ = patched_call  # type: ignore[assignment]
     setattr(SglangSampler, "_mllm_jax_patched_penalty_cond_sharding", True)
@@ -61,4 +86,3 @@ def patch_sglang_sampler_penalty_cond_sharding() -> bool:
 
 
 __all__ = ["patch_sglang_sampler_penalty_cond_sharding"]
-

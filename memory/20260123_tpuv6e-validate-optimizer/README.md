@@ -158,3 +158,72 @@ Completion criteria: the TPU VM used for validation is deleted (to stop billing)
 Evidence:
 - Command (exit 0): `gcloud alpha compute tpus tpu-vm delete mllm-jax-v6e-8-260123075313 --project civil-rarity-482610-s5 --zone europe-west4-a --quiet`
 - Output: `Deleted tpu [mllm-jax-v6e-8-260123075313].`
+
+---
+
+# Follow-up: run v6e-8 with W&B online (urgent)
+
+## Step 16 - Extract WANDB env from existing TPU
+Completion criteria: obtain a `WANDB_API_KEY` without printing it, by copying an existing `/root/.env` from an already-provisioned TPU.
+Evidence:
+- Existing TPU (v4-8): `mllm-jax-v4-8-260122100610` (`us-central2-b`)
+- Remote check (exit 0): `/root/.env` exists
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v4-8-260122100610 --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:Xy1NoS+m4LpYQNWiLlkc3Co5iIhoPzAFC39CNLmSN3s --command "set -euo pipefail; if [ -f /root/.env ]; then echo ENV_PRESENT; else echo ENV_MISSING; fi"`
+- Remote check (exit 0): `.env` contains `WANDB_API_KEY` (value not printed)
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v4-8-260122100610 --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:Xy1NoS+m4LpYQNWiLlkc3Co5iIhoPzAFC39CNLmSN3s --command 'set -euo pipefail; set -a; source /root/.env; set +a; if [ -n "${WANDB_API_KEY:-}" ]; then echo WANDB_API_KEY_PRESENT; else echo WANDB_API_KEY_MISSING; fi'`
+- Copied `/root/.env` to a local temp file (exit 0; content not printed):
+  - `gcloud alpha compute tpus tpu-vm scp root@mllm-jax-v4-8-260122100610:/root/.env workdir/tpu_root_env.env --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --quiet --scp-flag=-batch --scp-flag=-hostkey --scp-flag=SHA256:Xy1NoS+m4LpYQNWiLlkc3Co5iIhoPzAFC39CNLmSN3s`
+- Cleanup (exit 0): deleted local temp file after copying to v6e
+  - `Remove-Item -Force workdir/tpu_root_env.env`
+
+## Step 17 - Create v6e-8 TPU VM
+Completion criteria: a new `v6e-8` TPU VM reaches `READY`.
+Evidence:
+- Created: `mllm-jax-v6e-8-260123090716` in `europe-west4-a` (spot), internal IP `10.164.15.195`
+- SSH host key fingerprint used: `SHA256:CPEH49k4vjIrlHWA0i/upPfisxSH0ZnEC7gPDgZp/1M`
+
+## Step 18 - Bootstrap conda environment on v6e-8
+Completion criteria: Miniconda is installed and the `mllm-jax` env exists.
+Evidence (exit 0):
+- Miniconda bootstrap:
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123090716 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:CPEH49k4vjIrlHWA0i/upPfisxSH0ZnEC7gPDgZp/1M --command 'set -euo pipefail; if [ ! -d /root/miniconda3 ]; then curl -fsSL -o /root/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh; bash /root/miniconda.sh -b -p /root/miniconda3; rm -f /root/miniconda.sh; fi; /root/miniconda3/bin/conda --version'`
+- Env create:
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123090716 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:CPEH49k4vjIrlHWA0i/upPfisxSH0ZnEC7gPDgZp/1M --command 'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true; conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true; if ! conda env list | grep -Eq \"^mllm-jax[[:space:]]\"; then conda create -y -n mllm-jax python=3.12; fi; conda activate mllm-jax; python --version; python -m pip install -U pip'`
+
+## Step 19 - Git-sync latest commit on v6e-8
+Completion criteria: repo is cloned and checked out to the desired commit.
+Evidence (exit 0):
+- `git checkout 25c413f` in `/root/MLLM-JAX`
+
+## Step 20 - Upload /root/.env to v6e-8
+Completion criteria: `/root/.env` exists on the v6e VM and contains `WANDB_API_KEY` (without printing it).
+Evidence:
+- SCP (exit 0):
+  - `gcloud alpha compute tpus tpu-vm scp workdir/tpu_root_env.env root@mllm-jax-v6e-8-260123090716:/root/.env --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --quiet --scp-flag=-batch --scp-flag=-hostkey --scp-flag=SHA256:CPEH49k4vjIrlHWA0i/upPfisxSH0ZnEC7gPDgZp/1M`
+- Verify (exit 0; value not printed):
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123090716 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:CPEH49k4vjIrlHWA0i/upPfisxSH0ZnEC7gPDgZp/1M --command 'set -euo pipefail; chmod 600 /root/.env; set -a; source /root/.env; set +a; if [ -n "${WANDB_API_KEY:-}" ]; then echo WANDB_API_KEY_PRESENT; else echo WANDB_API_KEY_MISSING; fi'`
+
+## Step 21 - Install TPU Python requirements on v6e-8
+Completion criteria: TPU deps are installed in the conda env.
+Evidence:
+- Command (exit 0): install `jax[tpu]`, cpu `torch`, and `requirements-tpu.txt`
+- Installed versions (from logs): `jax==0.9.0`, `jaxlib==0.9.0`, `libtpu==0.0.34`
+
+## Step 22 - Launch bs128/steps100 training with W&B online
+Completion criteria: the official nohup launcher starts the training process in background.
+Evidence:
+- Command (exit 0):
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123090716 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:CPEH49k4vjIrlHWA0i/upPfisxSH0ZnEC7gPDgZp/1M --command 'set -euo pipefail; cd /root/MLLM-JAX; set -a; source /root/.env; set +a; export WANDB_MODE=online; export WANDB_PROJECT=mllm-jax-grpo-gsm8k; export ENV_NAME=mllm-jax; bash scripts/tpu_vm_start_grpo_gsm8k_bs128_steps100_nohup.sh'`
+- Output:
+  - `PID=9983`
+  - `LATEST_LOG=logs/nohup_grpo_gsm8k_bs128_steps100_latest.log`
+  - `LATEST_EXIT=logs/nohup_grpo_gsm8k_bs128_steps100_latest.exit`
+
+## Step 23 - Confirm W&B online + job progressing
+Completion criteria: W&B login succeeds and the process is running without traceback.
+Evidence:
+- Process check (exit 0): `ps -p 9983 ...` shows the job is running.
+- W&B log lines (exit 0):
+  - `Loaded credentials ... from WANDB_API_KEY`
+  - Run URL: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/pge8fy3q`
+- `Traceback` grep returned no matches at this point.

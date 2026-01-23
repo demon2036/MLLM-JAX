@@ -4,13 +4,15 @@
 
 - 默认按用户需求“一口气”完成：实现、完整验证（端到端能跑）、更新 SOP。
 - 交付前必须把对应的测试/验证 case 全部跑通（本地能跑的先跑，本地跑不了的在 TPU 上跑）；任何 traceback / 非零退出都视为未完成。
+- 接到用户指派任务后：优先检查/创建 `memory/`；先读 `memory/README.md` 看是否已有同任务记录（有则复用对应 folder 并继续追加；没有则新建 `memory/YYYYMMDD_<slug>/`，并在 `memory/README.md` 登记 folder 名字与用途）。
 - 无论任务大小，若提供 plan/update_plan（或 start plan）函数，每次任务都必须调用；若工具不可用，执行前以清晰优雅的列表列出计划并直接开始执行，不等待用户确认。
-- 尽量不反问用户：先查 `docs/` 里潜在相关经验（优先看 `docs/sops/`），再在仓库内搜索（如 `rg`/`git`），必要时做网络搜索（官方文档/GitHub/PyPI），并把已用链接或命令写入 SOP。
+- 一旦开了 plan：每个 step 完成后，必须在 `memory/<task>/README.md` 追加该 step 的“完成判据 + 证据”（例如：命令+exit code、关键输出摘要、改动文件、通过的测试/验证），便于后续复用。
+- 尽量不反问用户：先查 `memory/` 里潜在相关经验（优先看 `memory/README.md`），再查 `docs/` 里潜在相关经验（优先看 `docs/sops/`），再在仓库内搜索（如 `rg`/`git`；无 `rg` 时用 `git grep`/`Select-String`），必要时做网络搜索（官方文档/GitHub/PyPI），并把已用链接或命令写入 SOP。
 - 仅在搜索后仍无法推进时才提问，并一次问清最少必要信息。
 - 保持无侵入开发：自定义代码一律放在 `plugins/`，不要直接改动 `easydel/` 或其他上游仓库。
 - TPU 上的覆盖/替换通过自写 shell 脚本完成（例如同步到覆盖目录 + `PYTHONPATH`），避免改动原始仓库内容。
 - TPU 开发/运行采用 Git 同步：本地修改代码 → `git commit`/`git push` 到 GitHub → TPU VM 通过 `scripts/ssh_tpu_vm_root.sh`（或 `gcloud ... tpu-vm ssh`）执行 `git clone`/`git pull` 获取代码并运行；不要用 `gcloud ... scp` / `scp` 手动拷贝代码（见 `docs/sops/tpu-vm-repo-sync.md`）。（例外：同步本地 secret 如 `.env`，用 `scripts/sync_env_to_tpu_vm.sh` 分发到 worker=all。）
-- 允许使用 repo 根目录的临时目录 `memo/` 记录调查/调试过程（例如 `memo/<task>.md`）。在上下文 compact 之后，可以重新读取其中的关键记录继续推进。但在**完成任务并准备回复用户之前**，必须删除整个 `memo/` 目录，避免把临时笔记作为交付物留在仓库里。
+- `memory/` 是长期可复用资产，不删除；仍允许使用 repo 根目录的临时目录 `memo/` 记录调查/调试草稿（例如 `memo/<task>.md`），但在**完成任务并准备回复用户之前**必须删除整个 `memo/` 目录，避免把临时笔记作为交付物留在仓库里。
 
 ## Project Structure & Module Organization
 

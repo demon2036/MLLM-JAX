@@ -25,7 +25,7 @@
 - TPU v4-16 GRPO train (100 steps, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-100steps.md`
 - TPU v4-16 GRPO micro-batch smoke run (1 step): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
 - TPU v4-16 OOM sweep (len=2048, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-oom-sweep-len2048.md`
-- jit8 GRPO/GSM8K YAML config: `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
+- jit8 GRPO/GSM8K YAML config (deprecated): `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 - GRPO runner batch size semantics: `docs/sops/grpo-gsm8k-runner-batch-size.md`
 - GRPO runner metrics: `docs/sops/grpo-gsm8k-metrics.md`
 - GRPO length + eval knobs: `docs/sops/grpo-gsm8k-length-and-eval.md`
@@ -33,6 +33,9 @@
 - GRPO rollout backend abstraction (naive): `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - AReaL RL organization notes (for modularizing training): `docs/sops/areal-rl-organization.md`
 - AReaL logging system notes (StatsLogger/StatsTracker/PerfTracer): `docs/sops/areal-logging-system.md`
+- 4-phase RL interface research (Tunix/AReaL/VERL/MaxText): `docs/sops/rl-four-phase-interface-research.md`
+- 4-phase RL interface implementation (GRPO runner modules): `docs/sops/rl-four-phase-interface-implementation.md`
+- RL phase-folder layout (remove `grpo/`): `docs/sops/rl-phase-folder-layout.md`
 
 ## Browse by area (component-based)
 
@@ -74,6 +77,9 @@
 - `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - `docs/sops/areal-rl-organization.md`
 - `docs/sops/areal-logging-system.md`
+- `docs/sops/rl-four-phase-interface-research.md`
+- `docs/sops/rl-four-phase-interface-implementation.md`
+- `docs/sops/rl-phase-folder-layout.md`
 - `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 - `docs/sops/grpo-gsm8k-runner-batch-size.md`
 - `docs/sops/grpo-gsm8k-metrics.md`

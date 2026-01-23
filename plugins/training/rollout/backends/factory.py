@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from plugins.training.api import RolloutSampler
-from plugins.training.rollout_backends.base import RolloutBackend
-from plugins.training.rollout_backends.naive_sampler import NaiveSamplerRolloutBackend
+from plugins.training.rollout.backends.base import RolloutBackend
+from plugins.training.rollout.backends.naive_sampler import NaiveSamplerRolloutBackend
 
 
 SUPPORTED_ROLLOUT_BACKENDS = ("naive",)

@@ -4,11 +4,11 @@ set -euo pipefail
 # Start a 100-step GRPO/GSM8K run (Qwen2.5-3B) using an explicit YAML config
 # (no training hyperparam env overrides).
 #
-# NOTE: `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` now
-# uses sequence-based semantics:
-# - rollout.batch_size=128 (global sequences/step)
+# NOTE: `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` uses
+# prompt-based semantics:
+# - rollout.batch_size=128 (prompts/step/process)
 # - rollout.n=8 (K)
-# -> global prompts/step = 128 / 8 = 16
+# -> sequences/step/process = 128 * 8 = 1024
 #
 # This script is intended to be executed ON the TPU VM inside a Git-synced repo
 # checkout (e.g. `/root/MLLM-JAX`).

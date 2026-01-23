@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 def test_patch_sampler_generate_fast_is_idempotent():
-    from plugins.training.rollout_optimizations import patch_sampler_generate_fast
+    from plugins.training.rollout.optimizations import patch_sampler_generate_fast
 
     class DummySampler:
         def generate(self, *args, **kwargs):
@@ -25,7 +25,7 @@ def test_patch_sampler_generate_fast_is_idempotent():
 
 
 def test_fast_generate_timing_is_guarded_by_env_var():
-    from plugins.training.rollout_optimizations import patch_sampler_generate_fast
+    from plugins.training.rollout.optimizations import patch_sampler_generate_fast
 
     class DummySampler:
         def generate(self, *args, **kwargs):

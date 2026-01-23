@@ -10,28 +10,15 @@ import math
 
 import numpy as np
 
-from plugins.training.grpo.advantages import compute_grpo_advantages_by_group_id
-from plugins.training.grpo.batching import infer_rollout_passes, round_up_passes_for_divisibility
-from plugins.training.grpo.rewarding import compute_weighted_rewards
-from plugins.training.grpo.update import ppo_update
-
 
 @dataclass(frozen=True)
 class GRPORolloutConfig:
-    # Optional: batch sizes for sequences (one sequence = one (prompt, completion) sample).
+    # Prompt batch size per training step (global, across all processes).
     #
-    # Only ONE of these needs to be set; the others are derived at runtime:
-    # - batch_size: global sequences per training step (across all processes)
-    # - batch_size_per_process: sequences per step per process
-    # - batch_size_per_device: sequences per step per device
-    batch_size: int | None = None
-    batch_size_per_process: int | None = None
-    batch_size_per_device: int | None = None
-    # Optional: prompts per rollout pass (KV-cache footprint control).
-    # If unset, runner derives a value from batch targets and `process_count`.
-    prompts_per_pass_per_process: int | None = None
-    prompts_per_pass_per_device: int | None = None
-    # Number of samples per prompt (GRPO group size, a.k.a. K).
+    # Each prompt is expanded to `n` sampled completions, so the global
+    # sequence batch is: `batch_size * n`.
+    batch_size: int = 32
+    # Number of samples per prompt (GRPO group size, a.k.a. K / num_pre_q).
     n: int = 8
     global_length: int = 512
     max_length_sample: int = 64
@@ -41,11 +28,9 @@ class GRPORolloutConfig:
 
 @dataclass(frozen=True)
 class GRPOTrainConfig:
-    # Optional: global sequences per micro-step (across all processes).
-    global_micro_batch_size: int | None = None
-    # Optional: sequences per process per micro-step (backward).
-    micro_batch_size_per_process: int | None = None
-    # Optional: sequences per device per micro-step (backward).
+    # Optional: sequences per process per micro-step.
+    micro_batch_size: int | None = None
+    # Optional: sequences per device per micro-step.
     micro_batch_size_per_device: int | None = None
     max_length_total: int = 0
     ppo_epochs: int = 1
@@ -167,7 +152,11 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     from MLLM_JAX.utils import get_jax_mesh2
     from prompts.prompts import system_prompt
-    from plugins.training.grpo.train_step import training_step
+    from plugins.training.advantage.modules import GroupIdGRPOAdvantageModule
+    from plugins.training.reward.modules import WeightedRewardModule
+    from plugins.training.rollout.modules import RolloutBackendModule
+    from plugins.training.update.modules import PPOUpdateModule
+    from plugins.training.update.train_step import training_step
     from training2 import (
         get_state,
         reward_correct,
@@ -279,100 +268,54 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         return jax.make_array_from_single_device_arrays(global_shape, sharding, local_device_buffers)
 
     # --- Resolve rollout batch sizes ---
+    # New semantics: `rollout.batch_size` is global prompts per training step (across all processes).
+    requested_global_prompts_per_step = int(cfg.rollout.batch_size)
+    if requested_global_prompts_per_step <= 0:
+        raise ValueError("rollout.batch_size must be > 0 (global prompts per training step).")
+
     n = int(cfg.rollout.n)
     if n <= 0:
         raise ValueError("rollout.n must be > 0")
 
-    seq_targets: list[int] = []
-    if cfg.rollout.batch_size is not None:
-        seq_targets.append(int(cfg.rollout.batch_size))
-    if cfg.rollout.batch_size_per_process is not None:
-        seq_targets.append(int(cfg.rollout.batch_size_per_process) * int(process_count))
-    if cfg.rollout.batch_size_per_device is not None:
-        seq_targets.append(int(cfg.rollout.batch_size_per_device) * int(local_device_count) * int(process_count))
-
-    global_seq_target: int | None
-    if not seq_targets:
-        global_seq_target = None
-    else:
-        if any(int(x) <= 0 for x in seq_targets):
-            raise ValueError("rollout.batch_size targets must be > 0")
-        if len({int(x) for x in seq_targets}) != 1:
-            raise ValueError(
-                "Conflicting rollout batch size targets: "
-                f"batch_size={cfg.rollout.batch_size} "
-                f"batch_size_per_process={cfg.rollout.batch_size_per_process} "
-                f"batch_size_per_device={cfg.rollout.batch_size_per_device} "
-                f"(process_count={process_count}, local_device_count={local_device_count})"
-            )
-        global_seq_target = int(seq_targets[0])
-
-    global_prompt_target: int | None = None
-    if global_seq_target is not None:
-        if global_seq_target % n != 0:
-            raise ValueError(
-                f"rollout.batch_size={global_seq_target} must be divisible by rollout.n={n} "
-                "(each prompt has exactly n samples)."
-            )
-        global_prompt_target = global_seq_target // n
-
-    prompts_per_pass = cfg.rollout.prompts_per_pass_per_process
-    if cfg.rollout.prompts_per_pass_per_device is not None:
-        per_device_prompts = int(cfg.rollout.prompts_per_pass_per_device)
-        if per_device_prompts <= 0:
-            raise ValueError("rollout.prompts_per_pass_per_device must be > 0")
-        expected_prompts_per_pass = per_device_prompts * local_device_count
-        if prompts_per_pass is not None and int(prompts_per_pass) != expected_prompts_per_pass:
-            raise ValueError(
-                "rollout.prompts_per_pass_per_process must match "
-                "rollout.prompts_per_pass_per_device * local_device_count, got "
-                f"{int(prompts_per_pass)} vs {int(per_device_prompts)}*{int(local_device_count)} ({expected_prompts_per_pass})."
-            )
-        prompts_per_pass = expected_prompts_per_pass
-
-    if prompts_per_pass is None:
-        if global_prompt_target is not None:
-            prompts_per_pass = max(1, (int(global_prompt_target) + int(process_count) - 1) // int(process_count))
-        else:
-            prompts_per_pass = 1
-
-    prompts_per_pass = int(prompts_per_pass)
-    if prompts_per_pass <= 0:
-        raise ValueError("rollout.prompts_per_pass_per_process must be > 0")
+    # We keep rollout passes as an internal mechanism, but expose only a single
+    # user-facing knob: global prompt `batch_size`.
+    #
+    # Each process uses the same local prompt batch size to keep shapes consistent.
+    prompts_per_pass = (int(requested_global_prompts_per_step) + int(process_count) - 1) // int(process_count)
+    prompts_per_pass = max(1, int(prompts_per_pass))
+    effective_global_prompts_per_step = int(prompts_per_pass) * int(process_count)
+    if int(jax.process_index()) == 0 and int(effective_global_prompts_per_step) != int(requested_global_prompts_per_step):
+        print(
+            f"Padding global rollout.batch_size {int(requested_global_prompts_per_step)} -> {int(effective_global_prompts_per_step)} "
+            f"so each process gets an equal prompt batch (process_count={int(process_count)})."
+        )
 
     # Ensure per-pass local batch (sequences) can be evenly split across local devices.
     required_multiple = local_device_count // math.gcd(n, local_device_count)
     if required_multiple <= 0:
         raise ValueError("Invalid rollout batching: local_device_count must be > 0")
     if prompts_per_pass % required_multiple != 0:
-        padded_prompts_per_pass = ((prompts_per_pass + required_multiple - 1) // required_multiple) * required_multiple
-        print(
-            f"Padding rollout.prompts_per_pass_per_process {prompts_per_pass} -> {padded_prompts_per_pass} so that "
-            f"prompts_per_pass * rollout.n is divisible by local_device_count={local_device_count}."
+        padded_prompts_per_pass = ((int(prompts_per_pass) + int(required_multiple) - 1) // int(required_multiple)) * int(
+            required_multiple
         )
+        effective_global_prompts_per_step = int(padded_prompts_per_pass) * int(process_count)
+        if int(jax.process_index()) == 0:
+            print(
+                f"Padding per-process rollout prompt batch {int(prompts_per_pass)} -> {int(padded_prompts_per_pass)} so that "
+                f"(prompts_per_process * rollout.n) is divisible by local_device_count={int(local_device_count)} "
+                f"(effective global prompts/step = {int(effective_global_prompts_per_step)})."
+            )
         prompts_per_pass = padded_prompts_per_pass
 
     local_batch_per_pass = int(prompts_per_pass) * int(n)
-
-    base_rollout_passes, effective_global_prompts = infer_rollout_passes(
-        global_batch_size=global_prompt_target,
-        batch_size_per_process=prompts_per_pass,
-        process_count=process_count,
-    )
-    rollout_passes = int(base_rollout_passes)
+    rollout_passes = 1
 
     # --- Resolve train micro-batch & grad accumulation (sequences) ---
-    global_micro_batch_size = cfg.train.global_micro_batch_size
-    if global_micro_batch_size is not None:
-        global_micro_batch_size = int(global_micro_batch_size)
-        if global_micro_batch_size <= 0:
-            raise ValueError("train.global_micro_batch_size must be > 0.")
-
-    micro_batch_size_per_process = cfg.train.micro_batch_size_per_process
-    if micro_batch_size_per_process is not None:
-        micro_batch_size_per_process = int(micro_batch_size_per_process)
-        if micro_batch_size_per_process <= 0:
-            raise ValueError("train.micro_batch_size_per_process must be > 0.")
+    micro_batch_size = cfg.train.micro_batch_size
+    if micro_batch_size is not None:
+        micro_batch_size = int(micro_batch_size)
+        if micro_batch_size <= 0:
+            raise ValueError("train.micro_batch_size must be > 0.")
 
     micro_batch_size_per_device = cfg.train.micro_batch_size_per_device
     if micro_batch_size_per_device is not None:
@@ -380,98 +323,47 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         if micro_batch_size_per_device <= 0:
             raise ValueError("train.micro_batch_size_per_device must be > 0.")
 
-    # Priority: per-device -> per-process -> global.
-    if micro_batch_size_per_device is not None:
-        expected_micro_per_process = int(micro_batch_size_per_device) * int(local_device_count)
-        if micro_batch_size_per_process is not None and int(micro_batch_size_per_process) != expected_micro_per_process:
+        expected_micro_batch_size = int(micro_batch_size_per_device) * int(local_device_count)
+        if micro_batch_size is not None and int(micro_batch_size) != expected_micro_batch_size:
             raise ValueError(
-                "train.micro_batch_size_per_process must match train.micro_batch_size_per_device * local_device_count, got "
-                f"{int(micro_batch_size_per_process)} vs {int(micro_batch_size_per_device)}*{int(local_device_count)} "
-                f"({expected_micro_per_process})."
+                "train.micro_batch_size must match train.micro_batch_size_per_device * local_device_count, got "
+                f"{int(micro_batch_size)} vs {int(micro_batch_size_per_device)}*{int(local_device_count)} "
+                f"({expected_micro_batch_size})."
             )
-        micro_batch_size_per_process = expected_micro_per_process
+        micro_batch_size = expected_micro_batch_size
 
-    if micro_batch_size_per_process is None and global_micro_batch_size is not None:
-        if int(global_micro_batch_size) % int(process_count) != 0:
-            raise ValueError(
-                f"train.global_micro_batch_size={int(global_micro_batch_size)} must be divisible by "
-                f"process_count={int(process_count)} so each process gets an equal micro-batch."
-            )
-        micro_batch_size_per_process = int(global_micro_batch_size) // int(process_count)
-
-    if micro_batch_size_per_process is not None:
-        expected_global_micro = int(micro_batch_size_per_process) * int(process_count)
-        if global_micro_batch_size is not None and int(global_micro_batch_size) != expected_global_micro:
-            raise ValueError(
-                "train.global_micro_batch_size must match train.micro_batch_size_per_process * process_count, got "
-                f"{int(global_micro_batch_size)} vs {int(micro_batch_size_per_process)}*{int(process_count)} "
-                f"({expected_global_micro})."
-            )
-        global_micro_batch_size = expected_global_micro
-
-        expected_micro_per_device: int | None = None
-        if int(micro_batch_size_per_process) % int(local_device_count) == 0:
-            expected_micro_per_device = int(micro_batch_size_per_process) // int(local_device_count)
-        if micro_batch_size_per_device is not None and expected_micro_per_device is not None:
-            if int(micro_batch_size_per_device) != expected_micro_per_device:
-                raise ValueError(
-                    "train.micro_batch_size_per_device must match train.micro_batch_size_per_process / local_device_count, got "
-                    f"{int(micro_batch_size_per_device)} vs {int(micro_batch_size_per_process)}/{int(local_device_count)} "
-                    f"({expected_micro_per_device})."
-                )
-        if micro_batch_size_per_device is None:
-            micro_batch_size_per_device = expected_micro_per_device
-
-    if micro_batch_size_per_process is not None:
-        padded_passes = round_up_passes_for_divisibility(
-            passes=rollout_passes,
-            sequences_per_pass_per_process=local_batch_per_pass,
-            micro_batch_size_per_process=micro_batch_size_per_process,
-        )
-        if padded_passes != rollout_passes:
-            print(
-                f"Padding rollout passes {rollout_passes} -> {padded_passes} so that "
-                f"passes * local_batch_per_pass is divisible by train.micro_batch_size_per_process={micro_batch_size_per_process}."
-            )
-            rollout_passes = int(padded_passes)
+    if micro_batch_size is not None and micro_batch_size_per_device is None:
+        if int(micro_batch_size) % int(local_device_count) == 0:
+            micro_batch_size_per_device = int(micro_batch_size) // int(local_device_count)
 
     local_batch = int(rollout_passes) * int(local_batch_per_pass)
     global_batch = int(local_batch) * int(process_count)
 
     grad_accum_steps = int(cfg.train.grad_accum_steps)
-    if micro_batch_size_per_process is not None:
-        if local_batch % micro_batch_size_per_process != 0:
+    if micro_batch_size is not None:
+        if local_batch % micro_batch_size != 0:
             raise ValueError(
-                f"train.micro_batch_size_per_process={micro_batch_size_per_process} must divide local_batch={local_batch} "
-                f"(rollout_passes * rollout.prompts_per_pass_per_process * rollout.n)."
+                f"train.micro_batch_size={micro_batch_size} must divide local_batch={local_batch} "
+                f"(prompts_per_process={int(prompts_per_pass)} * rollout.n={n}; "
+                f"requested_global_prompts={int(requested_global_prompts_per_step)} effective_global_prompts={int(effective_global_prompts_per_step)})."
             )
-        micro_steps = local_batch // micro_batch_size_per_process
+        micro_steps = local_batch // micro_batch_size
         if grad_accum_steps != 1 and grad_accum_steps != micro_steps:
             print(
                 f"Overriding train.grad_accum_steps {grad_accum_steps} -> {micro_steps} "
-                f"to respect train.micro_batch_size_per_process={micro_batch_size_per_process}."
+                f"to respect train.micro_batch_size={micro_batch_size}."
             )
         grad_accum_steps = micro_steps
 
     if local_batch % grad_accum_steps != 0:
         raise ValueError(
             f"train.grad_accum_steps={grad_accum_steps} must divide local_batch={local_batch} "
-            f"(rollout_passes * rollout.prompts_per_pass_per_process * rollout.n)."
+            f"(rollout_passes={rollout_passes} * prompts_per_pass={prompts_per_pass} * rollout.n={n})."
         )
 
-    resolved_batch_size = cfg.rollout.batch_size
-    if resolved_batch_size is None and global_seq_target is not None:
-        resolved_batch_size = int(global_seq_target)
-    if resolved_batch_size is None:
-        resolved_batch_size = int(global_batch)
-
-    resolved_batch_size_per_device: int | None = None
-    if int(local_batch) % int(local_device_count) == 0:
-        resolved_batch_size_per_device = int(local_batch) // int(local_device_count)
-
-    resolved_prompts_per_pass_per_device: int | None = None
-    if int(prompts_per_pass) % int(local_device_count) == 0:
-        resolved_prompts_per_pass_per_device = int(prompts_per_pass) // int(local_device_count)
+    # Finalize resolved config (for logging/debug): keep `rollout.batch_size` as the
+    # effective global prompt batch size per training step.
+    resolved_rollout_batch_size = int(effective_global_prompts_per_step)
 
     cfg = GRPOGsm8kConfig(
         **{
@@ -479,18 +371,13 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             "rollout": GRPORolloutConfig(
                 **{
                     **cfg.rollout.__dict__,
-                    "batch_size": int(resolved_batch_size),
-                    "batch_size_per_process": int(local_batch),
-                    "batch_size_per_device": resolved_batch_size_per_device,
-                    "prompts_per_pass_per_process": int(prompts_per_pass),
-                    "prompts_per_pass_per_device": resolved_prompts_per_pass_per_device,
+                    "batch_size": int(resolved_rollout_batch_size),
                 }
             ),
             "train": GRPOTrainConfig(
                 **{
                     **cfg.train.__dict__,
-                    "global_micro_batch_size": global_micro_batch_size,
-                    "micro_batch_size_per_process": micro_batch_size_per_process,
+                    "micro_batch_size": micro_batch_size,
                     "micro_batch_size_per_device": micro_batch_size_per_device,
                     "grad_accum_steps": grad_accum_steps,
                 }
@@ -506,7 +393,12 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             dict(
                 model_path=cfg.model_path,
                 steps=cfg.steps,
-                rollout={**asdict(cfg.rollout), "passes_per_step": int(rollout_passes)},
+                rollout={
+                    **asdict(cfg.rollout),
+                    "prompts_per_pass_per_process": int(prompts_per_pass),
+                    "sequences_per_pass_per_process": int(local_batch_per_pass),
+                    "passes_per_step": int(rollout_passes),
+                },
                 train=asdict(cfg.train),
                 local_batch=local_batch,
                 global_batch=global_batch,
@@ -538,7 +430,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         if not eval_qas and jax.process_index() == 0:
             print(f"WARNING: eval enabled but no eval data after sharding (split={cfg.eval_split!r}).")
 
-    from plugins.training.rollout_backends import create_rollout_backend
+    from plugins.training.rollout.backends import create_rollout_backend
 
     rollout_backend_name = str(cfg.rollout.backend).strip().lower()
     if rollout_backend_name == "":
@@ -563,13 +455,13 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         create_sampler=True,
     )
     if os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1":
-        from plugins.training.rollout_optimizations import patch_qwen2_attention_decode_fast
+        from plugins.training.rollout.optimizations import patch_qwen2_attention_decode_fast
 
         patch_qwen2_attention_decode_fast()
         if jax.process_index() == 0:
             print("rollout_fast_qwen2_decode_attention=1 (patched attention._naive_sdpa for decode)")
     if os.environ.get("ROLLOUT_FAST_GENERATE") == "1":
-        from plugins.training.rollout_optimizations import patch_sampler_generate_fast
+        from plugins.training.rollout.optimizations import patch_sampler_generate_fast
 
         patch_sampler_generate_fast(sampler)
         if jax.process_index() == 0:
@@ -580,6 +472,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         tokenizer=None,
         model_path=cfg.model_path,
     )
+    eval_sampler = sampler
     eval_rollout_backend = rollout_backend
     eval_greedy_enabled = os.environ.get("EVAL_GREEDY") == "1" or os.environ.get("EVAL_FULL_GREEDY") == "1"
     if eval_greedy_enabled and eval_qas:
@@ -608,7 +501,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         eval_sampler.jit_infer_step = jax.jit(eval_sampler.infer, donate_argnums=(0,))
 
         if os.environ.get("ROLLOUT_FAST_GENERATE") == "1":
-            from plugins.training.rollout_optimizations import patch_sampler_generate_fast
+            from plugins.training.rollout.optimizations import patch_sampler_generate_fast
 
             patch_sampler_generate_fast(eval_sampler)
 
@@ -621,10 +514,16 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         if jax.process_index() == 0:
             print("eval_greedy=1 (eval rollout uses argmax sampling)")
 
+    rollout_module = RolloutBackendModule(backend=rollout_backend)
+    eval_rollout_module = RolloutBackendModule(backend=eval_rollout_backend)
+
     wandb = _maybe_init_wandb(cfg)
 
     reward_funcs = [reward_correct, reward_format, tag_count_reward]
     reward_func_names = [fn.__name__ for fn in reward_funcs]
+    reward_module = WeightedRewardModule(reward_funcs=reward_funcs, reward_weights=cfg.reward_weights)
+    advantage_module = GroupIdGRPOAdvantageModule(eps=1e-4)
+    update_module = PPOUpdateModule()
 
     rng = random.Random(0xC0FFEE + jax.process_index())
     step_times: list[float] = []
@@ -633,7 +532,6 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
         # --- Rollout (sampling) ---
         # Keep rollout logic local to avoid cross-host coupling; global sync happens at the batch->global array step.
-        reward_weights = cfg.reward_weights
         answers_all: list[str] = []
         datas_np_all: list[dict[str, np.ndarray]] = []
         rewards_per_func_all: list[np.ndarray] = []
@@ -650,26 +548,25 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         t_adv = 0.0
 
         for pass_idx in range(int(rollout_passes)):
-            batch_items = [rng.choice(qas) for _ in range(int(cfg.rollout.prompts_per_pass_per_process))]
+            batch_items = [rng.choice(qas) for _ in range(int(prompts_per_pass))]
             prompts_base = [item["Q"] for item in batch_items]
-            repeated_prompts = [p for p in prompts_base for _ in range(cfg.rollout.n)]
-            repeated_items = [item for item in batch_items for _ in range(cfg.rollout.n)]
+            repeated_prompts = [p for p in prompts_base for _ in range(int(n))]
+            repeated_items = [item for item in batch_items for _ in range(int(n))]
 
             group_ids = np.repeat(
-                np.arange(int(cfg.rollout.prompts_per_pass_per_process), dtype=np.int32)
-                + pass_idx * int(cfg.rollout.prompts_per_pass_per_process),
-                cfg.rollout.n,
+                np.arange(int(prompts_per_pass), dtype=np.int32) + pass_idx * int(prompts_per_pass),
+                int(n),
             )
 
             # --- Rollout (sampling) ---
             t_sync0 = time.perf_counter()
-            if hasattr(rollout_backend, "sync_weights"):
-                rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
+            rollout_module.sync_weights(state.params)
             t_rollout_sync += time.perf_counter() - t_sync0
 
             t_rollout0 = time.perf_counter()
-            rollout = rollout_backend.rollout(
+            rollout = rollout_module.rollout(
                 prompts=repeated_prompts,
+                sampler=sampler,
                 params=state.params,
                 system_prompt=system_prompt,
                 global_length=int(cfg.rollout.global_length),
@@ -680,27 +577,18 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             t_rollout_generate += time.perf_counter() - t_rollout0
 
             t_flush0 = time.perf_counter()
-            if hasattr(rollout_backend, "flush_cache"):
-                rollout_backend.flush_cache()  # type: ignore[attr-defined]
+            rollout_module.flush_cache()
             t_rollout_flush += time.perf_counter() - t_flush0
 
             # --- Reward ---
             t_reward0 = time.perf_counter()
-            rewards_per_func, rewards_np = compute_weighted_rewards(
-                reward_funcs=reward_funcs,
-                reward_weights=reward_weights,
-                inputs=repeated_items,
-                answers=answers,
-            )
+            rewards_out = reward_module.compute(inputs=repeated_items, answers=answers)
+            rewards_per_func, rewards_np = rewards_out.rewards_per_func, rewards_out.rewards
             t_reward += time.perf_counter() - t_reward0
 
             # --- Advantages (group_id based) ---
             t_adv0 = time.perf_counter()
-            advantages_np = compute_grpo_advantages_by_group_id(
-                rewards=rewards_np,
-                group_ids=group_ids,
-                eps=1e-4,
-            )
+            advantages_np = advantage_module.compute(rewards=rewards_np, group_ids=group_ids).advantages
             t_adv += time.perf_counter() - t_adv0
 
             datas_np = dict(datas_np)
@@ -716,8 +604,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             group_ids_all.append(group_ids)
 
         t_release0 = time.perf_counter()
-        if hasattr(rollout_backend, "release_weights"):
-            rollout_backend.release_weights()  # type: ignore[attr-defined]
+        rollout_module.release_weights()
         t_rollout_release = time.perf_counter() - t_release0
 
         t_rollout = t_rollout_sync + t_rollout_generate + t_rollout_flush + t_rollout_release
@@ -764,14 +651,20 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         t_shard = time.perf_counter() - t_shard0
 
         t_update0 = time.perf_counter()
-        state, datas, last_meta, entropy = ppo_update(
+        update_out = update_module.update(
             state=state,
-            datas=datas,
+            batch=datas,
             total_valid_token_count=total_valid_token_count,
             train_step=train_fn,
             slice_data=slice_data,
             grad_accum_steps=grad_accum_steps,
             ppo_steps=cfg.train.ppo_epochs,
+        )
+        state, datas, last_meta, entropy = (
+            update_out.state,
+            update_out.batch,
+            update_out.last_meta,
+            update_out.entropy,
         )
         jax.block_until_ready(last_meta["loss"])
         t_update = time.perf_counter() - t_update0
@@ -907,23 +800,23 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
             for eval_batch_idx in range(int(cfg.eval_batches_per_process)):
                 start = (step * int(cfg.eval_batches_per_process) + eval_batch_idx) * int(
-                    cfg.rollout.prompts_per_pass_per_process
+                    prompts_per_pass
                 )
                 eval_items = [
-                    eval_qas[(start + i) % len(eval_qas)] for i in range(int(cfg.rollout.prompts_per_pass_per_process))
+                    eval_qas[(start + i) % len(eval_qas)] for i in range(int(prompts_per_pass))
                 ]
                 eval_prompts_base = [item["Q"] for item in eval_items]
-                eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(cfg.rollout.n)]
-                eval_repeated_items = [item for item in eval_items for _ in range(cfg.rollout.n)]
+                eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(int(n))]
+                eval_repeated_items = [item for item in eval_items for _ in range(int(n))]
 
                 t_eval_sync0 = time.perf_counter()
-                if hasattr(eval_rollout_backend, "sync_weights"):
-                    eval_rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
+                eval_rollout_module.sync_weights(state.params)
                 eval_rollout_sync_s += time.perf_counter() - t_eval_sync0
 
                 t_eval_rollout0 = time.perf_counter()
-                eval_rollout = eval_rollout_backend.rollout(
+                eval_rollout = eval_rollout_module.rollout(
                     prompts=eval_repeated_prompts,
+                    sampler=eval_sampler,
                     params=state.params,
                     system_prompt=system_prompt,
                     global_length=int(cfg.rollout.global_length),
@@ -933,17 +826,12 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_rollout_generate_s += time.perf_counter() - t_eval_rollout0
 
                 t_eval_flush0 = time.perf_counter()
-                if hasattr(eval_rollout_backend, "flush_cache"):
-                    eval_rollout_backend.flush_cache()  # type: ignore[attr-defined]
+                eval_rollout_module.flush_cache()
                 eval_rollout_flush_s += time.perf_counter() - t_eval_flush0
 
                 t_eval_reward0 = time.perf_counter()
-                eval_rewards_per_func, eval_rewards_np = compute_weighted_rewards(
-                    reward_funcs=reward_funcs,
-                    reward_weights=reward_weights,
-                    inputs=eval_repeated_items,
-                    answers=eval_answers,
-                )
+                eval_rewards_out = reward_module.compute(inputs=eval_repeated_items, answers=eval_answers)
+                eval_rewards_per_func, eval_rewards_np = eval_rewards_out.rewards_per_func, eval_rewards_out.rewards
                 eval_reward_s += time.perf_counter() - t_eval_reward0
 
                 eval_rewards_global = np.asarray(process_allgather(eval_rewards_np)).reshape(-1)
@@ -955,8 +843,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_rewards_per_func_all.append(eval_per_func_flat)
 
             t_eval_release0 = time.perf_counter()
-            if hasattr(eval_rollout_backend, "release_weights"):
-                eval_rollout_backend.release_weights()  # type: ignore[attr-defined]
+            eval_rollout_module.release_weights()
             eval_rollout_release_s = time.perf_counter() - t_eval_release0
 
             eval_step_s = time.perf_counter() - eval_step0
@@ -1005,8 +892,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         #
         # Optional override:
         #   EVAL_FULL_NUM_PRE_Q=<int>  (default: 1)
-        train_prompts_per_pass = int(cfg.rollout.prompts_per_pass_per_process)
-        train_n = int(cfg.rollout.n)
+        train_prompts_per_pass = int(prompts_per_pass)
+        train_n = int(n)
         local_seq_batch_train = train_prompts_per_pass * train_n
 
         num_pre_q_env = os.environ.get("EVAL_FULL_NUM_PRE_Q")
@@ -1020,7 +907,6 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             )
 
         prompt_batch_size = local_seq_batch_train // eval_n
-        reward_weights = cfg.reward_weights
 
         t_eval0 = time.perf_counter()
         t_eval_sync_s = 0.0
@@ -1038,10 +924,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         local_completion_sum_tag = 0.0
         local_completion_count = 0
 
-        if hasattr(rollout_backend, "sync_weights"):
-            t0 = time.perf_counter()
-            eval_rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
-            t_eval_sync_s += time.perf_counter() - t0
+        t0 = time.perf_counter()
+        eval_rollout_module.sync_weights(state.params)
+        t_eval_sync_s += time.perf_counter() - t0
 
         pad_item = eval_qas[0]
         for start in range(0, local_question_count, prompt_batch_size):
@@ -1057,8 +942,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             eval_repeated_items = [item for item in batch_items for _ in range(eval_n)]
 
             t0 = time.perf_counter()
-            eval_rollout = eval_rollout_backend.rollout(
+            eval_rollout = eval_rollout_module.rollout(
                 prompts=eval_repeated_prompts,
+                sampler=eval_sampler,
                 params=state.params,
                 system_prompt=system_prompt,
                 global_length=int(cfg.rollout.global_length),
@@ -1068,17 +954,12 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             t_eval_rollout_generate_s += time.perf_counter() - t0
 
             t0 = time.perf_counter()
-            if hasattr(eval_rollout_backend, "flush_cache"):
-                eval_rollout_backend.flush_cache()  # type: ignore[attr-defined]
+            eval_rollout_module.flush_cache()
             t_eval_rollout_flush_s += time.perf_counter() - t0
 
             t0 = time.perf_counter()
-            eval_rewards_per_func, _eval_rewards_total = compute_weighted_rewards(
-                reward_funcs=reward_funcs,
-                reward_weights=reward_weights,
-                inputs=eval_repeated_items,
-                answers=eval_answers,
-            )
+            eval_rewards_out = reward_module.compute(inputs=eval_repeated_items, answers=eval_answers)
+            eval_rewards_per_func = eval_rewards_out.rewards_per_func
             t_eval_reward_s += time.perf_counter() - t0
 
             correct_per_completion = np.asarray(eval_rewards_per_func[0], dtype=np.float32).reshape(-1)
@@ -1106,8 +987,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             local_completion_count += int(valid_prompts) * int(eval_n)
 
         t0 = time.perf_counter()
-        if hasattr(eval_rollout_backend, "release_weights"):
-            eval_rollout_backend.release_weights()  # type: ignore[attr-defined]
+        eval_rollout_module.release_weights()
         t_eval_release_s += time.perf_counter() - t0
 
         # Aggregate across processes.

@@ -1,5 +1,7 @@
 # GRPO/GSM8K jit8 YAML Config SOPs
 
+> Status: Deprecated/historical. The legacy `jit8_train` code has been moved under `deprecated/` and is not part of the active workflow.
+
 - **Title**: SOP: Run `test_jit8.py` via YAML config
   **Prereqs**: Repo at `/home/john/github/MLLM-JAX`; PyYAML installed; (for training) JAX installed; (TPU) `gcloud` authenticated + a reachable TPU VM
   **Environment (verified)**:

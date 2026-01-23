@@ -12,14 +12,14 @@
 
 In `plugins/training/configs/*.yaml` (used by `scripts/run_grpo_gsm8k_training.py`):
 
-- `rollout.batch_size`: **global sequences per training step** (sum across all JAX processes / TPU hosts). Each "sequence" is one `(prompt, completion)` sample.
-  - If `null`, runner does **exactly one rollout pass** and the effective global batch size is derived from `rollout.prompt_batch_size * rollout.num_pre_q * process_count`.
-- `rollout.global_prompt_batch_size`: **global prompts per training step** (sum across all JAX processes / TPU hosts).
-  - Runner derives `rollout.batch_size = rollout.global_prompt_batch_size * rollout.num_pre_q`.
-  - Backward-compatible alias: `rollout.global_batch_size` (prefer `global_prompt_batch_size` for clarity).
-- `rollout.prompt_batch_size`: prompts per rollout pass **per process** (legacy `BATCH_SIZE` semantics).
-- `rollout.per_device_batch_size`: prompts per rollout pass **per device**; runner derives `prompt_batch_size = per_device_batch_size * local_device_count`.
-- `rollout.num_pre_q`: samples per prompt (GRPO group size, `K`).
+- `rollout.batch_size`: **global prompts per training step** (sum across all JAX processes / TPU hosts).
+  - Each prompt expands to `rollout.n` completions, so global sequences per step = `rollout.batch_size * rollout.n`.
+- `rollout.n`: samples per prompt (GRPO group size, `K` / `num_pre_q`).
+  - Alias: `rollout.num_pre_q`.
+- Runner derives the per-process prompt batch from the global target and pads it so
+  `(prompts_per_process * rollout.n)` is divisible by `local_device_count`.
+- Legacy keys like `rollout.global_prompt_batch_size`, `rollout.prompt_batch_size`,
+  and `rollout.per_device_batch_size` are rejected; use only `rollout.batch_size` + `rollout.n`.
 
 Notes:
 - YAML configs in `plugins/training/configs/` intentionally omit `train.grad_accum_steps` because when `train.micro_batch_size` is set, the runner infers the required accumulation steps from the effective per-process batch.

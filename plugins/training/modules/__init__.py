@@ -1,23 +1,21 @@
-"""Reusable training modules (plugins-first).
+"""Backward-compatible imports for training modules.
 
-This package contains small, composable building blocks for the RL training
-pipeline phases:
-- rollout
-- reward
-- advantages
-- update
+New code should import phase modules directly:
+- `plugins.training.rollout.modules`
+- `plugins.training.reward.modules`
+- `plugins.training.advantage.modules`
+- `plugins.training.update.modules`
 """
 
-from plugins.training.modules.grpo_sync import (
-    GRPOSyncRollout,
-    GroupIdGRPOAdvantageModule,
-    PPOUpdateModule,
-    WeightedRewardModule,
-)
+from plugins.training.advantage.modules import GroupIdGRPOAdvantageModule
+from plugins.training.reward.modules import WeightedRewardModule
+from plugins.training.rollout.modules import GRPOSyncRollout, RolloutBackendModule
+from plugins.training.update.modules import PPOUpdateModule
 
 __all__ = [
     "GRPOSyncRollout",
     "GroupIdGRPOAdvantageModule",
     "PPOUpdateModule",
+    "RolloutBackendModule",
     "WeightedRewardModule",
 ]

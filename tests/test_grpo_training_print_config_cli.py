@@ -30,12 +30,14 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
     def test_print_config_default(self) -> None:
         out = self._run(["--print-config"])
         self.assertIn("rollout:", out)
-        self.assertIn("prompts_per_pass_per_process: 32", out)
+        self.assertIn("batch_size: 32", out)
+        self.assertIn("sequences_global_per_step: 256", out)
 
     def test_print_config_bs128(self) -> None:
         out = self._run(["--print-config", "--config", "plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml"])
         self.assertIn("batch_size: 128", out)
         self.assertIn("n: 8", out)
+        self.assertIn("sequences_global_per_step: 1024", out)
 
     def test_print_config_qwen25_3b_bs128(self) -> None:
         out = self._run(

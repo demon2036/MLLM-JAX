@@ -21,30 +21,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # - "naive": in-process sampler (current default)
         # - Future: other engines (e.g. vllm)
         "backend": "naive",
-        # Optional: batch sizes (sequences, i.e. (prompt, completion) samples).
+        # Prompt batch size per training step (global, across all processes).
         #
-        # Only ONE of these needs to be set; others are derived at runtime:
-        # - batch_size: global sequences per training step (across all processes)
-        # - batch_size_per_process: sequences per step per process
-        # - batch_size_per_device: sequences per step per device
-        "batch_size": None,
-        "batch_size_per_process": None,
-        "batch_size_per_device": None,
-        # Optional: prompts per rollout pass (KV-cache footprint control).
-        # If unset, runner derives a value from batch targets and `process_count`.
-        "prompts_per_pass_per_process": None,
-        "prompts_per_pass_per_device": None,
-        # Number of samples per prompt (GRPO group size, a.k.a. K).
+        # Each prompt is expanded to `n` sampled completions, so the global
+        # sequence batch is: `batch_size * n`.
+        "batch_size": 32,
+        # Number of samples per prompt (GRPO group size, a.k.a. K / num_pre_q).
         "n": 8,
         "global_length": 512,
         "max_length_sample": 64,
     },
     "train": {
-        # Optional: global sequences per micro-step (across all processes).
-        "global_micro_batch_size": None,
-        # Optional: sequences per process per micro-step (backward).
-        "micro_batch_size_per_process": None,
-        # Optional: sequences per device per micro-step (backward).
+        # Optional: sequences per process per micro-step.
+        "micro_batch_size": None,
+        # Optional: sequences per device per micro-step.
         "micro_batch_size_per_device": None,
         "ppo_epochs": 1,
         "beta": 0.0,

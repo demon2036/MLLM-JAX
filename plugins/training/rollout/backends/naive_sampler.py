@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from plugins.training.api import RolloutResult, RolloutSampler
-from plugins.training.grpo.sampling import generate_answers_and_training_batch
+from plugins.training.rollout.sampling import generate_answers_and_training_batch
 
 
 @dataclass

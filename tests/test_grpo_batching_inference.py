@@ -8,7 +8,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from plugins.training.grpo.batching import ceil_div, infer_rollout_passes, round_up_passes_for_divisibility
+from plugins.training.rollout.batching import ceil_div, infer_rollout_passes, round_up_passes_for_divisibility
 
 
 class TestGrpoBatchingInference(unittest.TestCase):

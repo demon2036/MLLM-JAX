@@ -1,23 +1,19 @@
 from __future__ import annotations
 
-import io
 import os
 import sys
 import unittest
-from contextlib import redirect_stdout
 
 import numpy as np
-import yaml
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from plugins.jit8_train.run import cli_main
 from plugins.training.api import BatchSchemaError, validate_grpo_batch
 
 
-class TestJit8SchemaAndCli(unittest.TestCase):
+class TestGrpoBatchSchemaValidator(unittest.TestCase):
     def test_schema_validator_happy_path(self) -> None:
         batch_size = 4
         seq_len = 8
@@ -99,16 +95,6 @@ class TestJit8SchemaAndCli(unittest.TestCase):
                 },
                 stage="rollout",
             )
-
-    def test_cli_print_config_smoke(self) -> None:
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            cli_main(["--print-config"])
-
-        cfg = yaml.safe_load(buf.getvalue())
-        self.assertIsInstance(cfg, dict)
-        self.assertIn("training_steps", cfg)
-        self.assertIn("validate_schema", cfg)
 
 
 if __name__ == "__main__":

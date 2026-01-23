@@ -43,17 +43,31 @@
 
 ## Repo state at start
 
-- `git rev-parse --short HEAD`: (fill after changes)
-- `git status -sb`: (fill after changes)
+- `git rev-parse --short HEAD`: `c12631c`
+- `git status -sb`: dirty working tree (pre-existing docs/memory changes)
+
+## Repo state used for TPU run
+
+- Local commit (pushed): `f8e7cd0` (`feat: add rl algorithm registry`)
+- TPU checkout: `f8e7cd0` (detached HEAD on `/root/MLLM-JAX`)
 
 ## Local validation
 
-- `python -m pytest -q`: (pending)
+- Command (exit 0): `python -m pytest -q`
+- Output (summary): `19 passed in 0.39s`
 
 ## TPU validation (v4-8, W&B online, 100 steps)
 
 - TPU VM: `mllm-jax-v4-8-260122100610` (READY/HEALTHY at investigation time)
-- W&B run URL: (pending)
-- Remote log path: (pending)
-- Exit status: (pending)
+- Config: `plugins/training/configs/rl_gsm8k_qwen25_3b_v4_8_reinforcepp_steps100.yaml`
+- Remote log symlink: `/root/MLLM-JAX/logs/rl_gsm8k_qwen25_3b_v4_8_reinforcepp_steps100_latest.log`
+- Remote log file: `/root/MLLM-JAX/logs/rl_gsm8k_qwen25_3b_v4_8_reinforcepp_steps100_f8e7cd0_20260123_162452.log`
+- W&B run URL: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/biv1ho6f`
+- Runner printed: `algo=reinforce++`
+- Runner printed: `step=99 ...` (100 steps)
+- Wrapper printed: `exit_status=0`
+- Log grep: `traceback_found=0`
 
+## SOP updated
+
+- `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`

@@ -1,17 +1,21 @@
-# GRPO/GSM8K config: batch_size=128 sequences per training step (global)
+# GRPO/GSM8K config (Qwen2.5-3B-Instruct) tuned for v6e-16 multi-host.
 #
-# In this repo:
+# Notes:
+# - v6e-16 is multi-host (4 workers / 16 chips). To avoid cross-host parameter
+#   sharding overhead during rollout (decode), prefer keeping `fsdp` local to
+#   each worker and using `dp` across workers:
+#   - v6e-16 recommended: mesh_shape=4,4,1 (dp=4, fsdp=4, tp=1)
+# - Launch with `--worker=all` so `jax.distributed.initialize()` can form the
+#   distributed JAX runtime.
+#
+# Semantics:
 # - `rollout.batch_size` is sequences per training step (global, across all processes)
 # - `rollout.n` is samples per prompt (GRPO group size, K)
-# - prompts per training step (global) = rollout.batch_size / rollout.n
 #
 # This config sets:
 # - rollout.batch_size=128, rollout.n=8 -> global prompts/step = 16
-# - train.micro_batch_size_per_process=16 -> runner infers grad_accum_steps so update sees 128 sequences/step
-#
-# Intended use: v6e-8 single-host training (100 steps) with W&B logging.
 
-model_path: Qwen/Qwen2.5-7B-Instruct
+model_path: Qwen/Qwen2.5-3B-Instruct
 
 steps: 100
 
@@ -28,12 +32,12 @@ rollout:
 
 train:
   global_micro_batch_size: null
-  micro_batch_size_per_process: 16
-  micro_batch_size_per_device: null
+  micro_batch_size_per_process: null
+  micro_batch_size_per_device: 4
   ppo_epochs: 1
   beta: 0.0
 
-mesh_shape: 1,-1,1
+mesh_shape: 4,4,1
 
 wandb_project: mllm-jax-grpo-gsm8k
 wandb_name: null
@@ -43,3 +47,4 @@ reward_weights: [1.0, 0.5, 0.5]
 eval_every_steps: 10
 eval_batches_per_process: 1
 eval_split: test
+

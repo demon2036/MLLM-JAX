@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Start a 100-step GRPO/GSM8K run (Qwen2.5-3B) on v6e-16 using a v6e-16-tuned
-# YAML config.
+# YAML config + the multihost safety wrapper.
 #
 # This script is intended to be executed ON the TPU VM inside a Git-synced repo
 # checkout (e.g. `/root/MLLM-JAX`) and launched on all workers.
@@ -16,11 +16,11 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 
 ENV_NAME="${ENV_NAME:-mllm-jax}"
-CONFIG_PATH="${CONFIG_PATH:-plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml}"
+CONFIG_PATH="${CONFIG_PATH:-plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100_v6e16.yaml}"
 
 RUN_TS="$(date -u +%Y%m%d_%H%M%S)"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-WANDB_NAME_DEFAULT="grpo_gsm8k_qwen25_3b_bs128_k8_steps100_len1024_v6e16_${COMMIT}_${RUN_TS}"
+WANDB_NAME_DEFAULT="grpo_gsm8k_qwen25_3b_bs128_n8_steps100_len1024_v6e16_${COMMIT}_${RUN_TS}"
 
 PY_ARGS="${PY_ARGS:-}"
 PY_ARGS="$PY_ARGS --set wandb_name=$WANDB_NAME_DEFAULT"
@@ -29,6 +29,5 @@ export ENV_NAME
 export CONFIG_PATH
 export PY_ARGS
 
-echo "NOTE: v6e-16 is multi-host; launch this script on all workers (gcloud tpu-vm ssh --worker=all)."
-bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh
+bash scripts/tpu_vm_start_grpo_gsm8k_from_config_multihost_nohup.sh
 

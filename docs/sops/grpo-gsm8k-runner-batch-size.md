@@ -14,6 +14,9 @@ In `plugins/training/configs/*.yaml` (used by `scripts/run_grpo_gsm8k_training.p
 
 - `rollout.batch_size`: **global sequences per training step** (sum across all JAX processes / TPU hosts). Each "sequence" is one `(prompt, completion)` sample.
   - If `null`, runner does **exactly one rollout pass** and the effective global batch size is derived from `rollout.prompt_batch_size * rollout.num_pre_q * process_count`.
+- `rollout.global_prompt_batch_size`: **global prompts per training step** (sum across all JAX processes / TPU hosts).
+  - Runner derives `rollout.batch_size = rollout.global_prompt_batch_size * rollout.num_pre_q`.
+  - Backward-compatible alias: `rollout.global_batch_size` (prefer `global_prompt_batch_size` for clarity).
 - `rollout.prompt_batch_size`: prompts per rollout pass **per process** (legacy `BATCH_SIZE` semantics).
 - `rollout.per_device_batch_size`: prompts per rollout pass **per device**; runner derives `prompt_batch_size = per_device_batch_size * local_device_count`.
 - `rollout.num_pre_q`: samples per prompt (GRPO group size, `K`).
@@ -28,8 +31,10 @@ From repo root:
 
 - Print merged default config (no JAX required):
   - `python scripts/run_grpo_gsm8k_training.py --print-config`
-- Print merged bs128 config (no JAX required):
+- Print merged bs128 (sequences) config (no JAX required):
   - `python scripts/run_grpo_gsm8k_training.py --print-config --config plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml`
+- Print merged qwen2.5-3B prompts=128 config (no JAX required):
+  - `python scripts/run_grpo_gsm8k_training.py --print-config --config plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
 - Run local test suite:
   - `pytest -q`
 

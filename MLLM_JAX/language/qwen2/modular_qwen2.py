@@ -43,7 +43,6 @@ class Qwen2Attention(LlamaAttention):
         self.k_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=True,dtype=dtype,param_dtype=param_dtype)
         self.v_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=True,dtype=dtype,param_dtype=param_dtype)
         self.o_proj = nn.Dense(self.hidden_size, use_bias=False,dtype=dtype,param_dtype=param_dtype)
-
     def _jax_attention_use_block_sizes(self) -> bool:
         return False
 

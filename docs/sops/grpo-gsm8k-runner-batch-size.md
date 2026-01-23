@@ -10,7 +10,7 @@
 
 ## Batch size semantics (runner YAML)
 
-In `plugins/training/configs/*.yaml` (used by `scripts/run_grpo_gsm8k_training.py`):
+In `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` (used by `scripts/run_grpo_gsm8k_training.py`):
 
 - `rollout.batch_size`: **global prompts per training step** (sum across all JAX processes / TPU hosts).
   - Each prompt expands to `rollout.n` completions, so global sequences per step = `rollout.batch_size * rollout.n`.
@@ -22,9 +22,9 @@ In `plugins/training/configs/*.yaml` (used by `scripts/run_grpo_gsm8k_training.p
   and `rollout.per_device_batch_size` are rejected; use only `rollout.batch_size` + `rollout.n`.
 
 Notes:
-- YAML configs in `plugins/training/configs/` intentionally omit `train.grad_accum_steps` because when `train.micro_batch_size` is set, the runner infers the required accumulation steps from the effective per-process batch.
-- YAML configs also omit `train.max_length_total` because it is currently not used to truncate training sequences in the GRPO runner; the effective training sequence length is determined by the sampler outputs and global padding.
-- This repo’s `*_bs128_*.yaml` configs target `128 sequences/step` by setting `rollout.batch_size=16` and `rollout.n=8` (i.e., 16 prompts * 8 = 128 sequences).
+- The default YAML config intentionally omits `train.grad_accum_steps` because when `train.micro_batch_size` is set, the runner infers the required accumulation steps from the effective per-process batch.
+- The default YAML config also omits `train.max_length_total` because it is currently not used to truncate training sequences in the GRPO runner; the effective training sequence length is determined by the sampler outputs and global padding.
+- The default config targets `128 sequences/step` by setting `rollout.batch_size=16` and `rollout.n=8` (i.e., 16 prompts * 8 = 128 sequences).
 
 ## Steps (commands actually used)
 
@@ -32,9 +32,7 @@ From repo root:
 
 - Print merged default config (no JAX required):
   - `python scripts/run_grpo_gsm8k_training.py --print-config`
-- Print merged bs128 (sequences) config (no JAX required):
-  - `python scripts/run_grpo_gsm8k_training.py --print-config --config plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml`
-- Print merged qwen2.5-3B bs128 config (no JAX required):
+- Print merged config with an explicit `--config` (recommended):
   - `python scripts/run_grpo_gsm8k_training.py --print-config --config plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
 - Run local test suite:
   - `pytest -q`
@@ -54,4 +52,4 @@ From repo root:
 - `scripts/run_grpo_gsm8k_training.py`
 - `plugins/training/runner/grpo_gsm8k.py`
 - `plugins/training/config.py`
-- `plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml`
+- `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`

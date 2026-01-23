@@ -38,7 +38,7 @@
     - `git mv MLLM_JAX/sample/sample_state_right_padding.py deprecated/MLLM_JAX/sample/`
     - `git mv MLLM_JAX/sample/sample_state_right_padding3.py deprecated/MLLM_JAX/sample/`
   - Sanity check (syntax only):
-    - `python -m py_compile training2.py scripts/run_smoke_grpo_gsm8k_qwen25_7b.py scripts/run_smoke_train_qwen25_7b.py test_jit8.py`
+    - `python -m py_compile training2.py scripts/run_grpo_gsm8k_training.py test_jit8.py`
     - `find MLLM_JAX -type f -name '*.py' -print0 | xargs -0 python -m py_compile`
   - Keep only `test_jit8.py` outside `deprecated/` (this run moved the other jit scripts + old runner):
     - `mkdir -p deprecated/tests && git mv test_jit9.py test_jit10.py test_jit11.py deprecated/tests/`
@@ -57,5 +57,5 @@
     - Do not pre-create `deprecated/MLLM_JAX/<dir>` when moving a whole directory; remove the empty destination dir (e.g. `rmdir deprecated/MLLM_JAX/vision`) and retry.
   **References**:
   - `deprecated/README.md`
-  - `docs/sops/tpu-grpo-gsm8k-qwen25-7b-3steps.md`
+  - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`
   - Commit `f886cf8`

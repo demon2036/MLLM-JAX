@@ -13,8 +13,8 @@
 
 ## Update note (current `main` branch)
 
-- The current GRPO runner treats `rollout.batch_size` as **global prompts/step**. The configs in `plugins/training/configs/*bs128*.yaml` target **128 sequences/step** by setting `rollout.batch_size=16` and `rollout.n=8`.
-- For a smaller model on v6e-8, prefer `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` (launcher: `scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_nohup.sh`).
+- Default config: `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` (`rollout.batch_size=16`, `rollout.n=8` → `128 sequences/step`).
+- Launcher: `bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh --config <path>.yaml` (W&B is config-driven via `wandb_mode` in YAML).
 
 ## Steps (commands actually used)
 
@@ -62,19 +62,18 @@ Record the host key fingerprint shown on first connect and pass it explicitly:
 ### 7) Start a 100-step run (bs=128 sequences) via nohup helper
 
 Config notes:
-- Config: `plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml`
-- `rollout.batch_size=128` means global sequences per training step (across all processes/hosts)
-- `rollout.num_pre_q=8` => global prompts/step = `128/8=16`; on 1-host v6e-8 this infers `rollout.prompt_batch_size=16` and `local_batch=128`
-- `train.micro_batch_size=16` => runner infers `train.grad_accum_steps=8` at runtime (so update sees 128 sequences/step)
-- `rollout.max_length_sample=1024`, `rollout.global_length=512`, `eval_every_steps=10`, `eval_split=test`
+- Config: `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
+- Semantics: `rollout.batch_size` is global prompts/step; `rollout.n` is samples/prompt; global sequences/step = `16 * 8 = 128`.
+- `train.micro_batch_size_per_device=4` → runner infers a compatible global micro-batch and `train.grad_accum_steps` at runtime.
+- W&B is config-driven via `wandb_mode` in YAML (set `online` for verification).
 
-- `$run_ts = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss'); $wandb_name = "grpo_gsm8k_v6e-8_0fb993a_bs128_steps100_len1024_$run_ts"; gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command "set -euo pipefail; cd /root/MLLM-JAX; export WANDB_MODE=online; export WANDB_PROJECT=mllm-jax-grpo-gsm8k; export WANDB_NAME=$wandb_name; export ENV_NAME=mllm-jax; export CONFIG_PATH=plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml; bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh"`
+- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh --env-name mllm-jax --config plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml'`
 
 ### 8) Monitor and verify exit code
 
 - `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command 'ps -p <PID> -o pid=,etime=,cmd= || echo process_not_running'`
-- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command 'grep -n \"step=\" /root/MLLM-JAX/logs/nohup_grpo_gsm8k_bs128_steps100_latest.log | tail -n 5 || true'`
-- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command 'cat /root/MLLM-JAX/logs/nohup_grpo_gsm8k_bs128_steps100_latest.exit'`  # expect `0`
+- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command 'grep -n \"step=\" /root/MLLM-JAX/logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.log | tail -n 5 || true'`
+- `gcloud alpha compute tpus tpu-vm ssh root@$TPU_NAME --project $PROJECT --zone $ZONE --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=$HOSTKEY --command 'cat /root/MLLM-JAX/logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.exit'`  # expect `0`
 
 ### 9) Extract final metrics from `wandb-summary.json` (no W&B API needed)
 
@@ -82,7 +81,7 @@ Config notes:
 
 ## Expected Result
 
-- `logs/nohup_grpo_gsm8k_bs128_steps100_latest.exit` contains `0`.
+- `logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.exit` contains `0`.
 - `wandb-summary.json` includes final `train/*` + `eval/*` metrics.
 
 ## Observed Result (this verified run)
@@ -101,4 +100,4 @@ Config notes:
 - `docs/sops/tpu-vm-repo-sync.md`
 - `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-100steps.md`
 - `scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh`
-- `plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml`
+- `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`

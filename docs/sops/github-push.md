@@ -11,7 +11,7 @@
   - Check working tree status:
     - `git status -sb`
   - Run local checks (if any):
-    - `python -m py_compile training2.py scripts/run_smoke_grpo_gsm8k_qwen25_7b.py scripts/run_smoke_train_qwen25_7b.py test_jit8.py`
+    - `python -m py_compile training2.py scripts/run_grpo_gsm8k_training.py test_jit8.py`
   - Stage changes:
     - `git add -A`
   - Commit with a Conventional Commit message:

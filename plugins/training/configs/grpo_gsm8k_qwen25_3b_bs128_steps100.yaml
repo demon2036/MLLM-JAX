@@ -31,6 +31,7 @@ train:
 mesh_shape: 1,-1,1
 
 wandb_project: mllm-jax-grpo-gsm8k
+wandb_mode: online
 wandb_name: null
 
 reward_weights: [1.0, 0.5, 0.5]

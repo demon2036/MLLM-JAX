@@ -42,6 +42,10 @@ class GRPOTrainConfig:
 
 @dataclass(frozen=True)
 class GRPOGsm8kConfig:
+    # The YAML config path used to construct this run (as passed to the CLI).
+    # Kept for W&B traceability (so runs can be mapped back to a committed file).
+    config_path: str
+
     model_path: str
     steps: int
     rollout: GRPORolloutConfig
@@ -49,6 +53,7 @@ class GRPOGsm8kConfig:
     mesh_shape: str
 
     wandb_project: str
+    wandb_mode: str
     wandb_name: str
     reward_weights: tuple[float, float, float] = (1.0, 0.5, 0.5)
     eval_every_steps: int = 0
@@ -67,12 +72,13 @@ def _maybe_init_wandb(cfg: GRPOGsm8kConfig):
 
     if jax.process_index() != 0:
         return None
-    if os.environ.get("WANDB_MODE") == "disabled":
+    mode = str(cfg.wandb_mode or "online").strip().lower()
+    if mode in {"disabled", "disable", "off"}:
         return None
     try:
         import wandb
 
-        wandb.init(project=cfg.wandb_project, name=cfg.wandb_name, config=asdict(cfg))
+        wandb.init(project=cfg.wandb_project, name=cfg.wandb_name, config=asdict(cfg), mode=mode)
         return wandb
     except Exception as e:
         print(f"wandb disabled due to init error: {e}")

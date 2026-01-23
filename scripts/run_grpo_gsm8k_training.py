@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import time
 from argparse import ArgumentParser
@@ -37,6 +38,19 @@ def _load_dotenv_if_present() -> None:
                 if existing is None or str(existing).strip() == "":
                     os.environ[k] = v
         return
+
+
+def _maybe_git_short_sha() -> str | None:
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=REPO_ROOT,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except Exception:
+        return None
+    return out or None
 
 
 def _set_by_path(cfg: dict[str, Any], key_path: str, value: Any) -> None:
@@ -104,64 +118,9 @@ def _get_int_from_aliases(
     return parsed[0][1]
 
 
-def _maybe_override_from_env(cfg: dict[str, Any], *, env: str, key_path: str, cast) -> None:
-    value = os.environ.get(env)
-    if value is None:
-        return
-    _set_by_path(cfg, key_path, cast(value))
-
-
-def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
-    """Allow existing env-var based runs to keep working.
-
-    The TPU SOPs in this repo historically exported env vars like `STEPS=20`.
-    YAML configs are now supported, but env vars remain optional overrides.
-    """
-    cfg = dict(cfg)
-    _maybe_override_from_env(cfg, env="MODEL_PATH", key_path="model_path", cast=str)
-    _maybe_override_from_env(cfg, env="STEPS", key_path="steps", cast=int)
-
-    # Rollout (generation)
-    _maybe_override_from_env(cfg, env="ROLLOUT_BACKEND", key_path="rollout.backend", cast=str)
-    # Prompt batch size per training step (global, across all processes).
-    _maybe_override_from_env(cfg, env="ROLLOUT_BATCH_SIZE", key_path="rollout.batch_size", cast=int)
-    _maybe_override_from_env(cfg, env="BATCH_SIZE", key_path="rollout.batch_size", cast=int)
-    _maybe_override_from_env(cfg, env="ROLLOUT_PROMPT_BATCH_SIZE", key_path="rollout.batch_size", cast=int)
-
-    _maybe_override_from_env(cfg, env="ROLLOUT_N", key_path="rollout.n", cast=int)
-    _maybe_override_from_env(cfg, env="NUM_PRE_Q", key_path="rollout.n", cast=int)
-    _maybe_override_from_env(cfg, env="GLOBAL_LENGTH", key_path="rollout.global_length", cast=int)
-    _maybe_override_from_env(cfg, env="MAX_LENGTH_SAMPLE", key_path="rollout.max_length_sample", cast=int)
-
-    # Train (update)
-    _maybe_override_from_env(cfg, env="TRAIN_GLOBAL_MICRO_BATCH_SIZE", key_path="train.micro_batch_size", cast=int)
-    _maybe_override_from_env(cfg, env="TRAIN_MICRO_BATCH_SIZE_PER_PROCESS", key_path="train.micro_batch_size", cast=int)
-    _maybe_override_from_env(cfg, env="TRAIN_MICRO_BATCH_SIZE", key_path="train.micro_batch_size", cast=int)
-    _maybe_override_from_env(
-        cfg, env="TRAIN_MICRO_BATCH_SIZE_PER_DEVICE", key_path="train.micro_batch_size_per_device", cast=int
-    )
-    # Backward-compatible alias.
-    _maybe_override_from_env(
-        cfg, env="TRAIN_PER_DEVICE_MICRO_BATCH_SIZE", key_path="train.micro_batch_size_per_device", cast=int
-    )
-    _maybe_override_from_env(cfg, env="MAX_LENGTH_TOTAL", key_path="train.max_length_total", cast=int)
-    _maybe_override_from_env(cfg, env="PPO_EPOCHS", key_path="train.ppo_epochs", cast=int)
-    _maybe_override_from_env(cfg, env="GRAD_ACCUM_STEPS", key_path="train.grad_accum_steps", cast=int)
-    _maybe_override_from_env(cfg, env="BETA", key_path="train.beta", cast=float)
-
-    # Infra / logging
-    _maybe_override_from_env(cfg, env="MESH_SHAPE_FSDP", key_path="mesh_shape", cast=str)
-    _maybe_override_from_env(cfg, env="WANDB_PROJECT", key_path="wandb_project", cast=str)
-    _maybe_override_from_env(cfg, env="WANDB_NAME", key_path="wandb_name", cast=str)
-    _maybe_override_from_env(cfg, env="EVAL_EVERY_STEPS", key_path="eval_every_steps", cast=int)
-    _maybe_override_from_env(cfg, env="EVAL_BATCHES", key_path="eval_batches_per_process", cast=int)
-    _maybe_override_from_env(cfg, env="EVAL_SPLIT", key_path="eval_split", cast=str)
-    return cfg
-
-
-def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
-    model_path = str(cfg.get("model_path") or "Qwen/Qwen2.5-7B-Instruct")
-    steps = int(cfg.get("steps") or 20)
+def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
+    model_path = str(cfg.get("model_path") or "Qwen/Qwen2.5-3B-Instruct")
+    steps = int(cfg.get("steps") or 100)
 
     rollout_n = _get_int_from_aliases(
         cfg,
@@ -314,9 +273,24 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
         raise ValueError(f"train.optimizer must be a dict or string, got {type(optimizer_raw).__name__}")
 
     wandb_project = str(cfg.get("wandb_project") or "mllm-jax-grpo-gsm8k")
+
+    wandb_mode_raw = cfg.get("wandb_mode")
+    if wandb_mode_raw is None or str(wandb_mode_raw).strip() == "":
+        wandb_mode = "online" if os.environ.get("WANDB_API_KEY") else "disabled"
+    else:
+        wandb_mode = str(wandb_mode_raw).strip().lower()
+    if wandb_mode not in {"online", "offline", "disabled"}:
+        raise ValueError("wandb_mode must be one of: online, offline, disabled")
+
     wandb_name = cfg.get("wandb_name")
     if wandb_name is None or str(wandb_name).strip() == "":
-        wandb_name = f"grpo_gsm8k_{time.strftime('%Y%m%d_%H%M%S', time.gmtime())}_steps{steps}"
+        ts = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+        tag = os.path.basename(str(config_path))
+        if tag.endswith(".yaml"):
+            tag = tag[: -len(".yaml")]
+        tag = tag or "grpo_gsm8k"
+        sha = _maybe_git_short_sha()
+        wandb_name = f"{tag}_{sha}_{ts}" if sha else f"{tag}_{ts}"
     wandb_name = str(wandb_name)
 
     reward_weights_raw = cfg.get("reward_weights") or (1.0, 0.5, 0.5)
@@ -336,6 +310,7 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
     eval_split = str(cfg.get("eval_split") or "test")
 
     return GRPOGsm8kConfig(
+        config_path=str(config_path),
         model_path=model_path,
         steps=steps,
         rollout=GRPORolloutConfig(
@@ -356,6 +331,7 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
         ),
         mesh_shape=mesh_shape,
         wandb_project=wandb_project,
+        wandb_mode=wandb_mode,
         wandb_name=wandb_name,
         reward_weights=reward_weights,
         eval_every_steps=eval_every_steps,
@@ -368,8 +344,8 @@ def main() -> None:
     parser = ArgumentParser(description="Run GRPO/GSM8K training via plugins/training runner.")
     parser.add_argument(
         "--config",
-        default="plugins/training/configs/grpo_gsm8k_default.yaml",
-        help="YAML config path (optional).",
+        default="plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml",
+        help="YAML config path.",
     )
     parser.add_argument(
         "--set",
@@ -387,12 +363,43 @@ def main() -> None:
     _load_dotenv_if_present()
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-    if os.environ.get("WANDB_MODE") is None and os.environ.get("WANDB_API_KEY"):
-        os.environ["WANDB_MODE"] = "online"
 
-    cfg_dict = load_config(args.config if args.config else None, args.set)
-    cfg_dict = _apply_env_overrides(cfg_dict)
-    cfg = _cfg_from_dict(cfg_dict)
+    deprecated_env_overrides = [
+        "MODEL_PATH",
+        "STEPS",
+        "ROLLOUT_BACKEND",
+        "ROLLOUT_BATCH_SIZE",
+        "BATCH_SIZE",
+        "ROLLOUT_PROMPT_BATCH_SIZE",
+        "ROLLOUT_N",
+        "NUM_PRE_Q",
+        "GLOBAL_LENGTH",
+        "MAX_LENGTH_SAMPLE",
+        "TRAIN_GLOBAL_MICRO_BATCH_SIZE",
+        "TRAIN_MICRO_BATCH_SIZE_PER_PROCESS",
+        "TRAIN_MICRO_BATCH_SIZE",
+        "TRAIN_MICRO_BATCH_SIZE_PER_DEVICE",
+        "TRAIN_PER_DEVICE_MICRO_BATCH_SIZE",
+        "MAX_LENGTH_TOTAL",
+        "PPO_EPOCHS",
+        "GRAD_ACCUM_STEPS",
+        "BETA",
+        "MESH_SHAPE_FSDP",
+        "WANDB_PROJECT",
+        "WANDB_NAME",
+        "WANDB_MODE",
+        "EVAL_EVERY_STEPS",
+        "EVAL_BATCHES",
+        "EVAL_SPLIT",
+    ]
+    set_deprecated_env = [k for k in deprecated_env_overrides if str(os.environ.get(k, "")).strip() != ""]
+    if set_deprecated_env:
+        details = ", ".join(f"{k}={os.environ.get(k)!r}" for k in set_deprecated_env)
+        print(f"WARNING: ignoring deprecated env var overrides (use YAML instead): {details}")
+
+    config_path = str(args.config or "")
+    cfg_dict = load_config(config_path if config_path else None, args.set)
+    cfg = _cfg_from_dict(cfg_dict, config_path=config_path or "<default>")
 
     cfg_out = asdict(cfg)
     cfg_out["rollout"]["sequences_global_per_step"] = int(cfg.rollout.batch_size) * int(cfg.rollout.n)

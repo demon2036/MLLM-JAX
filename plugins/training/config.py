@@ -13,8 +13,8 @@ _ENV_PATTERN = re.compile(r"\$(\w+|\{(\w+)\})")
 
 DEFAULT_CONFIG: dict[str, Any] = {
     # Model / loop
-    "model_path": "Qwen/Qwen2.5-7B-Instruct",
-    "steps": 20,
+    "model_path": "Qwen/Qwen2.5-3B-Instruct",
+    "steps": 100,
     # Rollout (generation) vs Train (update) are separated, AReaL-style.
     "rollout": {
         # Rollout backend selector (swappable generation engine).
@@ -25,17 +25,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         #
         # Each prompt is expanded to `n` sampled completions, so the global
         # sequence batch is: `batch_size * n`.
-        "batch_size": 32,
+        "batch_size": 16,
         # Number of samples per prompt (GRPO group size, a.k.a. K / num_pre_q).
         "n": 8,
         "global_length": 512,
-        "max_length_sample": 64,
+        "max_length_sample": 1024,
     },
     "train": {
         # Optional: sequences per process per micro-step.
         "micro_batch_size": None,
         # Optional: sequences per device per micro-step.
-        "micro_batch_size_per_device": None,
+        "micro_batch_size_per_device": 4,
         "ppo_epochs": 1,
         "beta": 0.0,
         # Optimizer (pluggable; defaults match `training2.get_state`).
@@ -57,12 +57,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "mesh_shape": "1,-1,1",
     # Logging
     "wandb_project": "mllm-jax-grpo-gsm8k",
+    "wandb_mode": "online",
     "wandb_name": None,
     # Rewards
     "reward_weights": [1.0, 0.5, 0.5],
     # Eval (optional)
     # Run a lightweight eval rollout+reward every N steps (0 disables).
-    "eval_every_steps": 0,
+    "eval_every_steps": 10,
     "eval_batches_per_process": 1,
     "eval_split": "test",
 }

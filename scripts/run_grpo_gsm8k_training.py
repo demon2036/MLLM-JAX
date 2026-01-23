@@ -270,6 +270,49 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
     beta = float(beta or 0.0)
     mesh_shape = str(cfg.get("mesh_shape") or "1,-1,1")
 
+    from plugins.training.update.optimizer import LRScheduleConfig, OptimizerConfig
+
+    optimizer_raw = _get_by_path(cfg, "train.optimizer")
+    if optimizer_raw is None:
+        optimizer_cfg = OptimizerConfig()
+    elif isinstance(optimizer_raw, str):
+        optimizer_cfg = OptimizerConfig(name=str(optimizer_raw))
+    elif isinstance(optimizer_raw, dict):
+        lr_raw = optimizer_raw.get("lr_schedule")
+        if lr_raw is None:
+            lr_raw = {}
+        if not isinstance(lr_raw, dict):
+            raise ValueError("train.optimizer.lr_schedule must be a dict")
+
+        warmup_steps_raw = lr_raw.get("warmup_steps")
+        warmup_steps = int(warmup_steps_raw) if warmup_steps_raw is not None else None
+
+        init_value_raw = lr_raw.get("init_value")
+        peak_value_raw = lr_raw.get("peak_value")
+        end_value_raw = lr_raw.get("end_value")
+        warmup_ratio_raw = lr_raw.get("warmup_ratio")
+
+        lr_cfg = LRScheduleConfig(
+            type=str(lr_raw.get("type") or "warmup_cosine"),
+            init_value=float(init_value_raw) if init_value_raw is not None else 0.0,
+            peak_value=float(peak_value_raw) if peak_value_raw is not None else 1e-6,
+            end_value=float(end_value_raw) if end_value_raw is not None else 0.0,
+            warmup_ratio=float(warmup_ratio_raw) if warmup_ratio_raw is not None else 0.05,
+            warmup_steps=warmup_steps,
+        )
+
+        name_raw = optimizer_raw.get("name")
+        clip_norm_raw = optimizer_raw.get("clip_norm")
+        weight_decay_raw = optimizer_raw.get("weight_decay")
+        optimizer_cfg = OptimizerConfig(
+            name=str(name_raw) if name_raw is not None else "lion",
+            clip_norm=float(clip_norm_raw) if clip_norm_raw is not None else 1.0,
+            weight_decay=float(weight_decay_raw) if weight_decay_raw is not None else 1e-8,
+            lr_schedule=lr_cfg,
+        )
+    else:
+        raise ValueError(f"train.optimizer must be a dict or string, got {type(optimizer_raw).__name__}")
+
     wandb_project = str(cfg.get("wandb_project") or "mllm-jax-grpo-gsm8k")
     wandb_name = cfg.get("wandb_name")
     if wandb_name is None or str(wandb_name).strip() == "":
@@ -309,6 +352,7 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
             ppo_epochs=ppo_epochs,
             grad_accum_steps=grad_accum_steps,
             beta=beta,
+            optimizer=optimizer_cfg,
         ),
         mesh_shape=mesh_shape,
         wandb_project=wandb_project,

@@ -36,6 +36,7 @@
 - 4-phase RL interface research (Tunix/AReaL/VERL/MaxText): `docs/sops/rl-four-phase-interface-research.md`
 - 4-phase RL interface implementation (GRPO runner modules): `docs/sops/rl-four-phase-interface-implementation.md`
 - RL phase-folder layout (remove `grpo/`): `docs/sops/rl-phase-folder-layout.md`
+- RL pluggable optimizer (`train.optimizer`): `docs/sops/rl-pluggable-optimizer.md`
 
 ## Browse by area (component-based)
 
@@ -80,6 +81,7 @@
 - `docs/sops/rl-four-phase-interface-research.md`
 - `docs/sops/rl-four-phase-interface-implementation.md`
 - `docs/sops/rl-phase-folder-layout.md`
+- `docs/sops/rl-pluggable-optimizer.md`
 - `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 - `docs/sops/grpo-gsm8k-runner-batch-size.md`
 - `docs/sops/grpo-gsm8k-metrics.md`

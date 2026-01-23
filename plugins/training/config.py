@@ -38,6 +38,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "micro_batch_size_per_device": None,
         "ppo_epochs": 1,
         "beta": 0.0,
+        # Optimizer (pluggable; defaults match `training2.get_state`).
+        "optimizer": {
+            "name": "lion",
+            "clip_norm": 1.0,
+            "weight_decay": 1e-8,
+            "lr_schedule": {
+                "type": "warmup_cosine",
+                "init_value": 0.0,
+                "peak_value": 1e-6,
+                "end_value": 0.0,
+                "warmup_ratio": 0.05,
+                "warmup_steps": None,
+            },
+        },
     },
     # Mesh
     "mesh_shape": "1,-1,1",

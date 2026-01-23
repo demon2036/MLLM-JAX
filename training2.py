@@ -53,6 +53,7 @@ def get_state(
     max_lengths=None,
     beta: float = 0.04,
     create_sampler: bool = True,
+    tx: Any | None = None,
 ):
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
     model_ref = get_model(mesh, model_path=model_path, only_model=True) if beta != 0 else None
@@ -77,24 +78,26 @@ def get_state(
 
 
     def init_fn(params):
-
-        learning_rate = optax.warmup_cosine_decay_schedule(
-            init_value=0,
-            peak_value=1e-6,
-            warmup_steps=int(training_steps*0.05),
-            decay_steps=training_steps,
-            end_value=0,
-        )
-        # tx = optax.adamw(learning_rate)
-        tx = optax.lion(learning_rate,weight_decay=1e-8)
-        # tx = optax.sgd(learning_rate)
-        tx = optax.chain(optax.clip_by_global_norm(1.0), tx)
+        if tx is None:
+            learning_rate = optax.warmup_cosine_decay_schedule(
+                init_value=0,
+                peak_value=1e-6,
+                warmup_steps=int(training_steps*0.05),
+                decay_steps=training_steps,
+                end_value=0,
+            )
+            # tx_impl = optax.adamw(learning_rate)
+            tx_impl = optax.lion(learning_rate,weight_decay=1e-8)
+            # tx_impl = optax.sgd(learning_rate)
+            tx_impl = optax.chain(optax.clip_by_global_norm(1.0), tx_impl)
+        else:
+            tx_impl = tx
         if grad_accum_steps > 1:
             print(f'{grad_accum_steps=}')
             grad_accum = jax.tree_util.tree_map(jnp.zeros_like, params)
 
 
-        return TrainState.create(apply_fn=train_module.apply,params=params,tx=tx,
+        return TrainState.create(apply_fn=train_module.apply,params=params,tx=tx_impl,
                                  ref_params=copy.deepcopy(params) if beta!=0 else None,
                                  micro_step=0,
                                  micro_in_mini=grad_accum_steps,

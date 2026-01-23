@@ -3,13 +3,14 @@ from __future__ import annotations
 import os
 import random
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 import math
 
 import numpy as np
 
+from plugins.training.update.optimizer import OptimizerConfig
 
 @dataclass(frozen=True)
 class GRPORolloutConfig:
@@ -36,6 +37,7 @@ class GRPOTrainConfig:
     ppo_epochs: int = 1
     grad_accum_steps: int = 1
     beta: float = 0.0
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
 
 
 @dataclass(frozen=True)
@@ -155,6 +157,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     from plugins.training.advantage.modules import GroupIdGRPOAdvantageModule
     from plugins.training.reward.modules import WeightedRewardModule
     from plugins.training.rollout.modules import RolloutBackendModule
+    from plugins.training.update.optimizer import build_tx
     from plugins.training.update.modules import PPOUpdateModule
     from plugins.training.update.train_step import training_step
     from training2 import (
@@ -444,6 +447,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         pad_token_id = 0
     pad_token_id = int(pad_token_id)
 
+    tx = build_tx(training_steps=cfg.steps, cfg=cfg.train.optimizer)
+
     state, sampler, _state_sharding = get_state(
         mesh,
         training_steps=cfg.steps,
@@ -453,6 +458,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         max_lengths=cfg.train.max_length_total,
         beta=cfg.train.beta,
         create_sampler=True,
+        tx=tx,
     )
     if os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1":
         from plugins.training.rollout.optimizations import patch_qwen2_attention_decode_fast

@@ -11,6 +11,11 @@
   - Repo: `https://github.com/demon2036/MLLM-JAX.git`, branch `mllm-jax-sglang`, commit `0fb993a`
   - W&B run: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/digdipr9`
 
+## Update note (current `main` branch)
+
+- The current GRPO runner treats `rollout.batch_size` as **global prompts/step**. The configs in `plugins/training/configs/*bs128*.yaml` target **128 sequences/step** by setting `rollout.batch_size=16` and `rollout.n=8`.
+- For a smaller model on v6e-8, prefer `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` (launcher: `scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_nohup.sh`).
+
 ## Steps (commands actually used)
 
 ### 0) Delete the old v4-8 (in `us-central2-b`)

@@ -6,7 +6,7 @@
 # - global sequences per step = `rollout.batch_size * rollout.n`
 # - per-process prompt batch is derived (and padded if needed) by the runner
 #
-# This config sets `rollout.batch_size=128`, `rollout.n=8` -> 1024 sequences per step (global)
+# This config sets `rollout.batch_size=16`, `rollout.n=8` -> 128 sequences per step (global)
 # - train.micro_batch_size_per_device=4 -> runner infers grad_accum_steps at runtime
 #
 # Intended use: v6e-8 / v6e-16 training (100 steps) with W&B logging.
@@ -17,7 +17,7 @@ steps: 100
 
 rollout:
   backend: naive
-  batch_size: 128
+  batch_size: 16
   n: 8
   global_length: 512
   max_length_sample: 1024

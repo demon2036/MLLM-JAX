@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Start a 100-step GRPO/GSM8K run with "overall batch" = 128 sequences per step
+# Start a 100-step GRPO/GSM8K run (Qwen2.5-7B-Instruct) with "overall batch" =
+# 128 sequences per step
 # using an explicit YAML config (no training hyperparam env overrides).
 #
 # This script is intended to be executed ON the TPU VM inside a Git-synced repo
 # checkout (e.g. `/root/MLLM-JAX`).
+#
+# Config note:
+# - The runner treats `rollout.batch_size` as global prompts/step. This launcher
+#   targets 128 sequences/step by using `rollout.batch_size=16` and `rollout.n=8`.
 #
 # Optional env vars:
 # - ENV_NAME: conda env name (default: mllm-jax)

@@ -35,9 +35,9 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
 
     def test_print_config_bs128(self) -> None:
         out = self._run(["--print-config", "--config", "plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml"])
-        self.assertIn("batch_size: 128", out)
+        self.assertIn("batch_size: 16", out)
         self.assertIn("n: 8", out)
-        self.assertIn("sequences_global_per_step: 1024", out)
+        self.assertIn("sequences_global_per_step: 128", out)
 
     def test_print_config_qwen25_3b_bs128(self) -> None:
         out = self._run(
@@ -48,8 +48,9 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
             ]
         )
         self.assertIn("model_path: Qwen/Qwen2.5-3B-Instruct", out)
-        self.assertIn("batch_size: 128", out)
+        self.assertIn("batch_size: 16", out)
         self.assertIn("n: 8", out)
+        self.assertIn("sequences_global_per_step: 128", out)
 
 
 if __name__ == "__main__":

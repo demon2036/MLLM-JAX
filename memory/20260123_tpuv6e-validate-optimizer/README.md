@@ -227,3 +227,59 @@ Evidence:
   - `Loaded credentials ... from WANDB_API_KEY`
   - Run URL: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/pge8fy3q`
 - `Traceback` grep returned no matches at this point.
+
+## Step 24 - Confirm OOM root cause on v6e-8 run
+Completion criteria: capture the exact failure (stack trace) + the effective resolved config printed by the runner.
+Evidence:
+- Remote log/exit check (exit 0):
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123090716 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:CPEH49k4vjIrlHWA0i/upPfisxSH0ZnEC7gPDgZp/1M --command 'set -euo pipefail; cd /root/MLLM-JAX; echo COMMIT=$(git rev-parse --short HEAD); if [ -f logs/nohup_grpo_gsm8k_bs128_steps100_latest.log.pid ]; then pid=$(cat logs/nohup_grpo_gsm8k_bs128_steps100_latest.log.pid); echo PID=$pid; ps -p $pid -o pid,cmd || true; else echo PID_FILE_MISSING; fi; if [ -f logs/nohup_grpo_gsm8k_bs128_steps100_latest.exit ]; then echo EXIT_CODE=$(cat logs/nohup_grpo_gsm8k_bs128_steps100_latest.exit); else echo EXIT_FILE_MISSING; fi; echo --- OOM grep ---; grep -nE RESOURCE_EXHAUSTED\\|OOM logs/nohup_grpo_gsm8k_bs128_steps100_latest.log | tail -n 40 || true; echo --- tail log ---; tail -n 120 logs/nohup_grpo_gsm8k_bs128_steps100_latest.log'`
+- Key findings from the log:
+  - Model was `Qwen/Qwen2.5-7B-Instruct` (the `*_bs128_steps100` launcher defaults to the 7B config).
+  - Runner resolved `rollout.batch_size=128` prompts and `rollout.n=8` -> `sequences_global_per_step=1024`, `local_batch=1024`, `global_batch=1024`.
+  - Crash happened during rollout prefill (before any optimizer/update step):
+    - `jax.errors.JaxRuntimeError: RESOURCE_EXHAUSTED: Error allocating device buffer: Attempting to allocate 64.00M ... There are 41.14M free.`
+
+## Step 25 - Decide correct config + bs semantics going forward
+Completion criteria: pick the intended bs definition and the canonical config/script to run on v6e-8.
+Evidence:
+- Decision:
+  - Treat `bsXXX` in filenames/docs as **global sequences per training step** (historical meaning in this repo).
+  - Keep runner semantics: `rollout.batch_size` remains **global prompts per step**, so to get `bs=128` with `rollout.n=8`, set `rollout.batch_size=16` (since 16 prompts * 8 = 128 sequences).
+  - For the user-facing v6e-8 W&B run, use the explicit 3B config: `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` (and its launcher script), instead of the 7B default `*_bs128_steps100` launcher.
+
+## Step 26 - Patch bs128 configs + launchers (avoid OOM)
+Completion criteria: `*_bs128_*` YAMLs match `bs=128 sequences/step` intent and TPU launcher comments stop implying 1024 sequences.
+Evidence:
+- Updated YAML configs to use `rollout.batch_size=16` with `rollout.n=8` (128 sequences/step):
+  - `plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml`
+  - `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
+  - `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100_v6e16.yaml`
+- Updated legacy timing configs to the current (non-deprecated) schema:
+  - `plugins/training/configs/grpo_gsm8k_bs32.yaml`
+  - `plugins/training/configs/grpo_gsm8k_bs32_naive_tp.yaml`
+- Updated TPU launcher script headers to reflect the intended 128 sequences/step semantics:
+  - `scripts/tpu_vm_start_grpo_gsm8k_bs128_steps100_nohup.sh`
+  - `scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_nohup.sh`
+
+## Step 27 - Update SOP notes for bs128 + recommended config
+Completion criteria: SOPs stop implying `rollout.batch_size=128` means 128 sequences (and point to the correct 3B config for v6e-8).
+Evidence:
+- Updated batch semantics SOP:
+  - `docs/sops/grpo-gsm8k-runner-batch-size.md`
+- Added a current-`main` clarification note + recommended 3B config/script:
+  - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`
+
+## Step 28 - Run local config sanity checks + pytest
+Completion criteria: updated YAML configs are accepted by `--print-config`, and `pytest` passes (exit 0).
+Evidence:
+- Config print checks (exit 0):
+  - `python scripts/run_grpo_gsm8k_training.py --print-config --config plugins/training/configs/grpo_gsm8k_bs128_steps100.yaml`
+    - Contains `batch_size: 16` and `sequences_global_per_step: 128`
+  - `python scripts/run_grpo_gsm8k_training.py --print-config --config plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
+    - Contains `batch_size: 16` and `sequences_global_per_step: 128`
+  - `python scripts/run_grpo_gsm8k_training.py --print-config --config plugins/training/configs/grpo_gsm8k_bs32.yaml`
+  - `python scripts/run_grpo_gsm8k_training.py --print-config --config plugins/training/configs/grpo_gsm8k_bs32_naive_tp.yaml`
+  - `python scripts/run_grpo_gsm8k_training.py --print-config --config plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100_v6e16.yaml`
+- Test suite (exit 0):
+  - `python -m pytest -q`
+  - Output: `14 passed in 0.88s`

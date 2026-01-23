@@ -1,5 +1,6 @@
-# GRPO/GSM8K config: set rollout `batch_size=32` (sequences per training step, global)
-# and `max_length_sample=1024` for timing experiments.
+# GRPO/GSM8K config: set rollout `batch_size=32` prompts per training step (global)
+# with `rollout.n=1` (so prompts == sequences) and `max_length_sample=1024` for
+# timing experiments.
 #
 # Derived from: `plugins/training/configs/grpo_gsm8k_default.yaml`
 # Notes:
@@ -13,18 +14,13 @@ steps: 20
 rollout:
   backend: naive
   batch_size: 32
-  batch_size_per_process: null
-  batch_size_per_device: null
-  prompts_per_pass_per_process: null
-  prompts_per_pass_per_device: null
   n: 1
   global_length: 512
   max_length_sample: 1024
 
 train:
   # Micro-batch the update step to reduce peak memory with large rollout batches.
-  global_micro_batch_size: null
-  micro_batch_size_per_process: 4
+  micro_batch_size: 4
   micro_batch_size_per_device: null
   ppo_epochs: 1
   beta: 0.0

@@ -28,6 +28,8 @@ class TestRolloutBackendFactory(unittest.TestCase):
         self.assertIn("rollout", DEFAULT_CONFIG)
         self.assertIn("backend", DEFAULT_CONFIG["rollout"])
         self.assertEqual(DEFAULT_CONFIG["rollout"]["backend"], "naive")
+        self.assertIn("mesh_shape", DEFAULT_CONFIG["rollout"])
+        self.assertIsNone(DEFAULT_CONFIG["rollout"]["mesh_shape"])
 
     def test_create_rollout_backend_naive(self) -> None:
         backend = create_rollout_backend(name="naive", sampler=_DummySampler())

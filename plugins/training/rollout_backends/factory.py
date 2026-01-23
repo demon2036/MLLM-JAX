@@ -17,6 +17,7 @@ def create_rollout_backend(
     sampler: RolloutSampler | None = None,
     tokenizer: Any | None = None,
     model_path: str | None = None,
+    mesh_shape: str | None = None,
     **_kwargs: Any,
 ) -> RolloutBackend:
     key = str(name).strip().lower()
@@ -29,5 +30,5 @@ def create_rollout_backend(
             raise ValueError("rollout.backend='sglang' requires a sampler.")
         if model_path is None:
             raise ValueError("rollout.backend='sglang' requires model_path.")
-        return SglangJaxRolloutBackend(sampler=sampler, model_path=str(model_path))
+        return SglangJaxRolloutBackend(sampler=sampler, model_path=str(model_path), mesh_shape=mesh_shape)
     raise ValueError(f"Unknown rollout.backend={name!r}. Supported backends: {SUPPORTED_ROLLOUT_BACKENDS}")

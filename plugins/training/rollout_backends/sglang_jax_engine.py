@@ -36,6 +36,55 @@ def _env_float(name: str, default: float) -> float:
     return float(raw)
 
 
+def _parse_dp_fsdp_tp_mesh_shape(mesh_shape: str, *, device_count: int) -> tuple[int, int, int]:
+    """Parse a (dp,fsdp,tp) mesh shape string and resolve a single -1 against device_count."""
+
+    raw = str(mesh_shape).strip()
+    if raw == "":
+        raise ValueError("mesh_shape must be a non-empty string")
+
+    if ":" in raw:
+        parts = [p.strip() for p in raw.split(",") if p.strip() != ""]
+        mapping: dict[str, int] = {}
+        for part in parts:
+            if ":" not in part:
+                raise ValueError(f"Invalid named mesh part: {part!r}")
+            name, dim = part.split(":", 1)
+            mapping[str(name).strip()] = int(str(dim).strip())
+        dims = [int(mapping.get("dp", 1)), int(mapping.get("fsdp", 1)), int(mapping.get("tp", 1))]
+    else:
+        parts = [p.strip() for p in raw.split(",") if p.strip() != ""]
+        if len(parts) != 3:
+            raise ValueError(f"mesh_shape must have 3 dims (dp,fsdp,tp), got: {raw!r}")
+        dims = [int(x) for x in parts]
+
+    if dims.count(-1) > 1:
+        raise ValueError(f"mesh_shape supports at most one -1, got: {raw!r}")
+    if -1 in dims:
+        idx = dims.index(-1)
+        known = 1
+        for d in dims:
+            if d != -1:
+                known *= int(d)
+        if known <= 0:
+            raise ValueError(f"Invalid mesh_shape={raw!r} (non-positive product).")
+        if int(device_count) % int(known) != 0:
+            raise ValueError(
+                f"mesh_shape={raw!r} does not divide device_count={int(device_count)} (known_product={known})."
+            )
+        dims[idx] = int(device_count) // int(known)
+
+    dp, fsdp, tp = (int(d) for d in dims)
+    if dp <= 0 or fsdp <= 0 or tp <= 0:
+        raise ValueError(f"mesh_shape dims must be > 0, got: {raw!r}")
+    if int(dp) * int(fsdp) * int(tp) != int(device_count):
+        raise ValueError(
+            f"mesh_shape product must equal device_count, got dp*fsdp*tp={int(dp)*int(fsdp)*int(tp)} "
+            f"!= device_count={int(device_count)} (mesh_shape={raw!r})."
+        )
+    return int(dp), int(fsdp), int(tp)
+
+
 def _best_effort_extract_text(result: object) -> str | None:
     if isinstance(result, dict):
         text = result.get("text")
@@ -119,7 +168,11 @@ def _iter_qwen2_target_param_paths(*, model_config: Any) -> list[str]:
 
 
 def _qwen2_spec_for_target_path(target_path: str) -> tuple:
-    if target_path in ("model.embed_tokens.embedding", "lm_head.embedding"):
+    if target_path == "model.embed_tokens.embedding":
+        # sglang-jax Embed defaults to kernel_axes=(None, "tensor") (shard hidden dim).
+        return (None, "tensor")
+    if target_path == "lm_head.embedding":
+        # Only used when tie_word_embeddings=False (not enabled in this backend yet).
         return ("tensor", None)
     if target_path.endswith(".scale"):
         return (None,)
@@ -321,6 +374,7 @@ class SglangJaxRolloutBackend:
 
     sampler: RolloutSampler
     model_path: str
+    mesh_shape: str | None = None
 
     _engine: Any | None = None
     _model_runner: Any | None = None
@@ -355,8 +409,13 @@ class SglangJaxRolloutBackend:
         if int(jax.process_count()) != 1:
             raise NotImplementedError("SglangJaxRolloutBackend currently supports single-process TPU runs only.")
 
-        tp_size = int(jax.device_count())
+        device_count = int(jax.device_count())
+        tp_size = int(device_count)
         dp_size = 1
+        if self.mesh_shape is not None and str(self.mesh_shape).strip() != "":
+            dp, fsdp, tp = _parse_dp_fsdp_tp_mesh_shape(str(self.mesh_shape), device_count=device_count)
+            tp_size = int(tp)
+            dp_size = int(dp) * int(fsdp)
 
         from sgl_jax.srt.entrypoints.engine import Engine
         from flax import nnx

@@ -38,6 +38,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "n": 8,
         "global_length": 512,
         "max_length_sample": 64,
+        # Optional: rollout mesh shape string (dp,fsdp,tp).
+        # This is used by some rollout backends (e.g. sglang-jax Engine) to choose
+        # their tensor-parallel sizing without requiring training to use a TP mesh.
+        "mesh_shape": None,
     },
     "train": {
         # Optional: global sequences per micro-step (across all processes).

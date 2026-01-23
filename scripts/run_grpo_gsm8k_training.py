@@ -146,6 +146,10 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     _maybe_override_from_env(cfg, env="ROLLOUT_PROMPTS_PER_PASS_PER_PROCESS", key_path="rollout.prompts_per_pass_per_process", cast=int)
     _maybe_override_from_env(cfg, env="ROLLOUT_PROMPTS_PER_PASS_PER_DEVICE", key_path="rollout.prompts_per_pass_per_device", cast=int)
 
+    # Rollout mesh (dp,fsdp,tp). Some backends (e.g. sglang) can use this to run
+    # rollout on a TP mesh while training stays on an FSDP mesh via MESH_SHAPE_FSDP.
+    _maybe_override_from_env(cfg, env="MESH_SHAPE_ROLLOUT", key_path="rollout.mesh_shape", cast=str)
+
     _maybe_override_from_env(cfg, env="ROLLOUT_N", key_path="rollout.n", cast=int)
     _maybe_override_from_env(cfg, env="NUM_PRE_Q", key_path="rollout.n", cast=int)
     _maybe_override_from_env(cfg, env="GLOBAL_LENGTH", key_path="rollout.global_length", cast=int)
@@ -291,6 +295,13 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
         rollout_backend_raw = cfg.get("rollout_backend")
     rollout_backend = str(rollout_backend_raw or "naive")
 
+    rollout_mesh_shape_raw = _get_by_path(cfg, "rollout.mesh_shape")
+    if rollout_mesh_shape_raw is None:
+        rollout_mesh_shape_raw = cfg.get("rollout_mesh_shape")
+    rollout_mesh_shape = None
+    if rollout_mesh_shape_raw is not None and str(rollout_mesh_shape_raw).strip() != "":
+        rollout_mesh_shape = str(rollout_mesh_shape_raw)
+
     train_global_micro_batch_size = _get_int_from_aliases(
         cfg,
         label="train.global_micro_batch_size",
@@ -366,6 +377,7 @@ def _cfg_from_dict(cfg: dict[str, Any]) -> GRPOGsm8kConfig:
             n=rollout_n,
             global_length=global_length,
             max_length_sample=max_length_sample,
+            mesh_shape=rollout_mesh_shape,
         ),
         train=GRPOTrainConfig(
             global_micro_batch_size=train_global_micro_batch_size,

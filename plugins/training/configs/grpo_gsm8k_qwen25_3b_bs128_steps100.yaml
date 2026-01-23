@@ -24,6 +24,9 @@ rollout:
   n: 8
   global_length: 512
   max_length_sample: 1024
+  # Rollout mesh (dp,fsdp,tp). For sglang backend, this selects TP for rollout
+  # without changing training mesh (`mesh_shape` below stays FSDP).
+  mesh_shape: 1,1,-1
 
 train:
   global_micro_batch_size: null

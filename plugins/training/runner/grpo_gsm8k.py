@@ -37,6 +37,9 @@ class GRPORolloutConfig:
     max_length_sample: int = 64
     # Rollout backend selector (swappable generation engine).
     backend: str = "naive"
+    # Optional: rollout mesh shape (dp,fsdp,tp). Used by some backends (e.g. sglang)
+    # to decide their internal TP sizing without forcing training to run on a TP mesh.
+    mesh_shape: str | None = None
 
 
 @dataclass(frozen=True)
@@ -553,6 +556,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         sampler=sampler,
         tokenizer=None,
         model_path=cfg.model_path,
+        mesh_shape=cfg.rollout.mesh_shape,
     )
     eval_rollout_backend = rollout_backend
     eval_greedy_enabled = os.environ.get("EVAL_GREEDY") == "1" or os.environ.get("EVAL_FULL_GREEDY") == "1"
@@ -591,6 +595,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             sampler=eval_sampler,
             tokenizer=None,
             model_path=cfg.model_path,
+            mesh_shape=cfg.rollout.mesh_shape,
         )
         if jax.process_index() == 0:
             print("eval_greedy=1 (eval rollout uses argmax sampling)")

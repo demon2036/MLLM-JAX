@@ -399,6 +399,9 @@ class SglangJaxRolloutBackend:
     _temperature: float = field(default_factory=lambda: _env_float("SGLANG_ROLLOUT_TEMPERATURE", 1.0))
     _top_k: int = field(default_factory=lambda: _env_int("SGLANG_ROLLOUT_TOP_K", 50))
     _top_p: float = field(default_factory=lambda: _env_float("SGLANG_ROLLOUT_TOP_P", 1.0))
+    _patch_sampler_penalty_sharding: bool = field(
+        default_factory=lambda: _env_flag("SGLANG_ROLLOUT_PATCH_SAMPLER_PENALTY_SHARDING", True)
+    )
 
     def _ensure_engine(self) -> None:
         if self._engine is not None:
@@ -408,6 +411,11 @@ class SglangJaxRolloutBackend:
 
         if int(jax.process_count()) != 1:
             raise NotImplementedError("SglangJaxRolloutBackend currently supports single-process TPU runs only.")
+
+        if self._patch_sampler_penalty_sharding:
+            from plugins.sglang_jax_inference.sampler_patches import patch_sglang_sampler_penalty_cond_sharding
+
+            patch_sglang_sampler_penalty_cond_sharding()
 
         device_count = int(jax.device_count())
         tp_size = int(device_count)

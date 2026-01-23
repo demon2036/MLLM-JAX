@@ -120,3 +120,41 @@ Evidence:
 - Tests (exit 0): `python -m pytest -q` -> `14 passed in 0.92s`
 - Added SOP: `docs/sops/rl-pluggable-optimizer.md`
 - Updated SOP index: `docs/sops.md`
+
+## Step 12 - Commit and push optimizer changes
+Completion criteria: optimizer modularization changes are committed and pushed to `origin/main` so TPU can Git-sync them.
+Evidence:
+- Commit: `c05519c` (`feat: pluggable optimizer config`)
+- Command (exit 0): `git push`
+
+## Step 13 - Monitor TPU log and exitcode
+Completion criteria: the TPU smoke job finishes without traceback and reaches the expected number of steps.
+Evidence:
+- Job PID: `13003` (no longer running)
+- Log: `logs/nohup_grpo_gsm8k_smoke_20260123_081939.log`
+- Observed tail highlights:
+  - `backend=tpu process=0/1`
+  - Completed: `step=0 ...`, `step=1 ...`, `step=2 ...`
+  - `grep -n "Traceback" ...` returned no matches
+Note:
+- This ad-hoc `nohup` launcher did not write an explicit exit code file; we used “no traceback + final step printed + process exited” as success criteria.
+
+## Step 14 - Run TPU smoke new commit
+Completion criteria: run a short GRPO/GSM8K job on the latest commit, using a non-default optimizer config, to validate the optimizer modularization end-to-end.
+Evidence:
+- Git sync (exit 0):
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123075313 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:JvL8NPPiQQRJdmVaS/9OOKaHZE0XTgvat42bzU38Owo --command 'set -euo pipefail; cd /root/MLLM-JAX; git fetch --all --prune; git checkout c05519c; git status -sb'`
+- Launched smoke job (exit 0):
+  - `PID=17886`
+  - `LOG=logs/nohup_grpo_gsm8k_opt_20260123_083236.log`
+  - Command included override: `--set train.optimizer.name=adamw`
+- Log highlights:
+  - Printed optimizer block with `name: adamw`
+  - Completed: `step=0 loss=...` (with `steps: 1`)
+  - `grep -n "Traceback" ...` returned no matches
+
+## Step 15 - Delete TPU VM after validation
+Completion criteria: the TPU VM used for validation is deleted (to stop billing).
+Evidence:
+- Command (exit 0): `gcloud alpha compute tpus tpu-vm delete mllm-jax-v6e-8-260123075313 --project civil-rarity-482610-s5 --zone europe-west4-a --quiet`
+- Output: `Deleted tpu [mllm-jax-v6e-8-260123075313].`

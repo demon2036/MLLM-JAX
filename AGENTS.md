@@ -7,20 +7,20 @@
 - 接到用户指派任务后：优先检查/创建 `memory/`；先读 `memory/README.md` 看是否已有同任务记录（有则复用对应 folder 并继续追加；没有则新建 `memory/YYYYMMDD_<slug>/`，并在 `memory/README.md` 登记 folder 名字与用途）。
 - 无论任务大小，若提供 plan/update_plan（或 start plan）函数，每次任务都必须调用；若工具不可用，执行前以清晰优雅的列表列出计划并直接开始执行，不等待用户确认。
 - 一旦开了 plan：允许按批次记录（建议每 5–10 个 step，或每个关键 milestone 记录一次），在 `memory/<task>/README.md` 追加“完成判据 + 证据”（例如：命令+exit code、关键输出摘要、改动文件、通过的测试/验证），便于后续复用。
-- 尽量不反问用户：先查 `memory/` 里潜在相关经验（优先看 `memory/README.md`），再查 `docs/` 里潜在相关经验（优先看 `docs/sops/`），再在仓库内搜索（如 `rg`/`git`；无 `rg` 时用 `git grep`/`Select-String`），必要时做网络搜索（官方文档/GitHub/PyPI），并把已用链接或命令写入 SOP。
+- 尽量不反问用户：先查 `memory/` 里潜在相关经验（优先看 `memory/README.md`），再查 `docs/` 里潜在相关经验（优先看 `docs/sops.md`；若是分支专用 SOP，再看 `docs/sops/<branch>/`），再在仓库内搜索（如 `rg`/`git`；无 `rg` 时用 `git grep`/`Select-String`），必要时做网络搜索（官方文档/GitHub/PyPI），并把已用链接或命令写入 SOP。
 - 仅在搜索后仍无法推进时才提问，并一次问清最少必要信息。
 - 保持无侵入开发：自定义代码一律放在 `plugins/`，不要直接改动 `easydel/` 或其他上游仓库。
 - 配置语义清晰优先：禁止在 `scripts/` 里用环境变量/拼接参数去“覆盖”训练超参；如果要改配置，必须新建一个新的 YAML config，并用 `*.sh --config <path>.yaml` 启动，让 W&B 配置可追踪、可复现。
 - W&B：允许临时 `disabled`（例如本地调试），但在对外回复/交付前必须用 `wandb_mode=online` 跑至少一次验证；推荐整个迭代周期保持 online，便于用户在 W&B 上核对。
 - TPU 上的覆盖/替换通过自写 shell 脚本完成（例如同步到覆盖目录 + `PYTHONPATH`），避免改动原始仓库内容。
-- TPU 开发/运行采用 Git 同步：本地修改代码 → `git commit`/`git push` 到 GitHub → TPU VM 通过 `scripts/ssh_tpu_vm_root.sh`（或 `gcloud ... tpu-vm ssh`）执行 `git clone`/`git pull` 获取代码并运行；不要用 `gcloud ... scp` / `scp` 手动拷贝代码（见 `docs/sops/tpu-vm-repo-sync.md`）。（例外：同步本地 secret 如 `.env`，用 `scripts/sync_env_to_tpu_vm.sh` 分发到 worker=all。）
+- TPU 开发/运行采用 Git 同步：本地修改代码 → `git commit`/`git push` 到 GitHub → TPU VM 通过 `scripts/ssh_tpu_vm_root.sh`（或 `gcloud ... tpu-vm ssh`）执行 `git clone`/`git pull` 获取代码并运行；不要用 `gcloud ... scp` / `scp` 手动拷贝代码（见 `docs/sops.md#tpu-vm-repo-sync`）。（例外：同步本地 secret 如 `.env`，用 `scripts/sync_env_to_tpu_vm.sh` 分发到 worker=all。）
 - `memory/` 是长期可复用资产，不删除；仍允许使用 repo 根目录的临时目录 `memo/` 记录调查/调试草稿（例如 `memo/<task>.md`），但在**完成任务并准备回复用户之前**必须删除整个 `memo/` 目录，避免把临时笔记作为交付物留在仓库里。
 
 ## Project Structure & Module Organization
 
 This repository is focused on validating and documenting `sglang-jax`. The repo is currently minimal; keep the layout simple and documented as it grows. Recommended folders:
 
-- `docs/` for SOPs, validation notes, and references.
+- `docs/` for SOPs, validation notes, and references (branch-specific SOPs under `docs/sops/<branch>/`, e.g., A → `docs/sops/A/`, B → `docs/sops/B/`).
 - `plugins/` for non-invasive overrides and integration code.
 - `scripts/` for repeatable setup or test helpers.
 - `tests/` for any local verification scripts.
@@ -71,4 +71,4 @@ Recommended format:
 - **Troubleshooting**: Common errors and fixes
 - **References**: Links or commit SHAs used
 
-Add SOPs under `docs/sops/` (or add a new module) and keep `docs/sops.md` updated; append a short log here only if the entry is very small.
+Add/maintain common/stable SOPs in `docs/sops.md`. If the SOP is branch-specific, create a dedicated folder per branch so they are “错开”: A branch → `docs/sops/A/`, B branch → `docs/sops/B/`.

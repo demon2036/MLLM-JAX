@@ -3,6 +3,7 @@
 ## Quick tasks (task-based)
 
 - Repo setup: `docs/sops/repo-setup.md`
+- Task memory workflow (reusable logs): `docs/sops/task-memory-workflow.md`
 - Network checks: `docs/sops/network-checks.md`
 - Update repo via `git pull`: `docs/sops/git-pull-update.md`
 - Inspect diffs via `git diff`: `docs/sops/git-diff-inspect.md`
@@ -84,6 +85,7 @@
 ### Docs
 
 - `docs/sops/docs-maintenance.md`
+- `docs/sops/task-memory-workflow.md`
 
 ### Workstation
 

@@ -23,16 +23,20 @@ This explains the “should be ~2× faster but feels ~8× slower” pattern when
 - Prefer keeping `fsdp` **local per worker** and using `dp` across workers.
 
 Recommended v6e-16 mesh for this workload:
-- `mesh_shape: 4,4,1` (dp=4 across workers, fsdp=4 within each worker, tp=1)
+- Prefer `mesh_shape: auto` (repo supports this) which resolves to:
+  - `dp=process_count` (across workers)
+  - `fsdp=local_device_count` (within worker)
+  - `tp=1`
+- Equivalent explicit mesh on v6e-16: `mesh_shape: 4,4,1` (dp=4, fsdp=4, tp=1)
 
 ## Guardrails added (repo changes)
 
 - Multi-host runs should fail fast if only worker 0 is launched:
-  - Wrapper: `scripts/tpu_vm_start_grpo_gsm8k_from_config_multihost_nohup.sh` now exports `REQUIRE_MULTIHOST=1` (no hardcoded host count).
+  - Wrapper: `scripts/tpu_vm_start_grpo_gsm8k_from_config_multihost_nohup.sh` exports `REQUIRE_MULTIHOST=1` and can also set `REQUIRE_JAX_PROCESS_COUNT`.
   - Runner: `plugins/training/runner/grpo_gsm8k.py` errors if `REQUIRE_MULTIHOST=1` but `jax.process_count()==1`.
-- v6e-16 tuned config/script:
-  - Config: `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100_v6e16.yaml` (`mesh_shape: 4,4,1`)
-  - Script: `scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_v6e16_multihost_nohup.sh`
+- Mesh safety and portability:
+  - `mesh_shape: auto` is supported by `plugins/training/mesh.py` (host-local on multi-host, preserves single-host behavior).
+  - Runner prints a warning when `fsdp` spans hosts (common `mesh_shape: 1,-1,1` pitfall on v6e-16).
 
 ## Verified v6e-8 baseline (commit a8197ba; Qwen2.5-3B; bs=128 seq/step; K=8; len=1024)
 
@@ -122,12 +126,12 @@ gcloud alpha compute tpus tpu-vm ssh root@<TPU_NAME> --zone <ZONE> --worker=all 
 
 ### 4) v6e-16 run (recommended)
 
-- Use the v6e-16 tuned config + multihost wrapper:
-  - `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100_v6e16.yaml`
-  - `scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_v6e16_multihost_nohup.sh`
-- Always launch on all workers.
-- Consider disabling eval during benchmarking to avoid step-time spikes:
-  - `export EVAL_EVERY_STEPS=0`
+- Use the multihost wrapper + a config that sets `mesh_shape: auto`:
+  - Short benchmark (eval disabled): `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps20_v6e16_bench.yaml`
+  - Longer run (100 steps): `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
+  - Launcher: `bash scripts/tpu_vm_start_grpo_gsm8k_from_config_multihost_nohup.sh --config <path>.yaml --require-jax-process-count 4`
+- Always launch on all workers (`--worker=all`).
+- Do not use env vars to override hyperparams (this repo’s launcher intentionally ignores them); instead use a YAML with `eval_every_steps: 0` for timing runs.
 
 Expected log header (process 0):
 - `backend=tpu process=0/4`
@@ -146,9 +150,8 @@ Expected log header (process 0):
 ## References
 
 - `scripts/tpu_vm_start_grpo_gsm8k_from_config_multihost_nohup.sh`
-- `scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_nohup.sh`
-- `scripts/tpu_vm_start_grpo_gsm8k_qwen25_3b_bs128_steps100_v6e16_multihost_nohup.sh`
-- `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
-- `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100_v6e16.yaml`
+- `scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh`
+- `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` (`mesh_shape: auto`)
+- `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps20_v6e16_bench_badmesh.yaml`
+- `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps20_v6e16_bench.yaml`
 - `plugins/training/runner/grpo_gsm8k.py`
-

@@ -54,7 +54,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
     },
     # Mesh
-    "mesh_shape": "1,-1,1",
+    "mesh_shape": "auto",
     # Logging
     "wandb_project": "mllm-jax-grpo-gsm8k",
     "wandb_mode": "online",

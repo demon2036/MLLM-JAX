@@ -28,7 +28,7 @@ train:
   ppo_epochs: 1
   beta: 0.0
 
-mesh_shape: 1,-1,1
+mesh_shape: auto
 
 wandb_project: mllm-jax-grpo-gsm8k
 wandb_mode: online

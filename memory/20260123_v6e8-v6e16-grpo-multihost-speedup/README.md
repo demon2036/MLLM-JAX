@@ -39,18 +39,21 @@ These findings supersede the older hypothesis text in the SOP; the SOP will be u
 
 - **Baseline (slow)**: `on2okepg`
   - URL: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/on2okepg
+  - Repo git SHA: `92fe39b`
   - `time/train/step_avg_last10_s`: `18.6275`
   - `throughput/train/valid_tokens_per_s`: `1879.873`
   - Notes: this corresponds to the earlier (wrong-for-this-workload) host-local mesh behavior.
 
 - **Fixed (fast)**: `aqhfh8oo`
   - URL: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/aqhfh8oo
+  - Repo git SHA: `92fe39b`
   - `time/train/step_avg_last10_s`: `10.0358`
   - `throughput/train/valid_tokens_per_s`: `4144.308`
   - Notes: `mesh_shape: auto` after the fix (full-device FSDP).
 
 - **Cross-check (also fast)**: `lp716wne`
   - URL: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/lp716wne
+  - Repo git SHA: `92fe39b`
   - `time/train/step_avg_last10_s`: `10.0366`
   - `throughput/train/valid_tokens_per_s`: `4143.038`
   - Notes: explicit `mesh_shape: 1,-1,1` (full-device FSDP).
@@ -59,6 +62,7 @@ These findings supersede the older hypothesis text in the SOP; the SOP will be u
 
 - **Run**: `potc8br6`
   - URL: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/potc8br6
+  - Repo git SHA: `92fe39b`
   - `time/train/step_avg_last10_s`: `15.1143`
   - `throughput/train/valid_tokens_per_s`: `2293.045`
   - TPU: `mllm-jax-v6e-8-spot-260124030148` (zone `europe-west4-a`)

@@ -48,6 +48,7 @@ Recommended v6e-16 mesh for this workload:
 
 - `v6e-8` is **single-host** in this project (JAX `process_count=1`, `local_device_count=8`, `device_count=8`).
 - `v6e-16` is **multi-host** (4 workers; 16 chips).
+- Repo git SHA used for the runs below: `92fe39b` (branch `multi-host`).
 
 ### v6e-8 (single-host) benchmark
 

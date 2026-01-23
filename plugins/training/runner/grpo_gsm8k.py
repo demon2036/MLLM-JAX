@@ -649,6 +649,11 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         t_reward = 0.0
         t_adv = 0.0
 
+        if hasattr(rollout_backend, "sync_weights"):
+            t_sync0 = time.perf_counter()
+            rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
+            t_rollout_sync += time.perf_counter() - t_sync0
+
         for pass_idx in range(int(rollout_passes)):
             batch_items = [rng.choice(qas) for _ in range(int(cfg.rollout.prompts_per_pass_per_process))]
             prompts_base = [item["Q"] for item in batch_items]
@@ -662,11 +667,6 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             )
 
             # --- Rollout (sampling) ---
-            t_sync0 = time.perf_counter()
-            if hasattr(rollout_backend, "sync_weights"):
-                rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
-            t_rollout_sync += time.perf_counter() - t_sync0
-
             t_rollout0 = time.perf_counter()
             rollout = rollout_backend.rollout(
                 prompts=repeated_prompts,
@@ -920,6 +920,11 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             eval_rewards_all: list[np.ndarray] = []
             eval_rewards_per_func_all: list[np.ndarray] = []
 
+            if hasattr(eval_rollout_backend, "sync_weights"):
+                t_eval_sync0 = time.perf_counter()
+                eval_rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
+                eval_rollout_sync_s += time.perf_counter() - t_eval_sync0
+
             for eval_batch_idx in range(int(cfg.eval_batches_per_process)):
                 start = (step * int(cfg.eval_batches_per_process) + eval_batch_idx) * int(
                     cfg.rollout.prompts_per_pass_per_process
@@ -930,11 +935,6 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_prompts_base = [item["Q"] for item in eval_items]
                 eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(cfg.rollout.n)]
                 eval_repeated_items = [item for item in eval_items for _ in range(cfg.rollout.n)]
-
-                t_eval_sync0 = time.perf_counter()
-                if hasattr(eval_rollout_backend, "sync_weights"):
-                    eval_rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
-                eval_rollout_sync_s += time.perf_counter() - t_eval_sync0
 
                 t_eval_rollout0 = time.perf_counter()
                 eval_rollout = eval_rollout_backend.rollout(
@@ -1053,7 +1053,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         local_completion_sum_tag = 0.0
         local_completion_count = 0
 
-        if hasattr(rollout_backend, "sync_weights"):
+        if hasattr(eval_rollout_backend, "sync_weights"):
             t0 = time.perf_counter()
             eval_rollout_backend.sync_weights(state.params)  # type: ignore[attr-defined]
             t_eval_sync_s += time.perf_counter() - t0

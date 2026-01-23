@@ -289,3 +289,62 @@ Completion criteria: changes are committed and pushed to `origin/main` so the TP
 Evidence:
 - Commit: `3c4bfe1` (`fix(config): align bs128 to 128 seq`)
 - Push (exit 0): `git push`
+
+## Step 30 - Provision replacement v6e-8 TPU (spot) after preemption
+Completion criteria: a new `v6e-8` TPU VM is created and reaches `READY`, and SSH host key is recorded for batch-mode SSH/SCP.
+Evidence:
+- Previous TPU: `mllm-jax-v6e-8-260123090716` (`europe-west4-a`) reached terminal state `PREEMPTED`.
+- Created replacement TPU (spot) in `europe-west4-a`:
+  - Name: `mllm-jax-v6e-8-260123100831`
+  - State: `READY`, accelerator: `v6e-8`, internal IP: `10.164.15.196`
+- SSH host key fingerprint (captured via batch-mode SSH failure): `SHA256:KQuuRawB7coh+J9qbIjjucyD17o98TxOCoRTni0yyJU`
+
+## Step 31 - Bootstrap Miniconda + TPU runtime deps on replacement v6e-8
+Completion criteria: conda env exists; `jax[tpu]` + cpu `torch` installed; JAX sees `device_count=8` on v6e-8.
+Evidence (commands exit 0):
+- Install Miniconda:
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123100831 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:KQuuRawB7coh+J9qbIjjucyD17o98TxOCoRTni0yyJU --command 'set -euo pipefail; if [ ! -d /root/miniconda3 ]; then curl -fsSL -o /root/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh; bash /root/miniconda.sh -b -p /root/miniconda3; rm -f /root/miniconda.sh; fi; /root/miniconda3/bin/conda --version'`
+- Create env + pip:
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123100831 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:KQuuRawB7coh+J9qbIjjucyD17o98TxOCoRTni0yyJU --command 'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true; conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true; if ! conda env list | grep -Eq "^mllm-jax[[:space:]]"; then conda create -y -n mllm-jax python=3.12; fi; conda activate mllm-jax; python --version; python -m pip install -U pip'`
+- Install `jax[tpu]` + cpu `torch`:
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123100831 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:KQuuRawB7coh+J9qbIjjucyD17o98TxOCoRTni0yyJU --command 'set -euo pipefail; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; python -m pip install -U pip; python -m pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html; python -m pip install -U torch --index-url https://download.pytorch.org/whl/cpu'`
+- JAX runtime check:
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123100831 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:KQuuRawB7coh+J9qbIjjucyD17o98TxOCoRTni0yyJU --command "set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; python -c 'import jax, jaxlib; print(jax.__version__); print(jaxlib.__version__); import jax as j; print(j.default_backend()); print(j.device_count())'"`
+  - Output (key lines): `0.9.0`, `0.9.0`, `tpu`, `8`
+
+## Step 32 - Git-sync repo + install requirements + sync WANDB env
+Completion criteria: repo is checked out to the latest `origin/main`; `requirements-tpu.txt` installed; `/root/.env` present with `WANDB_API_KEY` (value not printed).
+Evidence (commands exit 0):
+- Git-sync repo on v6e-8:
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123100831 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:KQuuRawB7coh+J9qbIjjucyD17o98TxOCoRTni0yyJU --command 'set -euo pipefail; REPO_URL=https://github.com/demon2036/MLLM-JAX.git; REPO_DIR=/root/MLLM-JAX; if [ ! -d /root/MLLM-JAX/.git ]; then rm -rf /root/MLLM-JAX; git clone $REPO_URL $REPO_DIR; fi; cd $REPO_DIR; git fetch --all --prune; git checkout -B main origin/main; git reset --hard origin/main; git clean -fd; echo HEAD=$(git rev-parse --short HEAD); git status -sb'`
+  - Output (key line): `HEAD=d836f06`
+- Install Python deps from repo:
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123100831 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:KQuuRawB7coh+J9qbIjjucyD17o98TxOCoRTni0yyJU --command 'set -euo pipefail; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; python -m pip install -U -r requirements-tpu.txt'`
+- Copy `/root/.env` from v4-8 -> local temp -> v6e-8 (content not printed):
+  - `gcloud alpha compute tpus tpu-vm scp root@mllm-jax-v4-8-260122100610:/root/.env workdir/tpu_root_env.env --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --quiet --scp-flag=-batch --scp-flag=-hostkey --scp-flag=SHA256:Xy1NoS+m4LpYQNWiLlkc3Co5iIhoPzAFC39CNLmSN3s`
+  - `gcloud alpha compute tpus tpu-vm scp workdir/tpu_root_env.env root@mllm-jax-v6e-8-260123100831:/root/.env --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --quiet --scp-flag=-batch --scp-flag=-hostkey --scp-flag=SHA256:KQuuRawB7coh+J9qbIjjucyD17o98TxOCoRTni0yyJU`
+  - Cleanup (exit 0): `Remove-Item -Force workdir/tpu_root_env.env`
+- Verify `WANDB_API_KEY` is present (value not printed):
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123100831 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:KQuuRawB7coh+J9qbIjjucyD17o98TxOCoRTni0yyJU --command 'set -euo pipefail; chmod 600 /root/.env; set -a; source /root/.env; set +a; if [ -n \"${WANDB_API_KEY:-}\" ]; then echo WANDB_API_KEY_PRESENT; else echo WANDB_API_KEY_MISSING; fi'`
+  - Output: `WANDB_API_KEY_PRESENT`
+
+## Step 33 - Launch v6e-8 smoke run (Qwen2.5-3B, bs=128 seq, W&B online)
+Completion criteria: start a short end-to-end training run on v6e-8 that finishes quickly and exercises rollout/reward/advantage/update.
+Evidence:
+- Launch command (exit 0):
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123100831 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:KQuuRawB7coh+J9qbIjjucyD17o98TxOCoRTni0yyJU --command 'set -euo pipefail; cd /root/MLLM-JAX; set -a; source /root/.env; set +a; export WANDB_MODE=online; export ENV_NAME=mllm-jax; export CONFIG_PATH=plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml; export PY_ARGS=--set\\ steps=3\\ --set\\ eval_every_steps=0; bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh'`
+- Launcher output:
+  - `PID=13277`
+  - `LATEST_LOG=logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.log`
+  - `LATEST_EXIT=logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.exit`
+
+## Step 34 - Verify smoke run succeeded (no OOM)
+Completion criteria: `LATEST_EXIT` exists with `0`; log shows correct effective bs (128 sequences/step) and W&B is online.
+Evidence:
+- Exit code check (exit 0):
+  - `gcloud alpha compute tpus tpu-vm ssh root@mllm-jax-v6e-8-260123100831 --project civil-rarity-482610-s5 --zone europe-west4-a --worker 0 --ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:KQuuRawB7coh+J9qbIjjucyD17o98TxOCoRTni0yyJU --command 'set -euo pipefail; cd /root/MLLM-JAX; echo EXIT_CODE=$(cat logs/nohup_grpo_gsm8k_qwen25_3b_bs128_steps100_latest.exit)'`
+  - Output: `EXIT_CODE=0`
+- Log snippets (from `LATEST_LOG`):
+  - `model_path: Qwen/Qwen2.5-3B-Instruct`
+  - `rollout.batch_size: 16`, `rollout.n: 8`, `sequences_global_per_step: 128`
+  - W&B run URL: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/dw5y0pwx`

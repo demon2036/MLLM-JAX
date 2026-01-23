@@ -283,3 +283,9 @@ Evidence:
 - Test suite (exit 0):
   - `python -m pytest -q`
   - Output: `14 passed in 0.88s`
+
+## Step 29 - Commit and push bs128 config fix
+Completion criteria: changes are committed and pushed to `origin/main` so the TPU VM can Git-sync them.
+Evidence:
+- Commit: `3c4bfe1` (`fix(config): align bs128 to 128 seq`)
+- Push (exit 0): `git push`

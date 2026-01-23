@@ -3,6 +3,7 @@
 ## Quick tasks (task-based)
 
 - Repo setup: `docs/sops/repo-setup.md`
+- Clone reference repos into `workdir/`: `docs/sops/clone-reference-repos-into-workdir.md`
 - Network checks: `docs/sops/network-checks.md`
 - Update repo via `git pull`: `docs/sops/git-pull-update.md`
 - Inspect diffs via `git diff`: `docs/sops/git-diff-inspect.md`
@@ -47,6 +48,7 @@
 - `docs/sops/git-worktrees.md`
 - `docs/sops/github-push.md`
 - `docs/sops/repo-slim-deprecated.md`
+- `docs/sops/clone-reference-repos-into-workdir.md`
 
 ### TPU
 

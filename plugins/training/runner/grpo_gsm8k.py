@@ -16,6 +16,11 @@ from plugins.training.grpo.rewarding import compute_weighted_rewards
 from plugins.training.grpo.update import ppo_update
 
 
+def _env_flag(name: str) -> bool:
+    value = os.environ.get(name, "")
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 @dataclass(frozen=True)
 class GRPORolloutConfig:
     # Optional: batch sizes for sequences (one sequence = one (prompt, completion) sample).
@@ -178,6 +183,18 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         tag_count_reward,
     )
 
+    log_compiles = _env_flag("JAX_LOG_COMPILES")
+    explain_cache_misses = _env_flag("JAX_EXPLAIN_CACHE_MISSES")
+    if log_compiles:
+        jax.config.update("jax_log_compiles", True)
+    if explain_cache_misses:
+        jax.config.update("jax_explain_cache_misses", True)
+    if _env_flag("PRINT_JAX_COMPILE_FLAGS"):
+        print(
+            f"jax_log_compiles={int(log_compiles)} "
+            f"jax_explain_cache_misses={int(explain_cache_misses)}"
+        )
+
     train_fn = jax.jit(training_step, donate_argnums=(0,))
     # IMPORTANT: slice micro-batches inside a jitted function to preserve sharding.
     #
@@ -191,6 +208,10 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         return jax.lax.dynamic_slice_in_dim(x, start, micro_batch_size, axis=0)
 
     slice_data = jax.jit(_slice_data_impl, static_argnums=(1, 2))
+
+    if _env_flag("PRINT_JAX_JIT_FNS"):
+        print(f"train_fn={train_fn}")
+        print(f"slice_data={slice_data}")
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 

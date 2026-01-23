@@ -15,6 +15,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from plugins.training.config import load_config
+from plugins.training.algorithms import AlgoConfig
 from plugins.training.runner import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig, run_grpo_gsm8k
 
 
@@ -299,6 +300,29 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     else:
         raise ValueError("reward_weights must be a list/tuple of 3 floats")
 
+    algo_raw = cfg.get("algo")
+    if algo_raw is None:
+        algo_cfg = AlgoConfig()
+    elif isinstance(algo_raw, str):
+        algo_cfg = AlgoConfig(name=str(algo_raw))
+    elif isinstance(algo_raw, dict):
+        name_raw = algo_raw.get("name")
+        eps_raw = algo_raw.get("eps")
+        dapo_alpha_raw = algo_raw.get("dapo_alpha")
+        rloo_whiten_raw = algo_raw.get("rloo_whiten")
+        clip_range_raw = algo_raw.get("clip_range")
+
+        clip_range = float(clip_range_raw) if clip_range_raw is not None else None
+        algo_cfg = AlgoConfig(
+            name=str(name_raw) if name_raw is not None else "grpo",
+            eps=float(eps_raw) if eps_raw is not None else AlgoConfig().eps,
+            dapo_alpha=float(dapo_alpha_raw) if dapo_alpha_raw is not None else AlgoConfig().dapo_alpha,
+            rloo_whiten=bool(rloo_whiten_raw) if rloo_whiten_raw is not None else AlgoConfig().rloo_whiten,
+            clip_range=clip_range,
+        )
+    else:
+        raise ValueError(f"algo must be a dict or string, got {type(algo_raw).__name__}")
+
     eval_every_steps = int(cfg.get("eval_every_steps") or 0)
     eval_batches_per_process = _get_int_from_aliases(
         cfg,
@@ -333,6 +357,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         wandb_project=wandb_project,
         wandb_mode=wandb_mode,
         wandb_name=wandb_name,
+        algo=algo_cfg,
         reward_weights=reward_weights,
         eval_every_steps=eval_every_steps,
         eval_batches_per_process=eval_batches_per_process,

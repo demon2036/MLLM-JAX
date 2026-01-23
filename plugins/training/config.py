@@ -53,6 +53,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
             },
         },
     },
+    # Algorithm (advantage estimator + update wiring).
+    #
+    # Note: `train.ppo_epochs` remains the knob for PPO-style multi-epoch updates.
+    "algo": {
+        "name": "grpo",
+        "eps": 1e-4,
+        "dapo_alpha": 0.2,
+        "rloo_whiten": True,
+        "clip_range": None,
+    },
     # Mesh
     "mesh_shape": "1,-1,1",
     # Logging

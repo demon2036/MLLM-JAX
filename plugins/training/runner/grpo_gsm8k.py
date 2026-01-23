@@ -11,6 +11,7 @@ import math
 import numpy as np
 
 from plugins.training.update.optimizer import OptimizerConfig
+from plugins.training.algorithms import AlgoConfig, create_algorithm
 
 @dataclass(frozen=True)
 class GRPORolloutConfig:
@@ -55,6 +56,7 @@ class GRPOGsm8kConfig:
     wandb_project: str
     wandb_mode: str
     wandb_name: str
+    algo: AlgoConfig = field(default_factory=AlgoConfig)
     reward_weights: tuple[float, float, float] = (1.0, 0.5, 0.5)
     eval_every_steps: int = 0
     eval_batches_per_process: int = 1
@@ -160,11 +162,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     from MLLM_JAX.utils import get_jax_mesh2
     from prompts.prompts import system_prompt
-    from plugins.training.advantage.modules import GroupIdGRPOAdvantageModule
-    from plugins.training.reward.modules import WeightedRewardModule
     from plugins.training.rollout.modules import RolloutBackendModule
     from plugins.training.update.optimizer import build_tx
-    from plugins.training.update.modules import PPOUpdateModule
     from plugins.training.update.train_step import training_step
     from training2 import (
         get_state,
@@ -533,9 +532,12 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     reward_funcs = [reward_correct, reward_format, tag_count_reward]
     reward_func_names = [fn.__name__ for fn in reward_funcs]
-    reward_module = WeightedRewardModule(reward_funcs=reward_funcs, reward_weights=cfg.reward_weights)
-    advantage_module = GroupIdGRPOAdvantageModule(eps=1e-4)
-    update_module = PPOUpdateModule()
+    algo = create_algorithm(cfg.algo, reward_funcs=reward_funcs, reward_weights=cfg.reward_weights)
+    reward_module = algo.reward_module
+    advantage_module = algo.advantage_module
+    update_module = algo.update_module
+    if jax.process_index() == 0:
+        print(f"algo={algo.name}")
 
     rng = random.Random(0xC0FFEE + jax.process_index())
     step_times: list[float] = []

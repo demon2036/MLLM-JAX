@@ -225,20 +225,23 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     process_count = int(jax.process_count())
     tp_size = int(mesh.shape.get("tp", 1))
 
-    # Detect the common misconfiguration that makes v6e-16 look dramatically
-    # slower than v6e-8: cross-host FSDP sharding from `mesh_shape: 1,-1,1`.
+    # Detect cross-host sharding (fsdp spans processes).
     #
-    # This is only a warning (cross-host sharding can be necessary for larger
-    # models), but for decode-heavy GRPO it can dominate step time.
+    # This is informational only:
+    # - Full-device FSDP (e.g. `mesh_shape: 1,-1,1`) can be *faster* for
+    #   rollout-heavy GRPO because it maximizes parameter sharding.
+    # - If you observe slowdown due to collectives or you explicitly want dp
+    #   across hosts, try `mesh_shape: host_local` (dp=process_count,
+    #   fsdp=local_device_count) or an explicit mesh like `4,4,1` on v6e-16.
     if process_count > 1:
         fsdp_size = int(mesh.shape.get("fsdp", 1))
         if fsdp_size > int(jax.local_device_count()) and int(jax.process_index()) == 0:
             print(
-                "WARNING: mesh fsdp axis spans hosts "
+                "INFO: mesh fsdp axis spans hosts "
                 f"(fsdp={fsdp_size} > local_device_count={int(jax.local_device_count())}). "
-                "For v6e multi-host GRPO, this often slows rollout decode. "
-                "Consider `mesh_shape: auto` (dp=process_count, fsdp=local_device_count) "
-                "or an explicit host-local mesh like `mesh_shape: 4,4,1` on v6e-16."
+                "This implies parameters are sharded across all devices. "
+                "If you want host-local sharding instead, use `mesh_shape: host_local` "
+                "(dp=process_count, fsdp=local_device_count) or an explicit mesh like `4,4,1` on v6e-16."
             )
 
     # When training on a TP mesh (tp_size > 1), sharding the batch axis across TP

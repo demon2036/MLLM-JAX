@@ -38,14 +38,18 @@ def _device_sort_key(device: Any) -> tuple[int, int, str]:
 
 
 def create_mesh(mesh_shape: str):
-    """Create a JAX Mesh with safe multi-host defaults.
+    """Create a JAX Mesh with portable defaults.
 
     Supported values:
-      - "auto": dp across processes, fsdp within each host, tp=1.
-        - On single-host, this is equivalent to "1,-1,1" using
-          `mesh_utils.create_device_mesh` (keeps existing behavior).
-        - On multi-host, this builds a host-local (dp,fsdp,tp) physical mesh so
-          fsdp collectives do not cross hosts (critical for decode-heavy GRPO).
+      - "auto": full-device FSDP, topology-aware.
+        - Equivalent to "1,-1,1" (dp=1, fsdp=device_count, tp=1) on both single-
+          and multi-host. This maximizes parameter sharding and usually provides
+          the best throughput for rollout-heavy (decode-dominated) GRPO.
+      - "host_local": host-local sharding, portable across pod sizes.
+        - On multi-host, this builds a host-local physical mesh:
+          dp=process_count (across workers), fsdp=local_device_count (within a worker), tp=1.
+        - This can be useful when you explicitly want dp across hosts, but it
+          reduces the degree of parameter sharding vs full-device FSDP.
       - Any other string is forwarded to `MLLM_JAX.utils.get_jax_mesh2`.
     """
 
@@ -58,19 +62,22 @@ def create_mesh(mesh_shape: str):
     if mesh_shape == "":
         mesh_shape = "auto"
 
-    if mesh_shape != "auto":
+    if mesh_shape not in {"auto", "host_local", "host-local", "auto_host_local"}:
         return get_jax_mesh2(mesh_shape)
+
+    # Default: use the upstream, topology-aware device mesh layout.
+    if mesh_shape == "auto":
+        return get_jax_mesh2("1,-1,1")
 
     process_count = int(jax.process_count())
     local_device_count = int(jax.local_device_count())
 
-    # Single-host: preserve the historical behavior and let JAX choose a good
-    # topology-aware ordering for the 1D mesh axis.
     if process_count <= 1:
+        # Single-host: host-local is identical to full-device FSDP.
         return get_jax_mesh2("1,-1,1")
 
     # Multi-host: enforce a host-local physical mesh layout so `fsdp` is local
-    # to a worker and `dp` spans workers (avoids cross-host FSDP collectives).
+    # to a worker and `dp` spans workers.
     dp = process_count
     fsdp = local_device_count
     tp = 1
@@ -97,4 +104,3 @@ def create_mesh(mesh_shape: str):
 
 
 __all__ = ["create_mesh"]
-

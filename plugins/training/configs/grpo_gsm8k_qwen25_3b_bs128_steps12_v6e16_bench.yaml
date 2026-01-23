@@ -6,8 +6,10 @@
 # while still producing a stable `time/train/step_avg_last10_s` metric (steps 2–11).
 #
 # Key setting:
-# - `mesh_shape: auto` builds a host-local mesh on multi-host TPUs:
-#   dp=process_count (across workers), fsdp=local_device_count (within worker).
+# - `mesh_shape: auto` resolves to full-device FSDP (topology-aware):
+#   dp=1, fsdp=device_count, tp=1 (equivalent to `mesh_shape: 1,-1,1`).
+#   This maximizes parameter sharding and was measured to be faster for this
+#   rollout-heavy (decode-dominated) GRPO benchmark on `v6e-16`.
 
 model_path: Qwen/Qwen2.5-3B-Instruct
 
@@ -37,4 +39,3 @@ reward_weights: [1.0, 0.5, 0.5]
 eval_every_steps: 0
 eval_batches_per_process: 1
 eval_split: test
-

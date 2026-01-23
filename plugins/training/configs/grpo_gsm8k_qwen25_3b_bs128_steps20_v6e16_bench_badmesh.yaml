@@ -1,10 +1,12 @@
 # GRPO/GSM8K benchmark config (Qwen2.5-3B-Instruct)
 #
-# Purpose: reproduce the common v6e-16 slowdown when `fsdp` spans hosts.
+# Purpose: reproduce the common v6e-16 slowdown from host-local sharding.
 #
 # WARNING:
-# - `mesh_shape: 1,-1,1` becomes `dp=1, fsdp=16, tp=1` on v6e-16 and can be much
-#   slower for decode-heavy rollouts due to cross-host collectives.
+# - `mesh_shape: host_local` builds: dp=process_count, fsdp=local_device_count, tp=1.
+#   On `v6e-16`, this becomes `dp=4, fsdp=4, tp=1`, which reduces parameter sharding
+#   (fsdp=4 instead of 16) and was measured to be significantly slower for this
+#   rollout-heavy (decode-dominated) GRPO benchmark.
 
 model_path: Qwen/Qwen2.5-3B-Instruct
 
@@ -23,15 +25,14 @@ train:
   ppo_epochs: 1
   beta: 0.0
 
-mesh_shape: 1,-1,1
+mesh_shape: host_local
 
 wandb_project: mllm-jax-grpo-gsm8k
 wandb_mode: online
-wandb_name: grpo_gsm8k_qwen25_3b_bs128_steps20_v6e16_badmesh
+wandb_name: grpo_gsm8k_qwen25_3b_bs128_steps20_v6e16_hostlocal
 
 reward_weights: [1.0, 0.5, 0.5]
 
 eval_every_steps: 0
 eval_batches_per_process: 1
 eval_split: test
-

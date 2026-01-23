@@ -2,13 +2,15 @@
 #
 # In this repo:
 # - `rollout.batch_size` is sequences per training step (global, across all processes)
-# - `rollout.n` is samples per prompt (GRPO group size, K)
+# - `rollout.prompt_batch_size` is prompts per rollout pass (per process)
+# - `rollout.num_pre_q` is samples per prompt (GRPO group size, K)
+# - `local_batch` (sequences per step, per process) = rollout.prompt_batch_size * rollout.num_pre_q * rollout_passes
 #
 # This config sets:
-# - rollout.batch_size=128, rollout.n=8 -> global prompts/step = 16
-# - train.micro_batch_size_per_device=4 -> runner infers grad_accum_steps at runtime
+# - rollout.batch_size=128, rollout.num_pre_q=8 -> global_batch=128 sequences
+# - train.micro_batch_size=16 -> runner infers grad_accum_steps=8 (fits v4-8 memory better)
 #
-# Intended use: v6e-8 / v6e-16 training (100 steps) with W&B logging.
+# Intended use: v6e-8 single-host training (100 steps) with W&B logging.
 
 model_path: Qwen/Qwen2.5-3B-Instruct
 
@@ -16,19 +18,16 @@ steps: 100
 
 rollout:
   backend: naive
+  per_device_batch_size: null
   batch_size: 128
-  batch_size_per_process: null
-  batch_size_per_device: null
-  prompts_per_pass_per_process: null
-  prompts_per_pass_per_device: null
-  n: 8
+  prompt_batch_size: null
+  num_pre_q: 8
   global_length: 512
   max_length_sample: 1024
 
 train:
-  global_micro_batch_size: null
-  micro_batch_size_per_process: null
-  micro_batch_size_per_device: 4
+  micro_batch_size: 16
+  per_device_micro_batch_size: null
   ppo_epochs: 1
   beta: 0.0
 
@@ -40,5 +39,5 @@ wandb_name: null
 reward_weights: [1.0, 0.5, 0.5]
 
 eval_every_steps: 10
-eval_batches_per_process: 1
+eval_batches: 1
 eval_split: test

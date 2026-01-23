@@ -532,8 +532,10 @@ class SglangJaxRolloutBackend:
 
         # Tokenize prompts for prompt lengths + prompt token ids.
         enc = tokenizer(chat_prompts, return_tensors="np", padding=True, padding_side="right")
-        prompt_input_ids = np.asarray(enc["input_ids"])
-        prompt_attention_mask = np.asarray(enc["attention_mask"])
+        # Important: keep masks/int token buffers in int32 to avoid TPU-slow int64
+        # arithmetic in the training step (naive sampler also uses int32 buffers).
+        prompt_input_ids = np.asarray(enc["input_ids"], dtype=np.int32)
+        prompt_attention_mask = np.asarray(enc["attention_mask"], dtype=np.int32)
         true_prompt_lens = prompt_attention_mask.sum(axis=1).astype(np.int32)
 
         desired_length = max(int(global_length), int(prompt_input_ids.shape[1]))
@@ -545,9 +547,9 @@ class SglangJaxRolloutBackend:
         seq_len = prefill_length + int(max_length_sample)
         pad_token_id = int(getattr(tokenizer, "pad_token_id", None) or getattr(tokenizer, "eos_token_id", 0) or 0)
 
-        train_input_ids = np.full((len(chat_prompts), seq_len), fill_value=pad_token_id, dtype=prompt_input_ids.dtype)
-        train_attention_mask = np.zeros((len(chat_prompts), seq_len), dtype=prompt_attention_mask.dtype)
-        train_labels = np.zeros((len(chat_prompts), seq_len), dtype=prompt_attention_mask.dtype)
+        train_input_ids = np.full((len(chat_prompts), seq_len), fill_value=pad_token_id, dtype=np.int32)
+        train_attention_mask = np.zeros((len(chat_prompts), seq_len), dtype=np.int32)
+        train_labels = np.zeros((len(chat_prompts), seq_len), dtype=np.int32)
 
         for i in range(len(chat_prompts)):
             prompt_len = int(true_prompt_lens[i])
@@ -569,7 +571,7 @@ class SglangJaxRolloutBackend:
                 completion = completion[: seq_len - prompt_len]
                 completion_len = int(len(completion))
                 end = prompt_len + completion_len
-            train_input_ids[i, prompt_len:end] = np.asarray(completion, dtype=train_input_ids.dtype)
+            train_input_ids[i, prompt_len:end] = np.asarray(completion, dtype=np.int32)
             train_attention_mask[i, prompt_len:end] = 1
             train_labels[i, prompt_len:end] = 1
 

@@ -1,0 +1,40 @@
+# GRPO/GSM8K benchmark config (Qwen2.5-3B-Instruct)
+#
+# Purpose: short, timing-focused run for v6e-16 with W&B online.
+#
+# This is a shorter variant (steps=12) to reduce the chance of spot preemption
+# while still producing a stable `time/train/step_avg_last10_s` metric (steps 2–11).
+#
+# Key setting:
+# - `mesh_shape: auto` builds a host-local mesh on multi-host TPUs:
+#   dp=process_count (across workers), fsdp=local_device_count (within worker).
+
+model_path: Qwen/Qwen2.5-3B-Instruct
+
+steps: 12
+
+rollout:
+  backend: naive
+  batch_size: 16
+  n: 8
+  global_length: 512
+  max_length_sample: 1024
+
+train:
+  micro_batch_size: null
+  micro_batch_size_per_device: 4
+  ppo_epochs: 1
+  beta: 0.0
+
+mesh_shape: auto
+
+wandb_project: mllm-jax-grpo-gsm8k
+wandb_mode: online
+wandb_name: grpo_gsm8k_qwen25_3b_bs128_steps12_v6e16_bench
+
+reward_weights: [1.0, 0.5, 0.5]
+
+eval_every_steps: 0
+eval_batches_per_process: 1
+eval_split: test
+

@@ -333,7 +333,18 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
     rng = jax.random.PRNGKey(int(cfg.seed))
 
-    if cfg.train.train_from_scratch:
+    # Param init / load:
+    # - For eval-only runs with `resume_from_checkpoint`, skip loading base torch weights.
+    # - Otherwise, load from base model or init from scratch.
+    loaded_from_checkpoint = False
+    if run_mode_norm == "eval" and cfg.train.resume_from_checkpoint:
+        payload = load_checkpoint(str(cfg.train.resume_from_checkpoint))
+        ckpt_params = payload.get("params")
+        if ckpt_params is None:
+            raise ValueError("Checkpoint payload missing 'params'")
+        params = ckpt_params
+        loaded_from_checkpoint = True
+    elif cfg.train.train_from_scratch:
         dummy_len = 8
         dummy = jnp.zeros((1, dummy_len), dtype=jnp.int32)
         dummy_mask = jnp.ones((1, dummy_len), dtype=jnp.int32)
@@ -451,11 +462,15 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
         if bool(cfg.train.save_last) and jax.process_index() == 0:
             save_checkpoint(output_dir=cfg.output_dir, state=state, name="last")
 
-    # Eval params: prefer trained state, else optionally load checkpoint, else use base params.
+    # Eval params: prefer trained state, else use placed params.
     eval_params = state.params if state is not None else params
-    if state is None and cfg.train.resume_from_checkpoint:
+    # For non-eval-only runs, allow eval to use a checkpoint if no trained state is available.
+    if state is None and cfg.train.resume_from_checkpoint and not loaded_from_checkpoint:
         payload = load_checkpoint(str(cfg.train.resume_from_checkpoint))
-        eval_params = payload.get("params", eval_params)
+        ckpt_params = payload.get("params")
+        if ckpt_params is not None:
+            ckpt_params = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), ckpt_params)
+            eval_params = jax.tree_util.tree_map(lambda x, sh: jax.device_put(jnp.asarray(x, dtype=param_dtype), sh), ckpt_params, shardings)
 
     eval_metrics = None
     if run_mode_norm in {"eval", "train_eval"} and cfg.eval.enabled:

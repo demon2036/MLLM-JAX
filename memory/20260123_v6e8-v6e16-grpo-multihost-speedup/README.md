@@ -292,3 +292,89 @@ Interpretation:
 This repo’s GRPO runner does not call a MaxText-style `all_gather_over_fsdp` on params; its weight sharding stays in effect via `PartitionSpec` rules (e.g. `MLLM_JAX/utils.py:get_partition_rules_llama`), so it tends to follow the “keep weights sharded + collectives as needed” pattern.
 
 SOP recorded: `docs/sops/jax-spmd-allgather-vs-allreduce.md`
+
+## 2026-01-24: TPU memory bench (Qwen2.5-3B proxy; sharded vs all-gather)
+
+User request: “开一个 branch，在 TPU 上写简单代码验证：MaxText-style `all_gather_over_fsdp` 和 MLLM-JAX-style sharded weights 哪个更占显存？”
+
+### Setup
+
+- Branch: `john/20260124-rollout-multihost-analysis`
+- Repo SHA on TPU: `6bcf856`
+- TPU: `v6e-16` (4 workers; `process_count=4`, `local_device_count=4`, `device_count=16`)
+- JAX on TPU: `0.9.0`
+
+### Method
+
+- Use `tests/tpu_memory_fsdp_allgather_bench.py` to allocate a bf16 buffer sized to ~Qwen2.5-3B params:
+  - total bytes ≈ `5.6 GiB` (bf16 proxy)
+- Compare:
+  - `mesh_shape: auto` (full-device FSDP, `dp=1, fsdp=16, tp=1`)
+  - `mesh_shape: host_local` (`dp=4, fsdp=4, tp=1`)
+  - `mode=sharded` (keep `PS('fsdp', None)`)
+  - `mode=gather` (force replication via `with_sharding_constraint(..., PS())`, MaxText `all_gather_over_fsdp` style)
+
+### Results (per-chip)
+
+All runs use `dtype=bf16` and allocate ~`5.600 GiB` total buffer.
+
+- `auto + sharded` (`dp=1, fsdp=16`):
+  - `per_device_array_bytes_local_max`: `0.350 GiB` (≈ `5.6/16`)
+  - `device_bytes_in_use_local_max`: `0.350 GiB`
+- `auto + gather`:
+  - `per_device_array_bytes_local_max`: `5.600 GiB` (replicated)
+  - `device_bytes_in_use_local_max`: `6.006 GiB`
+- `host_local + sharded` (`dp=4, fsdp=4`):
+  - `per_device_array_bytes_local_max`: `1.400 GiB` (≈ `5.6/4`)
+  - `device_bytes_in_use_local_max`: `1.400 GiB`
+- `host_local + gather`:
+  - `per_device_array_bytes_local_max`: `5.600 GiB` (replicated)
+  - `device_bytes_in_use_local_max`: `7.259 GiB`
+
+Interpretation:
+
+- **All-gather replication** over the `fsdp` axis increases per-chip weight memory from ≈ `total/fsdp` → `total`.
+  - On `auto` (`fsdp=16`): ≈ `16×` larger (0.35 GiB → 5.6 GiB for the weight buffer).
+  - On `host_local` (`fsdp=4`): ≈ `4×` larger (1.4 GiB → 5.6 GiB).
+- Switching `auto` → `host_local` reduces `fsdp` from 16 → 4, so **sharded weight memory becomes ≈4× larger** per chip.
+
+### Commands used (TPU run)
+
+Local machine:
+
+```bash
+cd /home/john/workdir/multi-host
+TPU_NAME="mllm-jax-v6e-16-spot-260124155247"
+ZONE="europe-west4-a"
+
+scripts/create_tpu_vm_retry.sh --type v6e-16 --zones europe-west4-a,us-central2-b,us-east5-b --name "$TPU_NAME"
+scripts/bootstrap_miniconda_on_tpu_vm.sh --name "$TPU_NAME" --zone "$ZONE" --worker all --env-name mllm-jax --python 3.12
+scripts/sync_env_to_tpu_vm.sh --name "$TPU_NAME" --zone "$ZONE" --worker all
+
+scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone "$ZONE" --worker all --command \
+  'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; \
+   pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html; \
+   cd /root; if [ ! -d MLLM-JAX/.git ]; then git clone --branch john/20260124-rollout-multihost-analysis https://github.com/demon2036/MLLM-JAX.git MLLM-JAX; fi; \
+   cd /root/MLLM-JAX; git fetch origin; git checkout -B john/20260124-rollout-multihost-analysis origin/john/20260124-rollout-multihost-analysis; \
+   pip install -U -r requirements-tpu.txt'
+
+scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone "$ZONE" --worker all --command \
+  'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; export REQUIRE_MULTIHOST=1; \
+   python tests/tpu_memory_fsdp_allgather_bench.py --mesh-shape auto --mode sharded --require-process-count 4'
+
+scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone "$ZONE" --worker all --command \
+  'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; export REQUIRE_MULTIHOST=1; \
+   python tests/tpu_memory_fsdp_allgather_bench.py --mesh-shape auto --mode gather --require-process-count 4'
+
+scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone "$ZONE" --worker all --command \
+  'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; export REQUIRE_MULTIHOST=1; \
+   python tests/tpu_memory_fsdp_allgather_bench.py --mesh-shape host_local --mode sharded --require-process-count 4'
+
+scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone "$ZONE" --worker all --command \
+  'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; export REQUIRE_MULTIHOST=1; \
+   python tests/tpu_memory_fsdp_allgather_bench.py --mesh-shape host_local --mode gather --require-process-count 4'
+
+scripts/delete_tpu_vm.sh --name "$TPU_NAME" --zone "$ZONE"
+```
+
+SOP recorded: `docs/sops/tpu-vm-fsdp-allgather-memory-bench-qwen25-3b.md`

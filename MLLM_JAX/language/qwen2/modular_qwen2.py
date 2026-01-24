@@ -30,6 +30,7 @@ class Qwen2Attention(LlamaAttention):
         dtype=self.jax_config.dtype
         param_dtype=self.jax_config.param_dtype
         config = self.config
+        use_bias = bool(getattr(config, "attention_bias", True))
         self.attention_dropout = config.attention_dropout
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
@@ -39,9 +40,9 @@ class Qwen2Attention(LlamaAttention):
         self.max_position_embeddings = config.max_position_embeddings
         self.rope_theta = config.rope_theta
         self.is_causal = True
-        self.q_proj = nn.Dense(self.num_heads * self.head_dim, use_bias=True,dtype=dtype,param_dtype=param_dtype)
-        self.k_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=True,dtype=dtype,param_dtype=param_dtype)
-        self.v_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=True,dtype=dtype,param_dtype=param_dtype)
+        self.q_proj = nn.Dense(self.num_heads * self.head_dim, use_bias=use_bias,dtype=dtype,param_dtype=param_dtype)
+        self.k_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=use_bias,dtype=dtype,param_dtype=param_dtype)
+        self.v_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=use_bias,dtype=dtype,param_dtype=param_dtype)
         self.o_proj = nn.Dense(self.hidden_size, use_bias=False,dtype=dtype,param_dtype=param_dtype)
     def _jax_attention_use_block_sizes(self) -> bool:
         return False

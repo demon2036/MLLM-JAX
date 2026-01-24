@@ -4,6 +4,9 @@
 
 - Repo setup: `docs/sops/repo-setup.md`
 - Clone reference repos into `workdir/`: `docs/sops/clone-reference-repos-into-workdir.md`
+- Clone AkaliKong/MiniOneRec into repo workdir: `docs/sops/clone-akalikong-minionerec-workdir.md`
+- MiniOneRec SID SFT + eval (plugins/sft): `docs/sops/minionerec-sid-sft-and-eval.md`
+- MiniOneRec SID SFT on TPU (JAX): `docs/sops/minionerec-sid-sft-jax-tpu.md`
 - Network checks: `docs/sops/network-checks.md`
 - Update repo via `git pull`: `docs/sops/git-pull-update.md`
 - Inspect diffs via `git diff`: `docs/sops/git-diff-inspect.md`
@@ -56,6 +59,7 @@
 - `docs/sops/github-push.md`
 - `docs/sops/repo-slim-deprecated.md`
 - `docs/sops/clone-reference-repos-into-workdir.md`
+- `docs/sops/clone-akalikong-minionerec-workdir.md`
 
 ### TPU
 
@@ -85,6 +89,8 @@
 ### Training
 
 - `docs/sops/training-modularization-plan.md`
+- `docs/sops/minionerec-sid-sft-and-eval.md`
+- `docs/sops/minionerec-sid-sft-jax-tpu.md`
 - `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - `docs/sops/areal-rl-organization.md`
 - `docs/sops/areal-logging-system.md`

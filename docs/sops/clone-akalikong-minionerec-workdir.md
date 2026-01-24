@@ -1,0 +1,21 @@
+# SOP: Clone AkaliKong/MiniOneRec into repo workdir
+
+- **Title**: SOP: Clone AkaliKong/MiniOneRec into `/home/john/workdir/minionerec/workdir`
+- **Prereqs**: Ubuntu Linux; `git` available; network access to GitHub over HTTPS
+- **Steps**:
+  - `git ls-remote https://github.com/AkaliKong/MiniOneRec HEAD`
+  - `mkdir -p /home/john/workdir`
+  - `git clone https://github.com/AkaliKong/MiniOneRec /home/john/workdir/MiniOneRec`
+  - `mkdir -p /home/john/workdir/minionerec/workdir`
+  - `mv /home/john/workdir/MiniOneRec /home/john/workdir/minionerec/workdir/MiniOneRec`
+  - `test -d /home/john/workdir/minionerec/workdir/MiniOneRec/.git`
+  - `git -C /home/john/workdir/minionerec/workdir/MiniOneRec status -sb`
+  - `git -C /home/john/workdir/minionerec/workdir/MiniOneRec remote -v`
+  - `git -C /home/john/workdir/minionerec/workdir/MiniOneRec rev-parse --short HEAD`
+  - `git -C /home/john/workdir/minionerec/workdir/MiniOneRec fsck --no-progress`
+  - `ls /home/john/workdir/minionerec/workdir/MiniOneRec`
+- **Expected Result**: `workdir/MiniOneRec/.git` exists, `git status -sb` is clean on `main`, and `origin` points to `https://github.com/AkaliKong/MiniOneRec`.
+- **Troubleshooting**:
+  - If `/home/john/workdir/minionerec/workdir/MiniOneRec` already exists, move or delete it before running the steps.
+  - If `git clone` fails, confirm network access to GitHub and retry.
+- **References**: `memory/20260123_clone-akalikong-minionerec`

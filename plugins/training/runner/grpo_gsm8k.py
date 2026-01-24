@@ -162,8 +162,10 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     from jax.sharding import NamedSharding
     from jax.sharding import PartitionSpec as PS
 
-    from MLLM_JAX.utils import get_jax_mesh2
     from prompts.prompts import system_prompt
+    from plugins.training.advantage.modules import GroupIdGRPOAdvantageModule
+    from plugins.training.mesh import create_mesh
+    from plugins.training.reward.modules import WeightedRewardModule
     from plugins.training.rollout.modules import RolloutBackendModule
     from plugins.training.update.optimizer import build_tx
     from plugins.training.update.train_step import training_step
@@ -220,10 +222,26 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 f"got {actual_process_count}. This usually means only a subset of TPU workers launched the program."
             )
 
-    mesh = get_jax_mesh2(cfg.mesh_shape)
+    mesh = create_mesh(cfg.mesh_shape)
     local_device_count = len(mesh.local_devices)
     process_count = int(jax.process_count())
     tp_size = int(mesh.shape.get("tp", 1))
+
+    # Detect the common misconfiguration that makes v6e-16 look dramatically
+    # slower than v6e-8: cross-host FSDP sharding from `mesh_shape: 1,-1,1`.
+    #
+    # This is only a warning (cross-host sharding can be necessary for larger
+    # models), but for decode-heavy GRPO it can dominate step time.
+    if process_count > 1:
+        fsdp_size = int(mesh.shape.get("fsdp", 1))
+        if fsdp_size > int(jax.local_device_count()) and int(jax.process_index()) == 0:
+            print(
+                "WARNING: mesh fsdp axis spans hosts "
+                f"(fsdp={fsdp_size} > local_device_count={int(jax.local_device_count())}). "
+                "For v6e multi-host GRPO, this often slows rollout decode. "
+                "Consider `mesh_shape: auto` (dp=process_count, fsdp=local_device_count) "
+                "or an explicit host-local mesh like `mesh_shape: 4,4,1` on v6e-16."
+            )
 
     # When training on a TP mesh (tp_size > 1), sharding the batch axis across TP
     # can lead to heavy all-to-all reshards (TP axis used for both data and model).

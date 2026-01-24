@@ -36,6 +36,7 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
         self.assertIn("batch_size: 16", out)
         self.assertIn("n: 8", out)
         self.assertIn("sequences_global_per_step: 128", out)
+        self.assertIn("mesh_shape: auto", out)
         self.assertIn("wandb_mode: online", out)
 
     def test_print_config_explicit_config(self) -> None:
@@ -52,6 +53,7 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
         self.assertIn("batch_size: 16", out)
         self.assertIn("n: 8", out)
         self.assertIn("sequences_global_per_step: 128", out)
+        self.assertIn("mesh_shape: auto", out)
 
 
 if __name__ == "__main__":

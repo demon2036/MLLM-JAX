@@ -27,6 +27,12 @@ class GRPORolloutConfig:
     # process. This helps keep generation batch shapes manageable while
     # preserving the meaning of `batch_size` as global prompts per step.
     max_prompts_per_pass_per_process: int | None = None
+    # Optional rollout speedups (primarily affects decode throughput).
+    #
+    # These are config-driven so W&B runs remain fully reproducible without
+    # relying on shell env vars. Env vars are still supported for compatibility.
+    fast_generate: bool = False
+    fast_qwen2_decode_attention: bool = False
     # Number of samples per prompt (GRPO group size, a.k.a. K / num_pre_q).
     n: int = 8
     global_length: int = 512
@@ -498,18 +504,25 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         create_sampler=True,
         tx=tx,
     )
-    if os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1":
+    fast_qwen2_decode_attention_enabled = bool(getattr(cfg.rollout, "fast_qwen2_decode_attention", False)) or (
+        os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1"
+    )
+    if fast_qwen2_decode_attention_enabled:
         from plugins.training.rollout.optimizations import patch_qwen2_attention_decode_fast
 
         patch_qwen2_attention_decode_fast()
         if jax.process_index() == 0:
-            print("rollout_fast_qwen2_decode_attention=1 (patched attention._naive_sdpa for decode)")
-    if os.environ.get("ROLLOUT_FAST_GENERATE") == "1":
+            enabled_via = "config" if bool(getattr(cfg.rollout, "fast_qwen2_decode_attention", False)) else "env"
+            print(f"rollout_fast_qwen2_decode_attention=1 (patched attention._naive_sdpa for decode; enabled via {enabled_via})")
+
+    fast_generate_enabled = bool(getattr(cfg.rollout, "fast_generate", False)) or (os.environ.get("ROLLOUT_FAST_GENERATE") == "1")
+    if fast_generate_enabled:
         from plugins.training.rollout.optimizations import patch_sampler_generate_fast
 
         patch_sampler_generate_fast(sampler)
         if jax.process_index() == 0:
-            print("rollout_fast_generate=1 (patched sampler.generate)")
+            enabled_via = "config" if bool(getattr(cfg.rollout, "fast_generate", False)) else "env"
+            print(f"rollout_fast_generate=1 (patched sampler.generate; enabled via {enabled_via})")
     rollout_backend = create_rollout_backend(
         name=rollout_backend_name,
         sampler=sampler,
@@ -544,7 +557,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         eval_sampler.sample_fn = jax.jit(_greedy_sample)
         eval_sampler.jit_infer_step = jax.jit(eval_sampler.infer, donate_argnums=(0,))
 
-        if os.environ.get("ROLLOUT_FAST_GENERATE") == "1":
+        if fast_generate_enabled:
             from plugins.training.rollout.optimizations import patch_sampler_generate_fast
 
             patch_sampler_generate_fast(eval_sampler)

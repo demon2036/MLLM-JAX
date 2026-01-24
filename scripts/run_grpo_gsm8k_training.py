@@ -118,6 +118,61 @@ def _get_int_from_aliases(
     return parsed[0][1]
 
 
+def _parse_bool(label: str, value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value in {0, 1}:
+            return bool(value)
+        raise ValueError(f"{label} must be a bool (or 0/1), got {value!r}")
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in {"1", "true", "t", "yes", "y", "on"}:
+            return True
+        if s in {"0", "false", "f", "no", "n", "off"}:
+            return False
+        raise ValueError(f"{label} must be a bool, got {value!r}")
+    raise ValueError(f"{label} must be a bool, got {value!r}")
+
+
+def _get_bool_from_aliases(
+    cfg: dict[str, Any],
+    *,
+    label: str,
+    paths: list[str] | None = None,
+    keys: list[str] | None = None,
+) -> bool | None:
+    """Read a bool value from multiple possible config locations.
+
+    If multiple aliases are set, they must agree (otherwise raises ValueError).
+    """
+    paths = paths or []
+    keys = keys or []
+
+    found: list[tuple[str, Any]] = []
+    for path in paths:
+        value = _get_by_path(cfg, path)
+        if value is not None:
+            found.append((path, value))
+    for key in keys:
+        value = cfg.get(key)
+        if value is not None:
+            found.append((key, value))
+
+    if not found:
+        return None
+
+    parsed: list[tuple[str, bool]] = []
+    for src, value in found:
+        parsed.append((src, _parse_bool(label, value)))
+
+    unique_values = {v for _src, v in parsed}
+    if len(unique_values) > 1:
+        details = ", ".join(f"{src}={v}" for src, v in parsed)
+        raise ValueError(f"Conflicting {label} values: {details}")
+    return parsed[0][1]
+
+
 def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     model_path = str(cfg.get("model_path") or "Qwen/Qwen2.5-3B-Instruct")
     steps = int(cfg.get("steps") or 100)
@@ -146,6 +201,24 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     )
     if rollout_max_prompts_per_pass_per_process is not None:
         rollout_max_prompts_per_pass_per_process = int(rollout_max_prompts_per_pass_per_process)
+
+    rollout_fast_generate = _get_bool_from_aliases(
+        cfg,
+        label="rollout.fast_generate",
+        paths=["rollout.fast_generate"],
+        keys=["rollout_fast_generate"],
+    )
+    rollout_fast_generate = bool(rollout_fast_generate) if rollout_fast_generate is not None else False
+
+    rollout_fast_qwen2_decode_attention = _get_bool_from_aliases(
+        cfg,
+        label="rollout.fast_qwen2_decode_attention",
+        paths=["rollout.fast_qwen2_decode_attention"],
+        keys=["rollout_fast_qwen2_decode_attention"],
+    )
+    rollout_fast_qwen2_decode_attention = (
+        bool(rollout_fast_qwen2_decode_attention) if rollout_fast_qwen2_decode_attention is not None else False
+    )
 
     deprecated_rollout_keys = {
         "rollout.batch_size_per_process": _get_by_path(cfg, "rollout.batch_size_per_process"),
@@ -326,6 +399,8 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             backend=rollout_backend,
             batch_size=rollout_batch_size,
             max_prompts_per_pass_per_process=rollout_max_prompts_per_pass_per_process,
+            fast_generate=rollout_fast_generate,
+            fast_qwen2_decode_attention=rollout_fast_qwen2_decode_attention,
             n=rollout_n,
             global_length=global_length,
             max_length_sample=max_length_sample,

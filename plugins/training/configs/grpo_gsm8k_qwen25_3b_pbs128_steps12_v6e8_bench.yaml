@@ -19,6 +19,8 @@ rollout:
   backend: naive
   batch_size: 128
   max_prompts_per_pass_per_process: 16
+  fast_generate: true
+  fast_qwen2_decode_attention: true
   n: 8
   global_length: 512
   max_length_sample: 1024
@@ -31,7 +33,7 @@ train:
 
 mesh_shape: auto
 
-wandb_project: mllm-jax-grpo-gsm8k
+wandb_project: mllm-jax-grpo-gsm8k-pbs128-v6e-bench
 wandb_mode: online
 wandb_name: grpo_gsm8k_qwen25_3b_pbs128_steps12_v6e8_bench
 
@@ -40,4 +42,3 @@ reward_weights: [1.0, 0.5, 0.5]
 eval_every_steps: 0
 eval_batches_per_process: 1
 eval_split: test
-

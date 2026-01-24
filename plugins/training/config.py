@@ -26,6 +26,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Each prompt is expanded to `n` sampled completions, so the global
         # sequence batch is: `batch_size * n`.
         "batch_size": 16,
+        # Optional: cap prompts per rollout pass per process.
+        #
+        # When set, the runner may split a single training step into multiple
+        # rollout passes so that each pass uses at most this many prompts per
+        # process. This helps keep generation batch shapes manageable while
+        # preserving `batch_size` semantics as global prompts per step.
+        "max_prompts_per_pass_per_process": None,
+        # Opt-in rollout speedups (recorded in W&B config; avoids relying on env vars).
+        "fast_generate": False,
+        "fast_qwen2_decode_attention": False,
         # Number of samples per prompt (GRPO group size, a.k.a. K / num_pre_q).
         "n": 8,
         "global_length": 512,

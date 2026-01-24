@@ -17,6 +17,7 @@
 - TPU v6e-8 rollout speed debug (Qwen2.5-3B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - TPU v6e-8 full test-set eval sweep (Qwen2.5-3B, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-full-test-eval-sweep.md`
 - TPU v6e-8 vs v6e-16 speed gap debug (multihost + mesh): `docs/sops/tpu-vm-v6e-8-v6e-16-grpo-gsm8k-speed-gap-debug.md`
+- TPU v6e-16 rollout sharding style bench (legacy vs maxtext): `docs/sops/tpu-vm-v6e-16-grpo-gsm8k-rollout-sharding-style-bench.md`
 - TPU bf16 attention-score precision (dot_general fp32 output): `docs/sops/tpu-bf16-attention-score-f32.md`
 - JAX SPMD all-gather vs all-reduce (sharded matmul): `docs/sops/jax-spmd-allgather-vs-allreduce.md`
 - TPU fsdp all-gather memory bench (Qwen2.5-3B proxy): `docs/sops/tpu-vm-fsdp-allgather-memory-bench-qwen25-3b.md`
@@ -59,6 +60,7 @@
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - `docs/sops/tpu-vm-v6e-8-v6e-16-grpo-gsm8k-speed-gap-debug.md`
+- `docs/sops/tpu-vm-v6e-16-grpo-gsm8k-rollout-sharding-style-bench.md`
 - `docs/sops/tpu-bf16-attention-score-f32.md`
 - `docs/sops/jax-spmd-allgather-vs-allreduce.md`
 - `docs/sops/tpu-vm-fsdp-allgather-memory-bench-qwen25-3b.md`

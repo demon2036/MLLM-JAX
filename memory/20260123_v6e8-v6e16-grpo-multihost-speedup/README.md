@@ -378,3 +378,52 @@ scripts/delete_tpu_vm.sh --name "$TPU_NAME" --zone "$ZONE"
 ```
 
 SOP recorded: `docs/sops/tpu-vm-fsdp-allgather-memory-bench-qwen25-3b.md`
+
+## 2026-01-24: TPU v6e-16 MaxText-style rollout sharding bench (legacy vs maxtext)
+
+Goal:
+
+- Implement MaxText-style rollout activation sharding (batch on `dp` only; replicate across `fsdp`) and compare against the repo’s legacy rollout batch sharding on a `v6e-16` multi-host TPU.
+
+What changed in code:
+
+- Added `rollout.sharding_style: legacy|maxtext` to the GRPO runner and configs.
+- `maxtext` patches the sampler to:
+  - place prompt/caches with `PartitionSpec('dp')` (replicate on `fsdp`)
+  - sample with dp-only `shard_map` specs (avoid fsdp-divergent RNG)
+- Logged TPU `device.memory_stats()` maxima into W&B:
+  - `memory/train/bytes_in_use_max_gib`
+  - `memory/train/peak_bytes_in_use_max_gib`
+
+Evidence (this run):
+
+- Branch: `john/20260124-rollout-multihost-analysis`
+- Repo SHA on TPU: `cafe189`
+- TPU: `mllm-jax-v6e-16-spot-260124184415` (`v6e-16`, 4 workers)
+- Mesh: `mesh_shape: host_local` (`dp=4, fsdp=4, tp=1`)
+- Configs:
+  - legacy: `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs64_steps12_v6e16_hostlocal_legacy.yaml`
+  - maxtext: `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs64_steps12_v6e16_hostlocal_maxtext.yaml`
+
+W&B runs:
+
+- **Legacy**: `jwo1cz6k`
+  - URL: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k-rollout-sharding-style-bench/runs/jwo1cz6k
+  - `time/train/step_avg_last10_s`: `12.777984279200007`
+  - `throughput/train/valid_tokens_per_s`: `1510.4229563367162`
+  - `memory/train/bytes_in_use_max_gib`: `7.2652506828308105`
+  - `memory/train/peak_bytes_in_use_max_gib`: `8.067610263824463`
+
+- **MaxText-style**: `4eir2b4f`
+  - URL: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k-rollout-sharding-style-bench/runs/4eir2b4f
+  - `time/train/step_avg_last10_s`: `13.443090026600043`
+  - `throughput/train/valid_tokens_per_s`: `1361.5764398761153`
+  - `memory/train/bytes_in_use_max_gib`: `7.265962600708008`
+  - `memory/train/peak_bytes_in_use_max_gib`: `8.060301780700684`
+
+Conclusion (for this benchmark):
+
+- `maxtext` was **~5.2% slower** than `legacy` on `v6e-16` with host-local mesh (`bs64`, `len<=1024`).
+- Peak memory was **effectively unchanged** (suggesting cache replication and avoided weight all-gather trade off in this setting).
+
+SOP recorded: `docs/sops/tpu-vm-v6e-16-grpo-gsm8k-rollout-sharding-style-bench.md`

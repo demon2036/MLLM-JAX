@@ -30,11 +30,12 @@ def collate_sft_batch(
     pad_token_id: int,
     label_pad_id: int = -100,
     pad_to_multiple_of: int = 8,
+    pad_to_length: int | None = None,
 ) -> Batch:
     if not examples:
         raise ValueError("Empty batch")
 
-    max_len = max(len(x["input_ids"]) for x in examples)
+    max_len = int(pad_to_length) if pad_to_length is not None and int(pad_to_length) > 0 else max(len(x["input_ids"]) for x in examples)
     max_len = _round_up(int(max_len), int(pad_to_multiple_of))
 
     input_ids = np.full((len(examples), max_len), int(pad_token_id), dtype=np.int32)
@@ -48,10 +49,10 @@ def collate_sft_batch(
         if ids.shape[0] != mask.shape[0] or ids.shape[0] != lab.shape[0]:
             raise ValueError("input_ids/attention_mask/labels length mismatch")
 
-        length = int(ids.shape[0])
-        input_ids[i, :length] = ids
-        attention_mask[i, :length] = mask
-        labels[i, :length] = lab
+        length = int(min(int(ids.shape[0]), int(max_len)))
+        input_ids[i, :length] = ids[:length]
+        attention_mask[i, :length] = mask[:length]
+        labels[i, :length] = lab[:length]
 
     return Batch(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
 
@@ -77,4 +78,3 @@ def batched(iterable: Iterable[Any], batch_size: int) -> Iterable[list[Any]]:
 
 
 __all__ = ["Batch", "collate_sft_batch", "iter_indices", "batched"]
-

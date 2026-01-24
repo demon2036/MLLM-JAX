@@ -44,6 +44,7 @@ def run_sft_train(
     params: Any,
     train_dataset: Any,
     pad_token_id: int,
+    pad_to_length: int | None,
     optimizer_name: str,
     learning_rate: float,
     weight_decay: float,
@@ -102,7 +103,7 @@ def run_sft_train(
             cursor += global_micro_batch
 
             examples = [train_dataset[i] for i in batch_idx]
-            batch_np = collate_sft_batch(examples, pad_token_id=int(pad_token_id))
+            batch_np = collate_sft_batch(examples, pad_token_id=int(pad_token_id), pad_to_length=pad_to_length)
             batch = {k: jax.device_put(v, data_sharding) for k, v in batch_np.as_dict().items()}
 
             bundle_state, metrics = train_step_fn(bundle.state, batch)

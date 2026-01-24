@@ -430,6 +430,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             params=params,
             train_dataset=train_dataset,
             pad_token_id=int(tokenizer.pad_token_id),
+            pad_to_length=int(cfg.data.max_len) if int(cfg.data.max_len) > 0 else None,
             optimizer_name=cfg.train.optimizer,
             learning_rate=float(cfg.train.learning_rate),
             weight_decay=float(cfg.train.weight_decay),

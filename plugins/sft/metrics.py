@@ -61,8 +61,9 @@ def compute_hr_ndcg(
         for i, p in enumerate(preds_norm):
             if valid_items is not None and p not in valid_items:
                 invalid_count += 1
-            if min_idx is None and p == target_norm:
+            if p == target_norm:
                 min_idx = i
+                break
 
         if min_idx is None:
             continue

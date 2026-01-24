@@ -110,7 +110,7 @@ def evaluate_sid_next_item(
     if output_predictions_json:
         payload = []
         for target, preds in zip(targets, all_predictions, strict=True):
-            payload.append({"target": target, "predict": preds})
+            payload.append({"output": target, "predict": preds})
         Path(output_predictions_json).parent.mkdir(parents=True, exist_ok=True)
         Path(output_predictions_json).write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -118,4 +118,3 @@ def evaluate_sid_next_item(
         Path(metrics_path).write_text(json.dumps(asdict(metrics), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     return all_predictions, metrics
-

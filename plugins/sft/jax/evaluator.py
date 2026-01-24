@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,11 @@ def evaluate_sid_next_item_jax(
 
     newline_suffix = _newline_suffix_token_ids(tokenizer)
 
+    try:
+        from tqdm import tqdm  # type: ignore
+    except Exception:  # pragma: no cover - optional dep
+        tqdm = None  # type: ignore[assignment]
+
     # Precompute prompt lengths to batch only equal-length prompts (KV-cache assumes shared prompt_len).
     prompt_lens = [len(eval_dataset[i]["input_ids"]) for i in range(n)]
     buckets: dict[int, list[int]] = {}
@@ -64,24 +70,56 @@ def evaluate_sid_next_item_jax(
         buckets.setdefault(int(l), []).append(i)
 
     predictions: list[list[str]] = [None] * n  # type: ignore[list-item]
+    print(
+        f"[eval] samples={n} buckets={len(buckets)} batch_size={int(batch_size)} "
+        f"num_beams={int(num_beams)} max_cache_length={int(max_cache_length)}"
+    )
+
+    def _beam_search(params_in: Any, prompt_input_ids: jax.Array):
+        out = constrained_beam_search_sid3(
+            model=model,
+            params=params_in,
+            prompt_input_ids=prompt_input_ids,
+            trie=trie,
+            num_beams=int(num_beams),
+            max_cache_length=int(max_cache_length),
+            suffix_token_ids=newline_suffix,
+        )
+        return out.token_ids
+
+    beam_search_jit = jax.jit(_beam_search)
+
     for prompt_len, idxs in sorted(buckets.items()):
-        for start in range(0, len(idxs), int(batch_size)):
+        n_bucket = int(len(idxs))
+        chunks = (n_bucket + int(batch_size) - 1) // int(batch_size)
+        print(f"[eval] prompt_len={int(prompt_len)} bucket_samples={n_bucket} chunks={chunks}")
+
+        compiled = False
+        starts = range(0, len(idxs), int(batch_size))
+        if tqdm is not None:
+            starts = tqdm(starts, total=chunks, desc=f"eval len={int(prompt_len)}", mininterval=1.0)
+
+        for start in starts:
             chunk = idxs[start : start + int(batch_size)]
+            real_chunk = int(len(chunk))
+            if real_chunk < int(batch_size):
+                chunk = chunk + [chunk[-1]] * (int(batch_size) - real_chunk)
+
             prompt_ids = [eval_dataset[i]["input_ids"] for i in chunk]
             prompt = jnp.asarray(prompt_ids, dtype=jnp.int32)
 
-            out = constrained_beam_search_sid3(
-                model=model,
-                params=params,
-                prompt_input_ids=prompt,
-                trie=trie,
-                num_beams=int(num_beams),
-                max_cache_length=int(max_cache_length),
-                suffix_token_ids=newline_suffix,
-            )
-            tok_np = np.asarray(out.token_ids)  # [B, K, 3]
+            if not compiled:
+                t0 = time.perf_counter()
+                token_ids = beam_search_jit(params, prompt)
+                tok_np = np.asarray(token_ids)  # triggers compilation + blocks
+                dt = time.perf_counter() - t0
+                compiled = True
+                print(f"[eval] prompt_len={int(prompt_len)} compiled_dt={dt:.2f}s")
+            else:
+                token_ids = beam_search_jit(params, prompt)
+                tok_np = np.asarray(token_ids)  # [B, K, 3]
 
-            for row, sample_idx in enumerate(chunk):
+            for row, sample_idx in enumerate(chunk[:real_chunk]):
                 preds = [_decode_sid_triplet(tokenizer, tok_np[row, b].tolist()) for b in range(tok_np.shape[1])]
                 predictions[sample_idx] = preds
 

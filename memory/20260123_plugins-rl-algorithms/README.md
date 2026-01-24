@@ -68,6 +68,49 @@
 - Wrapper printed: `exit_status=0`
 - Log grep: `traceback_found=0`
 
+## TPU validation (v4-8, W&B online, 100 steps, **bs128 default config values**, algo-only swap)
+
+- User “跑通” requirement satisfied here:
+  - Base hyperparams are exactly from `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` (no 缩水).
+  - Only difference is `algo.name` (verified by `diff -u ... | grep '^[+-][^+-]'`).
+- Diff evidence (local):
+  - `diff -u plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps100_reinforcepp.yaml | grep -E '^[+-][^+-]'`
+  - Output:
+    - `-  name: grpo`
+    - `+  name: reinforce++`
+
+### Run identity
+
+- TPU VM: `mllm-jax-v4-8-260122100610` (`v4-8`, zone `us-central2-b`, project `civil-rarity-482610-s5`)
+- TPU repo HEAD (run commit): `04f5097` (detached HEAD)
+- Config used: `plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps100_reinforcepp.yaml`
+- Base config (same hyperparams): `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
+- W&B run URL: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/84sik048`
+
+### Logs + key output
+
+- Remote log symlink: `/root/MLLM-JAX/logs/rl_gsm8k_qwen25_3b_bs128_steps100_reinforcepp_latest.log`
+- Remote log file: `/root/MLLM-JAX/logs/rl_gsm8k_qwen25_3b_bs128_steps100_reinforcepp_04f5097_20260124_013914.log`
+- Key log lines (grep outputs recorded):
+  - `2:config_path: plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps100_reinforcepp.yaml`
+  - `62:algo=reinforce++`
+  - `61:wandb: 🚀 View run at https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/84sik048`
+  - Final steps:
+    - `474:step=95 ... dt=41.76s`
+    - `478:step=96 ... dt=46.63s`
+    - `482:step=97 ... dt=44.16s`
+    - `486:step=98 ... dt=70.01s`
+    - `490:step=99 ... dt=43.97s`
+
+### Clean-finish evidence
+
+- No traceback in log:
+  - `grep -n "Traceback" "$LOG" | wc -l` → `0`
+- No remaining training processes (after completion):
+  - `pgrep -af "[r]un_grpo_gsm8k_training.py"` → no output
+- W&B backend state confirms normal completion (queried from TPU with WANDB_API_KEY loaded):
+  - Output: `wandb_state finished`
+
 ## SOP updated
 
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`

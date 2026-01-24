@@ -39,10 +39,12 @@ class PPOActorCriticModule(nn.Module):
         )
 
     def _forward(self, input_ids, attention_mask):
+        _, seq_len = input_ids.shape
+        position_ids = jnp.arange(seq_len, dtype=jnp.int32)[None, :]
         hidden_states, cache = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            position_ids=None,
+            position_ids=position_ids,
             inputs_embeds=None,
             cache=None,
         )

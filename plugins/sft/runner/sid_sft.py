@@ -306,9 +306,23 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
     extension = maybe_extend_tokenizer(tokenizer=tokenizer, sid_index_path=cfg.data.sid_index_path)
 
-    # Model config must reflect the resized tokenizer vocab.
+    tokenizer_vocab_size = int(len(tokenizer))
+    # When using FSDP/TP sharding, some params shard over the vocab axis. Pad the
+    # model vocab size so the embedding table shards evenly.
+    fsdp = int(mesh.shape.get("fsdp", 1))
+    tp = int(mesh.shape.get("tp", 1))
+    pad_multiple = max(1, fsdp * tp)
+    padded_vocab_size = tokenizer_vocab_size
+    if pad_multiple > 1:
+        r = tokenizer_vocab_size % pad_multiple
+        if r != 0:
+            padded_vocab_size = tokenizer_vocab_size + (pad_multiple - r)
+            if jax.process_index() == 0:
+                print(f"[sft] pad_vocab_size {tokenizer_vocab_size} -> {padded_vocab_size} (multiple={pad_multiple})")
+
+    # Model config must reflect the resized vocab (tokenizer + optional padding).
     base_config = AutoConfig.from_pretrained(cfg.base_model, trust_remote_code=True)
-    base_config.vocab_size = int(len(tokenizer))
+    base_config.vocab_size = int(padded_vocab_size)
 
     # Avoid TPU-only fused attention kernels on CPU/GPU backends.
     attention_mesh = mesh if jax.devices()[0].platform == "tpu" else None
@@ -334,8 +348,8 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
         params = convert_torch_to_flax_llama(state_dict)
         params = jax.tree_util.tree_map(lambda x: np.array(x), params)
 
-    # Resize embeddings/lm_head for new SID tokens.
-    params, vocab_resize = resize_lm_vocab(params=params, new_vocab_size=int(len(tokenizer)), rng=rng)
+    # Resize embeddings/lm_head for new SID tokens (+ optional padding for sharding divisibility).
+    params, vocab_resize = resize_lm_vocab(params=params, new_vocab_size=int(padded_vocab_size), rng=rng)
 
     # Place params with sharding + dtype.
     params = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), params)
@@ -358,6 +372,23 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             steps_per_epoch = int(math.ceil(len(train_dataset) / max(1, effective)))
             max_steps = int(math.ceil(float(cfg.train.num_train_epochs) * steps_per_epoch))
 
+        save_steps = int(cfg.train.save_steps)
+        save_total_limit = int(cfg.train.save_total_limit)
+        saved_steps: list[int] = []
+
+        def checkpoint_cb(step: int, st: Any) -> None:
+            if jax.process_index() != 0:
+                return
+            save_checkpoint(output_dir=cfg.output_dir, state=st, name=f"step{int(step)}")
+            if save_total_limit > 0:
+                saved_steps.append(int(step))
+                while len(saved_steps) > int(save_total_limit):
+                    old = saved_steps.pop(0)
+                    try:
+                        os.remove(os.path.join(cfg.output_dir, f"sft_state_step{int(old)}.msgpack"))
+                    except FileNotFoundError:
+                        pass
+
         state, train_stats = run_sft_train(
             mesh=mesh,
             model=model,
@@ -377,6 +408,8 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
                 if wandb is not None
                 else None
             ),
+            checkpoint_every_steps=int(save_steps),
+            checkpoint_cb=(checkpoint_cb if save_steps > 0 else None),
         )
 
         os.makedirs(cfg.output_dir, exist_ok=True)

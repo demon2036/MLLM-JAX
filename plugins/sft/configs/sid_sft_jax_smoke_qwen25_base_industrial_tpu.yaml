@@ -5,7 +5,7 @@ seed: 42
 device: tpu
 
 jax:
-  mesh_shape: "dp:-1,fsdp:1,tp:1"
+  mesh_shape: "auto"
   param_dtype: float32
   compute_dtype: bfloat16
   max_cache_length: 2048

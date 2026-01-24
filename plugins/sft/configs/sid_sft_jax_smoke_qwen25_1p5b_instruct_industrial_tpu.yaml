@@ -5,8 +5,8 @@ seed: 42
 device: tpu
 
 jax:
-  # Use only DP on v4-8 to avoid sharding embeddings by vocab.
-  mesh_shape: "dp:-1,fsdp:1,tp:1"
+  # Match GRPO defaults: use FSDP on v4-8 via the "auto" mesh.
+  mesh_shape: "auto"
   # Keep params/opt states in bf16 to fit 1.5B on v4-8.
   param_dtype: bfloat16
   compute_dtype: bfloat16

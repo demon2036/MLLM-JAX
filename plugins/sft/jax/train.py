@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
-from MLLM_JAX.utils import get_jax_mesh2
+from plugins.training.mesh import create_mesh
 from plugins.training.update.train_step import training_step
 
 from plugins.sft.jax.data import batched, collate_sft_batch, iter_indices
@@ -32,7 +32,8 @@ def _device_batch_size(mesh: Mesh, micro_batch_size_per_replica: int) -> int:
 
 
 def create_mesh_from_config(mesh_shape: str) -> Mesh:
-    return get_jax_mesh2(str(mesh_shape))
+    # Reuse the GRPO mesh logic: "auto" builds a safe host-local mesh on multi-host TPUs.
+    return create_mesh(str(mesh_shape))
 
 
 def run_sft_train(
@@ -51,6 +52,8 @@ def run_sft_train(
     seed: int,
     logging_steps: int,
     log_cb: Callable[[int, float, int], None] | None = None,
+    checkpoint_every_steps: int = 0,
+    checkpoint_cb: Callable[[int, Any], None] | None = None,
 ) -> tuple[Any, SftTrainStats]:
     max_steps = int(max_steps)
     if max_steps <= 0:
@@ -111,6 +114,9 @@ def run_sft_train(
             print(f"[sft] step={step}/{max_steps} loss={last_loss:.6f} effective_bs={effective_batch}")
             if log_cb is not None:
                 log_cb(int(step), float(last_loss), int(effective_batch))
+
+        if checkpoint_cb is not None and int(checkpoint_every_steps) > 0 and step % int(checkpoint_every_steps) == 0:
+            checkpoint_cb(int(step), bundle.state)
 
     return bundle.state, SftTrainStats(
         steps=max_steps,

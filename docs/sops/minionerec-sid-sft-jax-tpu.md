@@ -82,6 +82,24 @@
   - Cross-check via upstream `calc.py`:
     - `scripts/ssh_tpu_vm_root.sh --name minionerec-sid-sft-v6e-8-official-eval-260124163806 --zone us-east5-b --command 'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; python workdir/MiniOneRec/calc.py --path runs/sid_sft_jax_eval_official_minionerec_office_ckpt/eval_predictions.json --item_path workdir/MiniOneRec/data/Amazon/info/Office_Products_5_2016-10-2018-11.txt'`
 
+## Extra: Measure SFT train step time (v6e-8)
+
+- Note: JAX training requires static batch shapes; training batches are padded to fixed `data.max_len` (commit `2b5208a`) to avoid JIT recompiles from dynamic padding.
+
+- Create TPU (spot):
+  - `TPU_NAME="minionerec-sid-sft-step-time-v6e-8-260124174627"; ./scripts/create_tpu_vm.sh --type v6e-8 --zone us-east5-b --name "$TPU_NAME"`
+
+- Bootstrap + install deps + clone repo + clone upstream MiniOneRec:
+  - Follow the same steps above (just replace `--zone` and `--type`); ensure the repo branch is `minionerec`.
+
+- Run a 3-step timing job (len=512, effective_bs=1024, eval disabled):
+  - `scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone us-east5-b --env-file /root/.env --command 'set -euo pipefail; export PYTHONUNBUFFERED=1; export HF_HUB_ENABLE_HF_TRANSFER=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; ./scripts/run_sid_sft.sh --config plugins/sft/configs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e8_step_time.yaml --run-mode train'`
+  - W&B run: `https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/wcgcvyua`
+  - Observed per-step timing (W&B `train/step_time_sec`):
+    - step1: `113.19s` (includes JIT compile on this warm VM)
+    - step2: `4.05s`
+    - step3: `4.04s`
+
 ## References
 
 - Upstream metrics script: `workdir/MiniOneRec/calc.py`

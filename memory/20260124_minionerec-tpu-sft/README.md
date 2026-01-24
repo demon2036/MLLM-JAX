@@ -99,3 +99,23 @@
 - Report alignment (from `workdir/MiniOneRec/assets/minionerec_main_result.png`):
   - Industrial (report): HR@3/5/10=`0.1143/0.1321/0.1586`, NDCG@3/5/10=`0.1011/0.1084/0.1167` (official ckpt eval matches within ~0.0011).
   - Office (report): HR@3/5/10=`0.1217/0.1420/0.1634`, NDCG@3/5/10=`0.1088/0.1172/0.1242` (official ckpt eval close; biggest delta is HR@10 ≈ -0.0045).
+
+## Evidence: Eval wall-time + train step-time (v6e-8, us-east5-b)
+
+- Eval wall-time (W&B `_runtime`, full test):
+  - Industrial official ckpt eval run `h1pvzowo`: `418s` (~7.0min)
+  - Office official ckpt eval run `wx3eu7kh`: `360s` (~6.0min)
+
+- Train per-step time (len=512, effective_bs=1024, 3 steps):
+  - TPU: `minionerec-sid-sft-step-time-v6e-8-260124174627` (v6e-8, us-east5-b)
+  - Config: `plugins/sft/configs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e8_step_time.yaml`
+  - Command (exit=0):
+    - `./scripts/run_sid_sft.sh --config plugins/sft/configs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e8_step_time.yaml --run-mode train`
+  - W&B run: `https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/wcgcvyua`
+  - Step timings (from W&B `train/step_time_sec`):
+    - step1: `113.19s` (includes JIT compile on this warm VM)
+    - step2: `4.05s`
+    - step3: `4.04s` (steady-state)
+
+- Fix applied (required for stable training on JAX): pad training batches to fixed `cfg.data.max_len` to avoid JIT recompiles from dynamic padding.
+  - Commit: `2b5208a` (`fix(sft): pad train batches to fixed max_len`)

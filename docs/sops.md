@@ -16,6 +16,7 @@
 - TPU v4-8 GRPO runner smoke (`rollout.backend=naive`): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
 - TPU v4-8 RL/GSM8K `reinforce++` (100 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
 - TPU v4-8 RL/GSM8K bs128 `reinforce++` (100 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-reinforcepp-wandb-100steps.md`
+- TPU v4-8 RL/GSM8K bs128 algtest (20 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-algtest-20steps.md`
 - TPU v6e-8 GRPO train (100 steps, bs=128 seq, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`
 - TPU v6e-8 rollout speed debug (Qwen2.5-3B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - TPU v6e-8 full test-set eval sweep (Qwen2.5-3B, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-full-test-eval-sweep.md`
@@ -59,6 +60,7 @@
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-reinforcepp-wandb-100steps.md`
+- `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-algtest-20steps.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - `docs/sops/tpu-vm-v6e-8-v6e-16-grpo-gsm8k-speed-gap-debug.md`

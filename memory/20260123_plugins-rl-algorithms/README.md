@@ -161,3 +161,78 @@
 ### Local validation (this pass)
 
 - `pytest -q` → `19 passed in 0.30s`
+
+## PPO actor-critic fix + algtest 20-step validation (v4-8, algorithm_test)
+
+- Branch/commit: `algorithm` @ `66c6c92`
+- TPU VM: `mllm-jax-v4-8-260122100610` (zone `us-central2-b`, project `civil-rarity-482610-s5`)
+- W&B project: `algorithm_test`
+
+### Commands (TPU, via SSH)
+
+- Start PPO:
+  - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260122100610 --zone us-central2-b --project civil-rarity-482610-s5 --env-file /root/.env --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh --config plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps20_ppo_algtest.yaml --env-name sglang-jax'`
+- Start REINFORCE:
+  - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260122100610 --zone us-central2-b --project civil-rarity-482610-s5 --env-file /root/.env --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh --config plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps20_reinforce_algtest.yaml --env-name sglang-jax'`
+- Start RLOO:
+  - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260122100610 --zone us-central2-b --project civil-rarity-482610-s5 --env-file /root/.env --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh --config plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps20_rloo_algtest.yaml --env-name sglang-jax'`
+- Start DAPO:
+  - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260122100610 --zone us-central2-b --project civil-rarity-482610-s5 --env-file /root/.env --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh --config plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps20_dapo_algtest.yaml --env-name sglang-jax'`
+- W&B state check:
+  - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260122100610 --zone us-central2-b --project civil-rarity-482610-s5 --env-file /root/.env --command 'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate sglang-jax; python - <<\"PY\"\nimport wandb\napi = wandb.Api(timeout=30)\nruns = {\n    \"ppo\": \"m035cwxl\",\n    \"reinforce\": \"jwarpwed\",\n    \"rloo\": \"31l8fq53\",\n    \"dapo\": \"7y09so5y\",\n}\nfor name, run_id in runs.items():\n    run = api.run(f\"johntitordemon2036/algorithm_test/{run_id}\")\n    print(name, run.state, run.name)\nPY'`
+
+### PPO 20-step run (actor-critic)
+
+- Log: `/root/MLLM-JAX/logs/nohup_rl_gsm8k_qwen25_3b_bs128_steps20_ppo_algtest_20260124_074428.log`
+- Exit: `/root/MLLM-JAX/logs/nohup_rl_gsm8k_qwen25_3b_bs128_steps20_ppo_algtest_20260124_074428.exit` → `0`
+- Log evidence:
+  - `2:config_path: plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps20_ppo_algtest.yaml`
+  - `71:algo=ppo`
+  - `155:step=19 loss=0.072442 entropy=0.7765 reward_mean=1.3535 dt=39.65s`
+  - `traceback_count=0`
+  - `70:wandb: 🚀 View run at https://wandb.ai/johntitordemon2036/algorithm_test/runs/m035cwxl`
+- W&B run name: `rl_gsm8k_qwen25_3b_bs128_steps20_ppo_algtest_66c6c92_20260124_074433`
+
+### REINFORCE 20-step run
+
+- Log: `/root/MLLM-JAX/logs/nohup_rl_gsm8k_qwen25_3b_bs128_steps20_reinforce_algtest_20260124_080640.log`
+- Exit: `/root/MLLM-JAX/logs/nohup_rl_gsm8k_qwen25_3b_bs128_steps20_reinforce_algtest_20260124_080640.exit` → `0`
+- Log evidence:
+  - `2:config_path: plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps20_reinforce_algtest.yaml`
+  - `69:algo=reinforce`
+  - `153:step=19 loss=0.180230 entropy=0.4590 reward_mean=1.7090 dt=51.92s`
+  - `traceback_count=0`
+  - `68:wandb: 🚀 View run at https://wandb.ai/johntitordemon2036/algorithm_test/runs/jwarpwed`
+- W&B run name: `rl_gsm8k_qwen25_3b_bs128_steps20_reinforce_algtest_66c6c92_20260124_080646`
+
+### RLOO 20-step run
+
+- Log: `/root/MLLM-JAX/logs/nohup_rl_gsm8k_qwen25_3b_bs128_steps20_rloo_algtest_20260124_083112.log`
+- Exit: `/root/MLLM-JAX/logs/nohup_rl_gsm8k_qwen25_3b_bs128_steps20_rloo_algtest_20260124_083112.exit` → `0`
+- Log evidence:
+  - `2:config_path: plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps20_rloo_algtest.yaml`
+  - `69:algo=rloo`
+  - `153:step=19 loss=0.042763 entropy=0.4590 reward_mean=1.6758 dt=64.79s`
+  - `traceback_count=0`
+  - `68:wandb: 🚀 View run at https://wandb.ai/johntitordemon2036/algorithm_test/runs/31l8fq53`
+- W&B run name: `rl_gsm8k_qwen25_3b_bs128_steps20_rloo_algtest_66c6c92_20260124_083118`
+
+### DAPO 20-step run
+
+- Log: `/root/MLLM-JAX/logs/nohup_rl_gsm8k_qwen25_3b_bs128_steps20_dapo_algtest_20260124_085452.log`
+- Exit: `/root/MLLM-JAX/logs/nohup_rl_gsm8k_qwen25_3b_bs128_steps20_dapo_algtest_20260124_085452.exit` → `0`
+- Log evidence:
+  - `2:config_path: plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps20_dapo_algtest.yaml`
+  - `69:algo=dapo`
+  - `153:step=19 loss=0.034421 entropy=0.4902 reward_mean=1.6816 dt=55.20s`
+  - `traceback_count=0`
+  - `68:wandb: 🚀 View run at https://wandb.ai/johntitordemon2036/algorithm_test/runs/7y09so5y`
+- W&B run name: `rl_gsm8k_qwen25_3b_bs128_steps20_dapo_algtest_66c6c92_20260124_085458`
+
+### W&B status verification (API)
+
+- `ppo finished`, `reinforce finished`, `rloo finished`, `dapo finished`
+
+### Local validation (current)
+
+- `python -m pytest -q` → `22 passed in 7.65s`

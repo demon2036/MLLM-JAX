@@ -15,7 +15,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from plugins.training.config import load_config
-from plugins.training.algorithms import AlgoConfig
+from plugins.training.algorithms import AlgoConfig, EstimatorConfig, UpdateConfig
 from plugins.training.runner import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig, run_grpo_gsm8k
 
 
@@ -307,38 +307,97 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         algo_cfg = AlgoConfig(name=str(algo_raw))
     elif isinstance(algo_raw, dict):
         name_raw = algo_raw.get("name")
-        eps_raw = algo_raw.get("eps")
-        dapo_alpha_raw = algo_raw.get("dapo_alpha")
-        rloo_whiten_raw = algo_raw.get("rloo_whiten")
-        clip_range_raw = algo_raw.get("clip_range")
-        ppo_adv_estimator_raw = algo_raw.get("ppo_advantage_estimator")
-        ppo_gamma_raw = algo_raw.get("ppo_gamma")
-        ppo_gae_lambda_raw = algo_raw.get("ppo_gae_lambda")
-        ppo_value_coef_raw = algo_raw.get("ppo_value_coef")
-        ppo_value_clip_range_raw = algo_raw.get("ppo_value_clip_range")
-        ppo_adv_norm_raw = algo_raw.get("ppo_advantage_norm")
-        ppo_entropy_coef_raw = algo_raw.get("ppo_entropy_coef")
+
+        defaults = AlgoConfig()
+        estimator_defaults = defaults.estimator
+        update_defaults = defaults.update
+
+        estimator_raw = algo_raw.get("estimator")
+        estimator_data: dict[str, Any] = {}
+        estimator_name_raw = None
+        if isinstance(estimator_raw, str):
+            estimator_name_raw = estimator_raw
+        elif isinstance(estimator_raw, dict):
+            estimator_data = estimator_raw
+            estimator_name_raw = estimator_raw.get("name")
+        elif estimator_raw is not None:
+            raise ValueError("algo.estimator must be a dict or string when provided")
+
+        if estimator_name_raw is None:
+            estimator_name_raw = algo_raw.get("estimator_name")
+        if estimator_name_raw is None:
+            estimator_name_raw = algo_raw.get("ppo_advantage_estimator")
+
+        def _estimator_value(key: str, legacy_key: str | None = None) -> Any:
+            if key in estimator_data:
+                return estimator_data[key]
+            if legacy_key is not None and legacy_key in estimator_data:
+                return estimator_data[legacy_key]
+            return algo_raw.get(legacy_key or key)
+
+        eps_raw = _estimator_value("eps")
+        clip_range_raw = _estimator_value("clip_range")
+        rloo_whiten_raw = _estimator_value("rloo_whiten")
+        dapo_alpha_raw = _estimator_value("dapo_alpha")
+        gae_gamma_raw = _estimator_value("gae_gamma", "ppo_gamma")
+        if "gamma" in estimator_data and "gae_gamma" not in estimator_data:
+            gae_gamma_raw = estimator_data["gamma"]
+        gae_lambda_raw = _estimator_value("gae_lambda", "ppo_gae_lambda")
+        if "lambda" in estimator_data and "gae_lambda" not in estimator_data:
+            gae_lambda_raw = estimator_data["lambda"]
+        gae_normalize_raw = _estimator_value("gae_normalize", "ppo_advantage_norm")
+        if "normalize" in estimator_data and "gae_normalize" not in estimator_data:
+            gae_normalize_raw = estimator_data["normalize"]
 
         clip_range = float(clip_range_raw) if clip_range_raw is not None else None
-        ppo_value_clip_range = float(ppo_value_clip_range_raw) if ppo_value_clip_range_raw is not None else None
-        defaults = AlgoConfig()
-        algo_cfg = AlgoConfig(
-            name=str(name_raw) if name_raw is not None else "grpo",
-            eps=float(eps_raw) if eps_raw is not None else defaults.eps,
-            dapo_alpha=float(dapo_alpha_raw) if dapo_alpha_raw is not None else defaults.dapo_alpha,
-            rloo_whiten=bool(rloo_whiten_raw) if rloo_whiten_raw is not None else defaults.rloo_whiten,
+        estimator_cfg = EstimatorConfig(
+            name=str(estimator_name_raw) if estimator_name_raw is not None else estimator_defaults.name,
+            eps=float(eps_raw) if eps_raw is not None else estimator_defaults.eps,
             clip_range=clip_range,
-            ppo_advantage_estimator=(
-                str(ppo_adv_estimator_raw) if ppo_adv_estimator_raw is not None else defaults.ppo_advantage_estimator
-            ),
-            ppo_gamma=float(ppo_gamma_raw) if ppo_gamma_raw is not None else defaults.ppo_gamma,
-            ppo_gae_lambda=float(ppo_gae_lambda_raw) if ppo_gae_lambda_raw is not None else defaults.ppo_gae_lambda,
-            ppo_value_coef=float(ppo_value_coef_raw) if ppo_value_coef_raw is not None else defaults.ppo_value_coef,
-            ppo_value_clip_range=ppo_value_clip_range,
-            ppo_advantage_norm=bool(ppo_adv_norm_raw) if ppo_adv_norm_raw is not None else defaults.ppo_advantage_norm,
-            ppo_entropy_coef=float(ppo_entropy_coef_raw)
-            if ppo_entropy_coef_raw is not None
-            else defaults.ppo_entropy_coef,
+            rloo_whiten=bool(rloo_whiten_raw) if rloo_whiten_raw is not None else estimator_defaults.rloo_whiten,
+            dapo_alpha=float(dapo_alpha_raw) if dapo_alpha_raw is not None else estimator_defaults.dapo_alpha,
+            gae_gamma=float(gae_gamma_raw) if gae_gamma_raw is not None else estimator_defaults.gae_gamma,
+            gae_lambda=float(gae_lambda_raw) if gae_lambda_raw is not None else estimator_defaults.gae_lambda,
+            gae_normalize=bool(gae_normalize_raw)
+            if gae_normalize_raw is not None
+            else estimator_defaults.gae_normalize,
+        )
+
+        update_raw = algo_raw.get("update")
+        update_data: dict[str, Any] = {}
+        update_name_raw = None
+        if isinstance(update_raw, str):
+            update_name_raw = update_raw
+        elif isinstance(update_raw, dict):
+            update_data = update_raw
+            update_name_raw = update_raw.get("name")
+        elif update_raw is not None:
+            raise ValueError("algo.update must be a dict or string when provided")
+
+        if update_name_raw is None:
+            update_name_raw = algo_raw.get("update_name")
+
+        def _update_value(key: str, legacy_key: str | None = None) -> Any:
+            if key in update_data:
+                return update_data[key]
+            return algo_raw.get(legacy_key or key)
+
+        value_coef_raw = _update_value("value_coef", "ppo_value_coef")
+        value_clip_range_raw = _update_value("value_clip_range", "ppo_value_clip_range")
+        entropy_coef_raw = _update_value("entropy_coef", "ppo_entropy_coef")
+
+        value_clip_range = float(value_clip_range_raw) if value_clip_range_raw is not None else None
+        update_cfg = UpdateConfig(
+            name=str(update_name_raw) if update_name_raw is not None else update_defaults.name,
+            value_coef=float(value_coef_raw) if value_coef_raw is not None else update_defaults.value_coef,
+            value_clip_range=value_clip_range,
+            entropy_coef=float(entropy_coef_raw) if entropy_coef_raw is not None else update_defaults.entropy_coef,
+        )
+
+        algo_cfg = AlgoConfig(
+            name=str(name_raw) if name_raw is not None else defaults.name,
+            estimator=estimator_cfg,
+            update=update_cfg,
         )
     else:
         raise ValueError(f"algo must be a dict or string, got {type(algo_raw).__name__}")

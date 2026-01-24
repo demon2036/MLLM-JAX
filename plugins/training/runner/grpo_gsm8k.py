@@ -12,7 +12,7 @@ import numpy as np
 
 from plugins.training.advantage.estimators import compute_gae_advantages
 from plugins.training.update.optimizer import OptimizerConfig
-from plugins.training.algorithms import AlgoConfig, create_algorithm, normalize_algo_name
+from plugins.training.algorithms import AlgoConfig, create_algorithm
 from plugins.training.ppo import get_ppo_state, ppo_training_step
 
 @dataclass(frozen=True)
@@ -463,22 +463,36 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         pad_token_id = 0
     pad_token_id = int(pad_token_id)
 
+    reward_funcs = [reward_correct, reward_format, tag_count_reward]
+    reward_func_names = [fn.__name__ for fn in reward_funcs]
+    algo = create_algorithm(cfg.algo, reward_funcs=reward_funcs, reward_weights=cfg.reward_weights)
+    reward_module = algo.reward_module
+    advantage_module = algo.advantage_module
+    update_module = algo.update_module
+    use_value_head = algo.requires_value_head
+    use_gae_advantage = algo.estimator_name == "gae"
+    if jax.process_index() == 0:
+        print(
+            " ".join(
+                [
+                    f"algo={algo.name}",
+                    f"estimator={algo.estimator_name}",
+                    f"update={algo.update_name}",
+                    f"value_head={int(use_value_head)}",
+                ]
+            )
+        )
+
     tx = build_tx(training_steps=cfg.steps, cfg=cfg.train.optimizer)
 
-    algo_name = normalize_algo_name(cfg.algo.name)
-    ppo_adv_estimator = str(cfg.algo.ppo_advantage_estimator or "gae").strip().lower()
-    use_ppo_value = algo_name == "ppo"
-    if use_ppo_value and ppo_adv_estimator not in {"gae"}:
-        raise ValueError(f"ppo_advantage_estimator must be 'gae' for PPO, got {ppo_adv_estimator!r}")
-
     value_fn = None
-    if use_ppo_value:
+    if use_value_head:
         state, sampler, ppo_module = get_ppo_state(
             mesh,
             training_steps=cfg.steps,
             grad_accum_steps=grad_accum_steps,
             model_path=cfg.model_path,
-            algo_cfg=cfg.algo,
+            update_cfg=cfg.algo.update,
             beta=cfg.train.beta,
             create_sampler=True,
             tx=tx,
@@ -572,17 +586,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     wandb = _maybe_init_wandb(cfg)
 
-    reward_funcs = [reward_correct, reward_format, tag_count_reward]
-    reward_func_names = [fn.__name__ for fn in reward_funcs]
-    algo = create_algorithm(cfg.algo, reward_funcs=reward_funcs, reward_weights=cfg.reward_weights)
-    reward_module = algo.reward_module
-    advantage_module = algo.advantage_module
-    update_module = algo.update_module
-    if jax.process_index() == 0:
-        print(f"algo={algo.name}")
-
     def _policy_params_for_rollout(params):
-        if not use_ppo_value:
+        if not use_value_head:
             return params
         return {"model": params["model"], "lm_head": params["lm_head"]}
 
@@ -650,7 +655,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
             # --- Advantages (group_id based) ---
             advantages_np = None
-            if not use_ppo_value:
+            if not use_gae_advantage:
+                if advantage_module is None:
+                    raise RuntimeError("advantage_module is required for non-GAE estimators")
                 t_adv0 = time.perf_counter()
                 advantages_np = advantage_module.compute(rewards=rewards_np, group_ids=group_ids).advantages
                 t_adv += time.perf_counter() - t_adv0
@@ -704,8 +711,10 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 datas_np["attention_mask"] = _pad_2d_right(datas_np["attention_mask"], seq_len_global, 0)
                 datas_np["labels"] = _pad_2d_right(datas_np["labels"], seq_len_global, 0)
 
-        if use_ppo_value and datas_np:
+        if use_gae_advantage and datas_np:
             t_adv0 = time.perf_counter()
+            if value_fn is None:
+                raise RuntimeError("GAE estimator requires value_fn (PPO update with value head)")
             value_inputs = {
                 "input_ids": datas_np["input_ids"],
                 "attention_mask": datas_np["attention_mask"],
@@ -720,11 +729,11 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 rewards=rewards_np,
                 values=values_pred,
                 completion_mask=completion_mask,
-                gamma=cfg.algo.ppo_gamma,
-                gae_lambda=cfg.algo.ppo_gae_lambda,
-                normalize=cfg.algo.ppo_advantage_norm,
-                eps=cfg.algo.eps,
-                clip_range=cfg.algo.clip_range,
+                gamma=cfg.algo.estimator.gae_gamma,
+                gae_lambda=cfg.algo.estimator.gae_lambda,
+                normalize=cfg.algo.estimator.gae_normalize,
+                eps=cfg.algo.estimator.eps,
+                clip_range=cfg.algo.estimator.clip_range,
             )
             datas_np["values"] = values_pred
             datas_np["returns"] = returns_np

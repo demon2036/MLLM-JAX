@@ -15,7 +15,7 @@ from MLLM_JAX.language.llama.llama import LlamaJaxConfig
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
 from MLLM_JAX.sample.sample_state_right_padding2 import Sampler, get_params
 from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
-from plugins.training.algorithms import AlgoConfig
+from plugins.training.algorithms import UpdateConfig
 from plugins.training.ppo.module import PPOActorCriticModule
 
 
@@ -51,7 +51,7 @@ def get_ppo_state(
     training_steps: int,
     grad_accum_steps: int,
     model_path: str,
-    algo_cfg: AlgoConfig,
+    update_cfg: UpdateConfig,
     beta: float = 0.0,
     create_sampler: bool = True,
     tx: Any | None = None,
@@ -66,9 +66,9 @@ def get_ppo_state(
         jax_config=jax_config,
         epsilon_low=0.2,
         epsilon_high=0.3,
-        value_coef=algo_cfg.ppo_value_coef,
-        value_clip_range=algo_cfg.ppo_value_clip_range,
-        entropy_coef=algo_cfg.ppo_entropy_coef,
+        value_coef=update_cfg.value_coef,
+        value_clip_range=update_cfg.value_clip_range,
+        entropy_coef=update_cfg.entropy_coef,
     )
 
     params = get_params(model_path)

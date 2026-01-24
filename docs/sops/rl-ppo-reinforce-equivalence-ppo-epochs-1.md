@@ -10,14 +10,14 @@
   - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260122100610 --zone us-central2-b --project civil-rarity-482610-s5 --command 'cd /root/MLLM-JAX && echo "reinforce step19" && grep -n "^step=19" logs/nohup_rl_gsm8k_qwen25_3b_bs128_steps20_reinforce_algtest_latest.log | tail -n 1 && echo "ppo step19" && grep -n "^step=19" logs/nohup_rl_gsm8k_qwen25_3b_bs128_steps20_ppo_algtest_latest.log | tail -n 1'`
   - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v4-8-260122100610 --zone us-central2-b --project civil-rarity-482610-s5 --env-file /root/.env --command 'bash -lc '"'"'source /root/miniconda3/etc/profile.d/conda.sh && conda activate sglang-jax && python -c "import wandb; api=wandb.Api(timeout=30); r1=api.run(\\"johntitordemon2036/algorithm_test/d5zv5dat\\"); r2=api.run(\\"johntitordemon2036/algorithm_test/pm1e4vof\\"); print(\\"reinforce state\\", r1.state); print(\\"ppo state\\", r2.state); print(\\"reinforce name\\", r1.name); print(\\"ppo name\\", r2.name)"'"'"''`
 - **Expected Result**:
-  - `plugins/training/algorithms/__init__.py` notes the shared PPO-style update path.
-  - `plugins/training/algorithms/factory.py` maps `ppo` and `reinforce` to the same `GlobalNormAdvantageModule`.
+  - `plugins/training/algorithms/__init__.py` notes the shared PPO-style update loop.
+  - `plugins/training/algorithms/factory.py` resolves estimator/update independently (`algo.estimator.name`, `algo.update.name`).
   - `plugins/training/runner/grpo_gsm8k.py` passes `cfg.train.ppo_epochs` into the update loop.
-  - Base config keeps `ppo_epochs: 1`, so `ppo` + `reinforce` are behaviorally identical when only `algo.name` changes.
+  - With `train.ppo_epochs: 1`, curves can still match if both runs resolve to the same estimator/update pair.
   - Log lines show distinct runs with the expected `algo=`/`config_path`, yet `step=19` metrics match.
   - W&B API reports both runs in `finished` state.
 - **Troubleshooting**:
-  - If curves diverge, check `train.ppo_epochs`, `algo.clip_range`, or `algo.name` overrides.
+  - If curves diverge, check `train.ppo_epochs`, `algo.estimator.clip_range`, `algo.estimator.name`, and `algo.update.name`.
   - If `algo=` in logs is unexpected, confirm the YAML path printed by `config_path`.
 - **References**:
   - `plugins/training/algorithms/__init__.py`

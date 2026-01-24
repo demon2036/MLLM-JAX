@@ -1,6 +1,6 @@
 # RL/GSM8K config (v4-8, Qwen2.5-3B-Instruct) — REINFORCE
 #
-# `algo.name=reinforce` uses global reward whitening for advantages.
+# `algo.estimator.name=reinforce` uses global reward whitening for advantages.
 
 model_path: Qwen/Qwen2.5-3B-Instruct
 steps: 100
@@ -21,6 +21,10 @@ train:
 
 algo:
   name: reinforce
+  estimator:
+    name: reinforce
+  update:
+    name: policy_gradient
 
 mesh_shape: 1,-1,1
 
@@ -33,4 +37,3 @@ reward_weights: [1.0, 0.5, 0.5]
 eval_every_steps: 0
 eval_batches_per_process: 1
 eval_split: test
-

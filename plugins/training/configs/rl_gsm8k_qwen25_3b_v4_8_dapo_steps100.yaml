@@ -23,6 +23,10 @@ train:
 
 algo:
   name: dapo
+  estimator:
+    name: dapo
+  update:
+    name: policy_gradient
   dapo_alpha: 0.2
 
 mesh_shape: 1,-1,1
@@ -36,4 +40,3 @@ reward_weights: [1.0, 0.5, 0.5]
 eval_every_steps: 0
 eval_batches_per_process: 1
 eval_split: test
-

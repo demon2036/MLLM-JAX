@@ -30,6 +30,10 @@ train:
 
 algo:
   name: grpo
+  estimator:
+    name: grpo
+  update:
+    name: policy_gradient
 
 mesh_shape: 1,-1,1
 

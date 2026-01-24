@@ -439,6 +439,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             max_steps=int(max_steps),
             seed=int(cfg.seed),
             logging_steps=int(cfg.train.logging_steps),
+            warmup_steps=int(cfg.train.warmup_steps),
             log_cb=(
                 (
                     lambda step, loss, effective_bs, step_time_sec: wandb.log(

@@ -63,8 +63,17 @@ def evaluate_sid_next_item_jax(
     except Exception:  # pragma: no cover - optional dep
         tqdm = None  # type: ignore[assignment]
 
-    # Precompute prompt lengths to batch only equal-length prompts (KV-cache assumes shared prompt_len).
+    # Precompute prompt lengths.
+    #
+    # NOTE: The underlying model cache assumes a shared `end_index` across the
+    # batch, so we still bucket by true prompt length. However, to avoid JIT
+    # recompilation per bucket, we right-pad prompts to a fixed `pad_len`
+    # (same shape for all buckets) and pass the bucket's true prompt length to
+    # the beam search as `prompt_true_len`.
     prompt_lens = [len(eval_dataset[i]["input_ids"]) for i in range(n)]
+    if not prompt_lens:
+        raise ValueError("Empty eval_dataset")
+    pad_len = int(max(prompt_lens))
     buckets: dict[int, list[int]] = {}
     for i, l in enumerate(prompt_lens):
         buckets.setdefault(int(l), []).append(i)
@@ -72,10 +81,10 @@ def evaluate_sid_next_item_jax(
     predictions: list[list[str]] = [None] * n  # type: ignore[list-item]
     print(
         f"[eval] samples={n} buckets={len(buckets)} batch_size={int(batch_size)} "
-        f"num_beams={int(num_beams)} max_cache_length={int(max_cache_length)}"
+        f"num_beams={int(num_beams)} max_cache_length={int(max_cache_length)} pad_len={int(pad_len)}"
     )
 
-    def _beam_search(params_in: Any, prompt_input_ids: jax.Array):
+    def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_len: jax.Array):
         out = constrained_beam_search_sid3(
             model=model,
             params=params_in,
@@ -84,17 +93,19 @@ def evaluate_sid_next_item_jax(
             num_beams=int(num_beams),
             max_cache_length=int(max_cache_length),
             suffix_token_ids=newline_suffix,
+            prompt_true_len=prompt_true_len,
         )
         return out.token_ids
 
     beam_search_jit = jax.jit(_beam_search)
+    pad_token_id = int(getattr(tokenizer, "pad_token_id", 0) or 0)
 
+    compiled_once = False
     for prompt_len, idxs in sorted(buckets.items()):
         n_bucket = int(len(idxs))
         chunks = (n_bucket + int(batch_size) - 1) // int(batch_size)
         print(f"[eval] prompt_len={int(prompt_len)} bucket_samples={n_bucket} chunks={chunks}")
 
-        compiled = False
         starts = range(0, len(idxs), int(batch_size))
         if tqdm is not None:
             starts = tqdm(starts, total=chunks, desc=f"eval len={int(prompt_len)}", mininterval=1.0)
@@ -106,17 +117,23 @@ def evaluate_sid_next_item_jax(
                 chunk = chunk + [chunk[-1]] * (int(batch_size) - real_chunk)
 
             prompt_ids = [eval_dataset[i]["input_ids"] for i in chunk]
-            prompt = jnp.asarray(prompt_ids, dtype=jnp.int32)
+            # Right-pad prompts to `pad_len` so shapes stay constant across buckets.
+            prompt_np = np.full((int(batch_size), int(pad_len)), pad_token_id, dtype=np.int32)
+            for row, ids in enumerate(prompt_ids):
+                ids_np = np.asarray(ids, dtype=np.int32)
+                prompt_np[row, : ids_np.shape[0]] = ids_np
+            prompt = jnp.asarray(prompt_np, dtype=jnp.int32)
+            true_len = jnp.asarray(int(prompt_len), dtype=jnp.int32)
 
-            if not compiled:
+            if not compiled_once:
                 t0 = time.perf_counter()
-                token_ids = beam_search_jit(params, prompt)
+                token_ids = beam_search_jit(params, prompt, true_len)
                 tok_np = np.asarray(token_ids)  # triggers compilation + blocks
                 dt = time.perf_counter() - t0
-                compiled = True
-                print(f"[eval] prompt_len={int(prompt_len)} compiled_dt={dt:.2f}s")
+                compiled_once = True
+                print(f"[eval] compiled_dt={dt:.2f}s")
             else:
-                token_ids = beam_search_jit(params, prompt)
+                token_ids = beam_search_jit(params, prompt, true_len)
                 tok_np = np.asarray(token_ids)  # [B, K, 3]
 
             for row, sample_idx in enumerate(chunk[:real_chunk]):

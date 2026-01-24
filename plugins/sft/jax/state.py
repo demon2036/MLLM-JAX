@@ -21,15 +21,34 @@ class SftTrainState(train_state.TrainState):
     grad_accum: ArrayTree | None = None
 
 
-def _build_optimizer(*, name: str, lr: float, weight_decay: float) -> optax.GradientTransformation:
+def _build_lr_schedule(*, peak_lr: float, total_steps: int, warmup_steps: int) -> Any:
+    peak_lr = float(peak_lr)
+    total_steps = int(total_steps)
+    warmup_steps = int(warmup_steps)
+
+    if total_steps <= 0:
+        raise ValueError("total_steps must be > 0")
+    if warmup_steps < 0:
+        raise ValueError("warmup_steps must be >= 0")
+    warmup_steps = min(warmup_steps, total_steps)
+
+    if warmup_steps == 0:
+        return optax.linear_schedule(init_value=peak_lr, end_value=0.0, transition_steps=total_steps)
+
+    warmup = optax.linear_schedule(init_value=0.0, end_value=peak_lr, transition_steps=warmup_steps)
+    decay_steps = max(1, total_steps - warmup_steps)
+    decay = optax.linear_schedule(init_value=peak_lr, end_value=0.0, transition_steps=decay_steps)
+    return optax.join_schedules([warmup, decay], [warmup_steps])
+
+
+def _build_optimizer(*, name: str, learning_rate: Any, weight_decay: float) -> optax.GradientTransformation:
     name_norm = str(name or "adamw").strip().lower()
-    lr = float(lr)
     weight_decay = float(weight_decay)
 
     if name_norm in {"adamw", "adam"}:
-        tx = optax.adamw(learning_rate=lr, weight_decay=weight_decay)
+        tx = optax.adamw(learning_rate=learning_rate, weight_decay=weight_decay)
     elif name_norm in {"lion"}:
-        tx = optax.lion(learning_rate=lr, weight_decay=weight_decay)
+        tx = optax.lion(learning_rate=learning_rate, weight_decay=weight_decay)
     else:
         raise ValueError(f"Unsupported optimizer: {name!r} (expected adamw|lion)")
 
@@ -52,6 +71,8 @@ def create_sft_state(
     learning_rate: float,
     weight_decay: float,
     grad_accum_steps: int,
+    training_steps: int,
+    warmup_steps: int = 0,
     label_ignore_id: int = -100,
 ) -> SftStateBundle:
     grad_accum_steps = int(grad_accum_steps)
@@ -59,7 +80,8 @@ def create_sft_state(
         raise ValueError("grad_accum_steps must be >= 1")
 
     train_module = TrainSftModule(model=model, label_ignore_id=int(label_ignore_id))
-    tx = _build_optimizer(name=optimizer_name, lr=float(learning_rate), weight_decay=float(weight_decay))
+    lr_schedule = _build_lr_schedule(peak_lr=float(learning_rate), total_steps=int(training_steps), warmup_steps=int(warmup_steps))
+    tx = _build_optimizer(name=optimizer_name, learning_rate=lr_schedule, weight_decay=float(weight_decay))
 
     def init_fn(p):
         grad_accum = jax.tree_util.tree_map(jnp.zeros_like, p) if grad_accum_steps > 1 else None
@@ -80,4 +102,3 @@ def create_sft_state(
 
 
 __all__ = ["SftTrainState", "SftStateBundle", "create_sft_state"]
-

@@ -53,6 +53,7 @@ def run_sft_train(
     max_steps: int,
     seed: int,
     logging_steps: int,
+    warmup_steps: int = 0,
     log_cb: Callable[[int, float, int, float], None] | None = None,
     checkpoint_every_steps: int = 0,
     checkpoint_cb: Callable[[int, Any], None] | None = None,
@@ -73,6 +74,8 @@ def run_sft_train(
         learning_rate=float(learning_rate),
         weight_decay=float(weight_decay),
         grad_accum_steps=int(grad_accum_steps),
+        training_steps=int(max_steps),
+        warmup_steps=int(warmup_steps),
     )
 
     data_sharding = NamedSharding(mesh, P(("dp", "fsdp"), None))

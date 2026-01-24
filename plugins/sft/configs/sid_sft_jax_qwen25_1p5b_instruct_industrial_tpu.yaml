@@ -33,10 +33,10 @@ tasks:
 train:
   # JAX backend interprets this as the micro-batch per (dp*fsdp) replica.
   # Effective batch size = micro_batch * (dp*fsdp) * gradient_accumulation_steps.
-  # With v4-8 default (4 local devices), micro=8 and accum=32 => effective_bs=1024.
+  # With v4-8 (8 devices), micro=8 and accum=16 => effective_bs=1024.
   per_device_train_batch_size: 8
   per_device_eval_batch_size: 1
-  gradient_accumulation_steps: 32
+  gradient_accumulation_steps: 16
   learning_rate: 0.0003
   optimizer: adamw
   weight_decay: 0.0
@@ -45,8 +45,8 @@ train:
   warmup_steps: 0
   logging_steps: 10
   eval_steps: 0
-  save_steps: 0
-  save_total_limit: 1
+  save_steps: 20
+  save_total_limit: 2
   group_by_length: false
   freeze_LLM: false
   train_from_scratch: false

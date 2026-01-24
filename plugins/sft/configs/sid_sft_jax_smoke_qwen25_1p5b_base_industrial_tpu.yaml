@@ -1,6 +1,6 @@
 backend: tpu
-base_model: Qwen/Qwen2.5-1.5B-Instruct
-output_dir: runs/sid_sft_jax_smoke_qwen25_1p5b_instruct_industrial_tpu
+base_model: Qwen/Qwen2.5-1.5B
+output_dir: runs/sid_sft_jax_smoke_qwen25_1p5b_base_industrial_tpu
 seed: 42
 device: tpu
 

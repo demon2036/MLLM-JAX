@@ -115,12 +115,12 @@ def test_sid_sft_train_eval_smoke(tmp_path: Path):
             optimizer="adamw",
             weight_decay=0.0,
             num_train_epochs=1,
-            max_steps=1,
+            max_steps=3,
             warmup_steps=0,
             logging_steps=1,
             eval_steps=1,
             save_steps=1,
-            save_total_limit=1,
+            save_total_limit=2,
             group_by_length=False,
             freeze_LLM=False,
             train_from_scratch=False,
@@ -150,3 +150,10 @@ def test_sid_sft_train_eval_smoke(tmp_path: Path):
     assert result["eval"] is not None
     assert "hr" in result["eval"]
     assert "ndcg" in result["eval"]
+
+    # Checkpoint retention: keep last 2 step checkpoints + always write "last".
+    out_dir = Path(cfg.output_dir)
+    assert (out_dir / "sft_state_last.msgpack").exists()
+    assert not (out_dir / "sft_state_step1.msgpack").exists()
+    assert (out_dir / "sft_state_step2.msgpack").exists()
+    assert (out_dir / "sft_state_step3.msgpack").exists()

@@ -94,9 +94,24 @@ def _local_max_shard_bytes(arr: jax.Array) -> int:
     return max(shard_bytes) if shard_bytes else 0
 
 
-def _allgather_int64(value: int) -> np.ndarray:
-    gathered = process_allgather(np.asarray([int(value)], dtype=np.int64))
-    return np.asarray(gathered, dtype=np.int64).reshape(-1)
+def _allgather_u64(value: int) -> np.ndarray:
+    """All-gather a (potentially large) integer across processes.
+
+    On TPU, `process_allgather` materializes `int64` inputs as `int32`, which can
+    overflow for large byte counts. We instead send two `int32` words (hi/lo)
+    and reconstruct an exact uint64 on host.
+    """
+
+    value_u64 = int(value) & 0xFFFFFFFFFFFFFFFF
+    lo = np.asarray([value_u64 & 0xFFFFFFFF], dtype=np.uint32).view(np.int32)
+    hi = np.asarray([(value_u64 >> 32) & 0xFFFFFFFF], dtype=np.uint32).view(np.int32)
+
+    gathered_lo = process_allgather(lo)
+    gathered_hi = process_allgather(hi)
+
+    lo_u32 = np.asarray(gathered_lo, dtype=np.int32).reshape(-1).view(np.uint32)
+    hi_u32 = np.asarray(gathered_hi, dtype=np.int32).reshape(-1).view(np.uint32)
+    return ((hi_u32.astype(np.uint64) << np.uint64(32)) | lo_u32.astype(np.uint64)).astype(np.uint64)
 
 
 def main() -> None:
@@ -221,15 +236,15 @@ def main() -> None:
             w_final.block_until_ready()
 
     local_shard_bytes = _local_max_shard_bytes(w_final)
-    gathered_shard_bytes = _allgather_int64(local_shard_bytes)
+    gathered_shard_bytes = _allgather_u64(local_shard_bytes)
 
     bytes_in_use, peak_bytes = _local_max_device_memory()
-    gathered_bytes_in_use = _allgather_int64(bytes_in_use or 0) if bytes_in_use is not None else None
-    gathered_peak_bytes = _allgather_int64(peak_bytes or 0) if peak_bytes is not None else None
+    gathered_bytes_in_use = _allgather_u64(bytes_in_use or 0) if bytes_in_use is not None else None
+    gathered_peak_bytes = _allgather_u64(peak_bytes or 0) if peak_bytes is not None else None
 
     if int(jax.process_index()) == 0:
         print("per_device_array_bytes_local_max", _format_bytes(int(local_shard_bytes)))
-        print("per_device_array_bytes_all_processes", gathered_shard_bytes.tolist())
+        print("per_device_array_bytes_all_processes", [int(x) for x in gathered_shard_bytes.tolist()])
         print("per_device_array_bytes_all_processes_max", _format_bytes(int(gathered_shard_bytes.max(initial=0))))
 
         if bytes_in_use is None or peak_bytes is None:
@@ -238,8 +253,8 @@ def main() -> None:
             print("device_bytes_in_use_local_max", _format_bytes(int(bytes_in_use)))
             print("device_peak_bytes_in_use_local_max", _format_bytes(int(peak_bytes)))
             if gathered_bytes_in_use is not None and gathered_peak_bytes is not None:
-                print("device_bytes_in_use_all_processes", gathered_bytes_in_use.tolist())
-                print("device_peak_bytes_in_use_all_processes", gathered_peak_bytes.tolist())
+                print("device_bytes_in_use_all_processes", [int(x) for x in gathered_bytes_in_use.tolist()])
+                print("device_peak_bytes_in_use_all_processes", [int(x) for x in gathered_peak_bytes.tolist()])
                 print("device_bytes_in_use_all_processes_max", _format_bytes(int(gathered_bytes_in_use.max(initial=0))))
                 print("device_peak_bytes_in_use_all_processes_max", _format_bytes(int(gathered_peak_bytes.max(initial=0))))
 

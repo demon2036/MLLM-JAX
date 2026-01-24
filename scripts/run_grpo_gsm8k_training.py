@@ -138,6 +138,15 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     )
     rollout_batch_size = int(rollout_batch_size or 32)
 
+    rollout_max_prompts_per_pass_per_process = _get_int_from_aliases(
+        cfg,
+        label="rollout.max_prompts_per_pass_per_process",
+        paths=["rollout.max_prompts_per_pass_per_process"],
+        keys=["rollout_max_prompts_per_pass_per_process"],
+    )
+    if rollout_max_prompts_per_pass_per_process is not None:
+        rollout_max_prompts_per_pass_per_process = int(rollout_max_prompts_per_pass_per_process)
+
     deprecated_rollout_keys = {
         "rollout.batch_size_per_process": _get_by_path(cfg, "rollout.batch_size_per_process"),
         "rollout.batch_size_per_device": _get_by_path(cfg, "rollout.batch_size_per_device"),
@@ -316,6 +325,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         rollout=GRPORolloutConfig(
             backend=rollout_backend,
             batch_size=rollout_batch_size,
+            max_prompts_per_pass_per_process=rollout_max_prompts_per_pass_per_process,
             n=rollout_n,
             global_length=global_length,
             max_length_sample=max_length_sample,

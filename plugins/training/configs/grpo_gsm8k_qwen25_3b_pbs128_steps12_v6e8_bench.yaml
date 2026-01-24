@@ -1,0 +1,43 @@
+# GRPO/GSM8K benchmark config (Qwen2.5-3B-Instruct)
+#
+# Purpose: timing-focused run with *prompt* batch size 128 on v6e-8.
+#
+# Naming note:
+# - `pbs128` means `rollout.batch_size: 128` global PROMPTS per step.
+# - With `rollout.n: 8`, this is 1024 sequences/step, so we split rollout into passes.
+#
+# Notes:
+# - `mesh_shape: auto` keeps v6e-8 behavior equivalent to `1,-1,1`, but also
+#   avoids the v6e-16 cross-host-FSDP pitfall if this config is reused there.
+# - Eval is disabled to avoid timing spikes.
+
+model_path: Qwen/Qwen2.5-3B-Instruct
+
+steps: 12
+
+rollout:
+  backend: naive
+  batch_size: 128
+  max_prompts_per_pass_per_process: 16
+  n: 8
+  global_length: 512
+  max_length_sample: 1024
+
+train:
+  micro_batch_size: null
+  micro_batch_size_per_device: 4
+  ppo_epochs: 1
+  beta: 0.0
+
+mesh_shape: auto
+
+wandb_project: mllm-jax-grpo-gsm8k
+wandb_mode: online
+wandb_name: grpo_gsm8k_qwen25_3b_pbs128_steps12_v6e8_bench
+
+reward_weights: [1.0, 0.5, 0.5]
+
+eval_every_steps: 0
+eval_batches_per_process: 1
+eval_split: test
+

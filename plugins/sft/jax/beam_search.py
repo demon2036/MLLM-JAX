@@ -59,9 +59,12 @@ def constrained_beam_search_sid3(
     third_table = jnp.asarray(trie.third_table, dtype=jnp.int32)
     pad_id = int(trie.pad_id)
 
-    k = int(min(int(num_beams), int(first_ids.shape[0])))
+    n1 = int(first_ids.shape[0])
+    k = int(num_beams)
     if k <= 0:
-        raise ValueError("num_beams must be > 0 and <= number of valid first SID tokens")
+        raise ValueError("num_beams must be > 0")
+    if n1 <= 0:
+        raise ValueError("SID trie has no first-token ids")
 
     suffix = [int(x) for x in (suffix_token_ids or [])]
     suffix.append(int(trie.eos_token_id))
@@ -91,10 +94,29 @@ def constrained_beam_search_sid3(
     idx0 = jnp.clip(true_len - jnp.asarray(1, dtype=jnp.int32), 0, int(prompt_len) - 1)
     next_logits = jnp.take(logits, idx0, axis=1)  # [B, V]
     log_probs0 = jax.nn.log_softmax(next_logits.astype(jnp.float32), axis=-1)
-    log_probs0_allowed = jnp.take(log_probs0, first_ids, axis=1)  # [B, N1]
-    top0_scores, top0_idx = jax.lax.top_k(log_probs0_allowed, k=k)  # [B, K]
-    tok1 = jnp.take(first_ids, top0_idx, axis=0)  # [B, K]
-    tok1_row = top0_idx.astype(jnp.int32)  # row index into second/third tables
+    # Step0 needs to support `num_beams > len(first_ids)` (e.g. Industrial has 48
+    # unique <a_*> tokens but we still want beam width=50 like HF generate). To
+    # match the Transformers behavior, do a masked full-vocab top-k when needed.
+    if n1 < k:
+        vocab = int(log_probs0.shape[1])
+        first_mask = jnp.zeros((vocab,), dtype=jnp.bool_)
+        first_mask = first_mask.at[first_ids].set(True)
+        masked0 = jnp.where(first_mask[None, :], log_probs0, -jnp.inf)
+        top0_scores, tok1 = jax.lax.top_k(masked0, k=k)  # tok1 are token ids
+
+        # Map token id -> row index in `first_ids`.
+        row = jnp.searchsorted(first_ids, tok1)
+        row = jnp.clip(row, 0, n1 - 1)
+        row_tok = first_ids[row]
+        tok1_valid = tok1 == row_tok
+        tok1_row = row.astype(jnp.int32)
+        top0_scores = jnp.where(tok1_valid, top0_scores, -jnp.inf)
+    else:
+        log_probs0_allowed = jnp.take(log_probs0, first_ids, axis=1)  # [B, N1]
+        top0_scores, top0_idx = jax.lax.top_k(log_probs0_allowed, k=k)  # [B, K]
+        tok1 = jnp.take(first_ids, top0_idx, axis=0)  # [B, K]
+        tok1_row = top0_idx.astype(jnp.int32)  # row index into second/third tables
+        tok1_valid = jnp.ones_like(tok1_row, dtype=jnp.bool_)
 
     # Repeat cache for beams.
     cache_k = _repeat_for_beams(cache, k)  # [B*K, ...]
@@ -115,7 +137,9 @@ def constrained_beam_search_sid3(
     log_probs1 = jax.nn.log_softmax(logits1[:, -1, :].astype(jnp.float32), axis=-1)  # [B*K, V]
 
     # Allowed token_2 lists keyed by token_1 row index (top0_idx already indexes second_table).
+    tok1_valid_flat = tok1_valid.reshape((bsz * k,))
     allowed2 = jnp.take(second_table, tok1_row.reshape((bsz * k,)), axis=0)  # [B*K, M2]
+    allowed2 = jnp.where(tok1_valid_flat[:, None], allowed2, jnp.full_like(allowed2, int(pad_id)))
     valid2 = allowed2 != int(pad_id)
     safe2 = jnp.where(valid2, allowed2, 0).astype(jnp.int32)
     lp2 = jnp.take_along_axis(log_probs1, safe2, axis=1)

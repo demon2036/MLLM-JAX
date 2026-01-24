@@ -354,12 +354,22 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     else:
         torch_model = AutoModelForCausalLM.from_pretrained(
             cfg.base_model,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.bfloat16,
             trust_remote_code=True,
         )
         state_dict = torch_model.state_dict()
         params = convert_torch_to_flax_llama(state_dict)
-        params = jax.tree_util.tree_map(lambda x: np.array(x), params)
+
+        def _to_numpy(x: Any) -> np.ndarray:
+            if isinstance(x, torch.Tensor):
+                x = x.detach().cpu()
+                # PyTorch cannot export bfloat16 tensors to NumPy directly.
+                if x.dtype == torch.bfloat16:
+                    x = x.to(torch.float32)
+                return x.numpy()
+            return np.asarray(x)
+
+        params = jax.tree_util.tree_map(_to_numpy, params)
 
     # Resize embeddings/lm_head for new SID tokens (+ optional padding for sharding divisibility).
     params, vocab_resize = resize_lm_vocab(params=params, new_vocab_size=int(padded_vocab_size), rng=rng)

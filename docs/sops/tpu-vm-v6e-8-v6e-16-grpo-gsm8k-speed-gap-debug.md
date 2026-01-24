@@ -34,6 +34,25 @@ Recommended v6e-16 mesh for this workload:
 - Use `mesh_shape: host_local` only if you explicitly want DP across hosts and accept lower
   model sharding throughput (it is kept as an explicit option for experiments).
 
+### 3) `shard_map` is not the primary rollout bottleneck here
+
+- Rollout compute is driven by **Mesh + sharded params + JAX jit**; the code does not rely on
+  wrapping the entire rollout in `shard_map`.
+- `shard_map` is used (today) mainly for the *token sampling step* (top-k / argmax over logits)
+  inside the sampler; the dominant decode loop stays in compiled JAX code.
+
+### 4) Why `host_local` (4dp×4fsdp) can be slower than full-device FSDP here
+
+- In this repo’s Qwen/Llama partition rules, **model weights are sharded primarily on the `fsdp` axis**:
+  - `MLLM_JAX/utils.py:get_partition_rules_llama()` returns specs like `PS('fsdp','tp')` / `PS('tp','fsdp')` (no `dp`).
+  - `training2.py:get_state()` applies these rules via `match_partition_rules(...)` to construct `NamedSharding(mesh, ...)` for params.
+- So moving from full-device FSDP (`dp=1, fsdp=16`) to host-local (`dp=4, fsdp=4`) makes each device’s parameter shard **~4× larger** (because `fsdp` shrinks 16 → 4), increasing per-token matmul work and memory pressure during decode.
+- Meanwhile, rollout inputs/cache and the training batch are already sharded across the **dp×fsdp product** (16 devices):
+  - Sampler sharding uses `NamedSharding(mesh, PS(mesh.axis_names))` and splits the batch on device count (`MLLM_JAX/utils.py:_form_global_array`).
+  - The runner shards training batches with `NamedSharding(mesh, PS(("dp","fsdp")))` (`plugins/training/runner/grpo_gsm8k.py`).
+  - Net: increasing `dp` here does **not** automatically give a “bigger per-device batch” benefit; it mostly trades away `fsdp` (model sharding) for host-locality.
+- For decode-dominated GRPO rollout, that trade can be unfavorable: **more model sharding (bigger `fsdp`) reduces compute enough to outweigh cross-host collectives**.
+
 ## Guardrails added (repo changes)
 
 - Multi-host runs should fail fast if only worker 0 is launched:

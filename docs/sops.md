@@ -18,6 +18,8 @@
 - TPU v6e-8 full test-set eval sweep (Qwen2.5-3B, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-full-test-eval-sweep.md`
 - TPU v6e-8 vs v6e-16 speed gap debug (multihost + mesh): `docs/sops/tpu-vm-v6e-8-v6e-16-grpo-gsm8k-speed-gap-debug.md`
 - TPU bf16 attention-score precision (dot_general fp32 output): `docs/sops/tpu-bf16-attention-score-f32.md`
+- JAX SPMD all-gather vs all-reduce (sharded matmul): `docs/sops/jax-spmd-allgather-vs-allreduce.md`
+- TPU fsdp all-gather memory bench (Qwen2.5-3B proxy): `docs/sops/tpu-vm-fsdp-allgather-memory-bench-qwen25-3b.md`
 - TPU v4-8 timing (len=1024, 20 steps, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`
 - TPU v4-8 timing (bs=32, len=1024, k=1, micro_batch=4, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-bs32-len1024-k1-mb4-20steps-timing.md`
 - TPU v4-16 GRPO train (20 steps, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-20steps.md`
@@ -33,6 +35,7 @@
 - AReaL RL organization notes (for modularizing training): `docs/sops/areal-rl-organization.md`
 - AReaL logging system notes (StatsLogger/StatsTracker/PerfTracer): `docs/sops/areal-logging-system.md`
 - 4-phase RL interface research (Tunix/AReaL/VERL/MaxText): `docs/sops/rl-four-phase-interface-research.md`
+- MaxText sharding system notes: `docs/sops/maxtext-sharding-system.md`
 - 4-phase RL interface implementation (GRPO runner modules): `docs/sops/rl-four-phase-interface-implementation.md`
 - RL phase-folder layout (remove `grpo/`): `docs/sops/rl-phase-folder-layout.md`
 - RL pluggable optimizer (`train.optimizer`): `docs/sops/rl-pluggable-optimizer.md`
@@ -57,6 +60,8 @@
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - `docs/sops/tpu-vm-v6e-8-v6e-16-grpo-gsm8k-speed-gap-debug.md`
 - `docs/sops/tpu-bf16-attention-score-f32.md`
+- `docs/sops/jax-spmd-allgather-vs-allreduce.md`
+- `docs/sops/tpu-vm-fsdp-allgather-memory-bench-qwen25-3b.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-bs32-len1024-k1-mb4-20steps-timing.md`
 - `docs/sops/tpu-vm-bootstrap.md`
@@ -77,6 +82,7 @@
 - `docs/sops/areal-rl-organization.md`
 - `docs/sops/areal-logging-system.md`
 - `docs/sops/rl-four-phase-interface-research.md`
+- `docs/sops/maxtext-sharding-system.md`
 - `docs/sops/rl-four-phase-interface-implementation.md`
 - `docs/sops/rl-phase-folder-layout.md`
 - `docs/sops/rl-pluggable-optimizer.md`

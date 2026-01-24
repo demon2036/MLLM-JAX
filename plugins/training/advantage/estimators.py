@@ -157,9 +157,93 @@ def compute_reinforce_plus_plus_advantages_by_group_id(
     )
 
 
+def build_token_rewards_from_final(
+    *,
+    rewards: Any,
+    completion_mask: Any,
+) -> np.ndarray:
+    rewards_np = _as_1d_float32(rewards, name="rewards")
+    mask = np.asarray(completion_mask, dtype=np.float32)
+    if mask.ndim != 2:
+        raise ValueError(f"completion_mask must be rank-2 [B, T], got shape={mask.shape}")
+    if int(mask.shape[0]) != int(rewards_np.size):
+        raise ValueError(f"completion_mask batch must match rewards (B={rewards_np.size}), got {mask.shape[0]}")
+    token_rewards = np.zeros_like(mask, dtype=np.float32)
+    positions = np.where(mask > 0, np.arange(mask.shape[1], dtype=np.int32), -1)
+    last_indices = positions.max(axis=1)
+    for i, idx in enumerate(last_indices):
+        if int(idx) >= 0:
+            token_rewards[i, int(idx)] = rewards_np[i]
+    return token_rewards
+
+
+def compute_gae_advantages(
+    *,
+    rewards: Any,
+    values: Any,
+    completion_mask: Any,
+    gamma: float = 1.0,
+    gae_lambda: float = 0.95,
+    normalize: bool = True,
+    eps: float = 1e-4,
+    clip_range: float | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute GAE advantages and returns (token-level).
+
+    - rewards: shape [B] (sequence-level reward)
+    - values: shape [B, T] (token-level values)
+    - completion_mask: shape [B, T] (1 for completion tokens)
+    """
+    rewards_np = _as_1d_float32(rewards, name="rewards")
+    values_np = np.asarray(values, dtype=np.float32)
+    mask = np.asarray(completion_mask, dtype=np.float32)
+    if values_np.ndim != 2:
+        raise ValueError(f"values must be rank-2 [B, T], got shape={values_np.shape}")
+    if mask.ndim != 2:
+        raise ValueError(f"completion_mask must be rank-2 [B, T], got shape={mask.shape}")
+    if int(values_np.shape[0]) != int(rewards_np.size):
+        raise ValueError(f"values batch must match rewards (B={rewards_np.size}), got {values_np.shape[0]}")
+    if values_np.shape != mask.shape:
+        raise ValueError(f"values and completion_mask must match shape, got {values_np.shape} vs {mask.shape}")
+
+    token_rewards = build_token_rewards_from_final(rewards=rewards_np, completion_mask=mask)
+    advantages = np.zeros_like(values_np, dtype=np.float32)
+    last_gae = np.zeros((values_np.shape[0],), dtype=np.float32)
+    next_values = np.zeros((values_np.shape[0],), dtype=np.float32)
+
+    gamma_f = float(gamma)
+    lambda_f = float(gae_lambda)
+    for t in reversed(range(values_np.shape[1])):
+        mask_t = mask[:, t]
+        delta = token_rewards[:, t] + gamma_f * next_values - values_np[:, t]
+        last_gae = (delta + gamma_f * lambda_f * last_gae) * mask_t
+        advantages[:, t] = last_gae
+        next_values = values_np[:, t] * mask_t
+
+    returns = advantages + values_np
+
+    if normalize:
+        valid = mask > 0
+        if valid.any():
+            adv_valid = advantages[valid]
+            mean = float(adv_valid.mean())
+            std = float(adv_valid.std())
+            advantages = np.where(valid, (advantages - mean) / (std + float(eps)), 0.0)
+
+    if clip_range is not None:
+        clip = float(clip_range)
+        if clip <= 0:
+            raise ValueError("clip_range must be > 0 when set")
+        advantages = np.clip(advantages, -clip, clip).astype(np.float32)
+
+    return advantages.astype(np.float32), returns.astype(np.float32)
+
+
 __all__ = [
     "compute_global_normalized_advantages",
     "compute_rloo_advantages_by_group_id",
     "compute_dapo_advantages_by_group_id",
     "compute_reinforce_plus_plus_advantages_by_group_id",
+    "build_token_rewards_from_final",
+    "compute_gae_advantages",
 ]

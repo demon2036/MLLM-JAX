@@ -62,6 +62,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "dapo_alpha": 0.2,
         "rloo_whiten": True,
         "clip_range": None,
+        # PPO-only knobs (actor-critic + GAE).
+        "ppo_advantage_estimator": "gae",
+        "ppo_gamma": 1.0,
+        "ppo_gae_lambda": 0.95,
+        "ppo_value_coef": 0.5,
+        "ppo_value_clip_range": 0.2,
+        "ppo_advantage_norm": True,
+        "ppo_entropy_coef": 0.0,
     },
     # Mesh
     "mesh_shape": "1,-1,1",

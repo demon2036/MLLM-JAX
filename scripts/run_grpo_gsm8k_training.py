@@ -311,14 +311,34 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         dapo_alpha_raw = algo_raw.get("dapo_alpha")
         rloo_whiten_raw = algo_raw.get("rloo_whiten")
         clip_range_raw = algo_raw.get("clip_range")
+        ppo_adv_estimator_raw = algo_raw.get("ppo_advantage_estimator")
+        ppo_gamma_raw = algo_raw.get("ppo_gamma")
+        ppo_gae_lambda_raw = algo_raw.get("ppo_gae_lambda")
+        ppo_value_coef_raw = algo_raw.get("ppo_value_coef")
+        ppo_value_clip_range_raw = algo_raw.get("ppo_value_clip_range")
+        ppo_adv_norm_raw = algo_raw.get("ppo_advantage_norm")
+        ppo_entropy_coef_raw = algo_raw.get("ppo_entropy_coef")
 
         clip_range = float(clip_range_raw) if clip_range_raw is not None else None
+        ppo_value_clip_range = float(ppo_value_clip_range_raw) if ppo_value_clip_range_raw is not None else None
+        defaults = AlgoConfig()
         algo_cfg = AlgoConfig(
             name=str(name_raw) if name_raw is not None else "grpo",
-            eps=float(eps_raw) if eps_raw is not None else AlgoConfig().eps,
-            dapo_alpha=float(dapo_alpha_raw) if dapo_alpha_raw is not None else AlgoConfig().dapo_alpha,
-            rloo_whiten=bool(rloo_whiten_raw) if rloo_whiten_raw is not None else AlgoConfig().rloo_whiten,
+            eps=float(eps_raw) if eps_raw is not None else defaults.eps,
+            dapo_alpha=float(dapo_alpha_raw) if dapo_alpha_raw is not None else defaults.dapo_alpha,
+            rloo_whiten=bool(rloo_whiten_raw) if rloo_whiten_raw is not None else defaults.rloo_whiten,
             clip_range=clip_range,
+            ppo_advantage_estimator=(
+                str(ppo_adv_estimator_raw) if ppo_adv_estimator_raw is not None else defaults.ppo_advantage_estimator
+            ),
+            ppo_gamma=float(ppo_gamma_raw) if ppo_gamma_raw is not None else defaults.ppo_gamma,
+            ppo_gae_lambda=float(ppo_gae_lambda_raw) if ppo_gae_lambda_raw is not None else defaults.ppo_gae_lambda,
+            ppo_value_coef=float(ppo_value_coef_raw) if ppo_value_coef_raw is not None else defaults.ppo_value_coef,
+            ppo_value_clip_range=ppo_value_clip_range,
+            ppo_advantage_norm=bool(ppo_adv_norm_raw) if ppo_adv_norm_raw is not None else defaults.ppo_advantage_norm,
+            ppo_entropy_coef=float(ppo_entropy_coef_raw)
+            if ppo_entropy_coef_raw is not None
+            else defaults.ppo_entropy_coef,
         )
     else:
         raise ValueError(f"algo must be a dict or string, got {type(algo_raw).__name__}")

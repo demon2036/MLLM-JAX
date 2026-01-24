@@ -8,7 +8,8 @@ choosing implementations for:
 
 The current codebase shares one rollout workflow and one PPO-style update
 implementation, so most "algorithm" variation is expressed via the advantage
-estimator (baseline/normalization/mixing).
+estimator (baseline/normalization/mixing). PPO additionally uses a value-head
+and GAE path for actor-critic updates.
 """
 
 from plugins.training.algorithms.config import AlgoConfig, normalize_algo_name
@@ -21,4 +22,3 @@ __all__ = [
     "create_algorithm",
     "normalize_algo_name",
 ]
-

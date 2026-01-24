@@ -30,6 +30,13 @@ train:
 
 algo:
   name: ppo
+  ppo_advantage_estimator: gae
+  ppo_gamma: 1.0
+  ppo_gae_lambda: 0.95
+  ppo_value_coef: 0.5
+  ppo_value_clip_range: 0.2
+  ppo_advantage_norm: true
+  ppo_entropy_coef: 0.0
 
 mesh_shape: 1,-1,1
 

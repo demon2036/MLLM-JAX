@@ -54,6 +54,7 @@ class SidSftTasksConfig:
 class SidSftTrainConfig:
     per_device_train_batch_size: int = 1
     per_device_eval_batch_size: int = 1
+    global_batch_size: int = 0
     gradient_accumulation_steps: int = 1
     learning_rate: float = 3e-4
     optimizer: str = "adamw"
@@ -364,11 +365,33 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     if run_mode_norm in {"train", "train_eval"}:
         train_dataset = _build_train_dataset(cfg, tokenizer)
 
+        replicas = int(mesh.shape.get("dp", 1)) * int(mesh.shape.get("fsdp", 1))
+        micro_per_replica = int(cfg.train.per_device_train_batch_size)
+        if replicas <= 0 or micro_per_replica <= 0:
+            raise ValueError(f"Invalid replicas={replicas} or micro_batch_size_per_replica={micro_per_replica}")
+
+        global_batch_size = int(getattr(cfg.train, "global_batch_size", 0) or 0)
+        grad_accum_steps = int(cfg.train.gradient_accumulation_steps)
+        if global_batch_size > 0:
+            micro_global = micro_per_replica * replicas
+            ga = int(global_batch_size) // int(micro_global) if micro_global > 0 else 1
+            if ga < 1:
+                ga = 1
+            if jax.process_index() == 0:
+                effective = int(micro_global) * int(ga)
+                if effective != int(global_batch_size):
+                    print(
+                        f"[sft] global_batch_size={global_batch_size} not divisible by micro_global={micro_global}; "
+                        f"using grad_accum_steps={ga} (effective_bs={effective})"
+                    )
+                else:
+                    print(f"[sft] auto grad_accum_steps={ga} (effective_bs={effective})")
+            grad_accum_steps = ga
+
         max_steps = int(cfg.train.max_steps)
         if max_steps <= 0:
-            replicas = int(mesh.shape.get("dp", 1)) * int(mesh.shape.get("fsdp", 1))
-            micro = int(cfg.train.per_device_train_batch_size) * replicas
-            effective = micro * int(cfg.train.gradient_accumulation_steps)
+            micro = micro_per_replica * replicas
+            effective = micro * int(grad_accum_steps)
             steps_per_epoch = int(math.ceil(len(train_dataset) / max(1, effective)))
             max_steps = int(math.ceil(float(cfg.train.num_train_epochs) * steps_per_epoch))
 
@@ -398,7 +421,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             optimizer_name=cfg.train.optimizer,
             learning_rate=float(cfg.train.learning_rate),
             weight_decay=float(cfg.train.weight_decay),
-            grad_accum_steps=int(cfg.train.gradient_accumulation_steps),
+            grad_accum_steps=int(grad_accum_steps),
             micro_batch_size_per_replica=int(cfg.train.per_device_train_batch_size),
             max_steps=int(max_steps),
             seed=int(cfg.seed),

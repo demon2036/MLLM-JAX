@@ -117,6 +117,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
     train = SidSftTrainConfig(
         per_device_train_batch_size=int(_get_or_default(cfg, "train.per_device_train_batch_size", DEFAULT_CONFIG["train"]["per_device_train_batch_size"])),
         per_device_eval_batch_size=int(_get_or_default(cfg, "train.per_device_eval_batch_size", DEFAULT_CONFIG["train"]["per_device_eval_batch_size"])),
+        global_batch_size=int(_get_or_default(cfg, "train.global_batch_size", DEFAULT_CONFIG["train"].get("global_batch_size") or 0)),
         gradient_accumulation_steps=int(_get_or_default(cfg, "train.gradient_accumulation_steps", DEFAULT_CONFIG["train"]["gradient_accumulation_steps"])),
         learning_rate=float(_get_or_default(cfg, "train.learning_rate", DEFAULT_CONFIG["train"]["learning_rate"])),
         optimizer=str(_get_or_default(cfg, "train.optimizer", DEFAULT_CONFIG["train"].get("optimizer") or "adamw")),

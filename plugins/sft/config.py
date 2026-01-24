@@ -49,6 +49,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "train": {
         "per_device_train_batch_size": 1,
         "per_device_eval_batch_size": 1,
+        # If > 0, overrides `gradient_accumulation_steps` to match this global
+        # effective batch size: micro * (dp*fsdp) * grad_accum.
+        "global_batch_size": 0,
         "gradient_accumulation_steps": 1,
         "learning_rate": 3e-4,
         # Optimizer: "adamw" | "lion"

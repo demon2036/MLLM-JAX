@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from plugins.training.rollout.optimizations.fast_sampler_generate import patch_sampler_generate_fast
+from plugins.training.rollout.optimizations.maxtext_sharding import patch_sampler_rollout_dp_only_sharding
 from plugins.training.rollout.optimizations.qwen2_decode_attention import patch_qwen2_attention_decode_fast
 
-__all__ = ["patch_sampler_generate_fast", "patch_qwen2_attention_decode_fast"]
+__all__ = ["patch_sampler_generate_fast", "patch_sampler_rollout_dp_only_sharding", "patch_qwen2_attention_decode_fast"]

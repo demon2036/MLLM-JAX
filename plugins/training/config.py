@@ -36,6 +36,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Opt-in rollout speedups (recorded in W&B config; avoids relying on env vars).
         "fast_generate": False,
         "fast_qwen2_decode_attention": False,
+        # Rollout sharding style for prompt/caches.
+        # - "legacy": shard batch across (dp,fsdp,tp) product (default).
+        # - "maxtext": shard batch across dp only (replicate across fsdp).
+        "sharding_style": "legacy",
         # Number of samples per prompt (GRPO group size, a.k.a. K / num_pre_q).
         "n": 8,
         "global_length": 512,

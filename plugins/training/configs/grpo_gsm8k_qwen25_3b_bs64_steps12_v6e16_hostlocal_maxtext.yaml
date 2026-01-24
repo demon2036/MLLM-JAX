@@ -1,0 +1,43 @@
+# GRPO/GSM8K benchmark config (Qwen2.5-3B-Instruct)
+#
+# Purpose: compare rollout sharding styles on v6e-16 host-local mesh.
+#
+# - Mesh: `host_local` => dp=process_count (4), fsdp=local_device_count (4), tp=1
+# - Rollout sharding: "maxtext" => shard batch across dp only (replicate on fsdp)
+#
+# Expected effect (per SOP):
+# - Avoids weight all-gather triggered by mixing `fsdp` into the batch axis.
+# - Trades for larger per-device activation/KV-cache (replicated over fsdp).
+
+model_path: Qwen/Qwen2.5-3B-Instruct
+
+steps: 12
+
+rollout:
+  backend: naive
+  batch_size: 8
+  n: 8
+  global_length: 512
+  max_length_sample: 1024
+  fast_generate: true
+  fast_qwen2_decode_attention: true
+  sharding_style: maxtext
+
+train:
+  micro_batch_size: null
+  micro_batch_size_per_device: 4
+  ppo_epochs: 1
+  beta: 0.0
+
+mesh_shape: host_local
+
+wandb_project: mllm-jax-grpo-gsm8k-rollout-sharding-style-bench
+wandb_mode: online
+wandb_name: grpo_gsm8k_qwen25_3b_bs64_steps12_v6e16_hostlocal_maxtext
+
+reward_weights: [1.0, 0.5, 0.5]
+
+eval_every_steps: 0
+eval_batches_per_process: 1
+eval_split: test
+

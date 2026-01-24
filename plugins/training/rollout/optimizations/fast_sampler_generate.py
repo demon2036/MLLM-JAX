@@ -211,24 +211,9 @@ def patch_sampler_generate_fast(sampler: Any) -> None:
         _toc("decode_s", t0)
 
         t0 = _tic()
-        def _collect_local_batch(x):
-            if not hasattr(x, "addressable_shards"):
-                return np.asarray(x)
-            local_devices = list(getattr(self.mesh, "local_devices", ())) or list(jax.local_devices())
-            local_device_set = set(local_devices)
-            device_to_chunk = {
-                shard.device: np.asarray(shard.data)
-                for shard in x.addressable_shards
-                if shard.device in local_device_set
-            }
-            chunks = [device_to_chunk[d] for d in local_devices if d in device_to_chunk]
-            if not chunks:
-                return np.asarray(x)
-            return np.concatenate(chunks, axis=0)
-
-        local_sample_step = _collect_local_batch(sample_state.sample_steps)
-        local_token_buffer = _collect_local_batch(sample_state.token_buffer)
-        local_attention_mask = _collect_local_batch(sample_state.attention_mask)
+        local_sample_step = collect_process_data(sample_state.sample_steps)
+        local_token_buffer = collect_process_data(sample_state.token_buffer)
+        local_attention_mask = collect_process_data(sample_state.attention_mask)
         _toc("collect_outputs_s", t0)
 
         _toc("total_s", t_total0)

@@ -33,6 +33,13 @@ class GRPORolloutConfig:
     # relying on shell env vars. Env vars are still supported for compatibility.
     fast_generate: bool = False
     fast_qwen2_decode_attention: bool = False
+    # Rollout sharding style for prompt/caches.
+    #
+    # - "legacy": shard batch across (dp, fsdp, tp) product (repo default).
+    # - "maxtext": shard batch across dp only (replicate across fsdp), matching
+    #   MaxText's common "data vs fsdp" split and avoiding weight all-gather
+    #   triggered by mixing fsdp into the batch axis.
+    sharding_style: str = "legacy"
     # Number of samples per prompt (GRPO group size, a.k.a. K / num_pre_q).
     n: int = 8
     global_length: int = 512
@@ -200,6 +207,34 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         return jax.lax.dynamic_slice_in_dim(x, start, micro_batch_size, axis=0)
 
     slice_data = jax.jit(_slice_data_impl, static_argnums=(1, 2))
+
+    def _local_max_device_memory_bytes() -> tuple[int | None, int | None]:
+        bytes_in_use_values: list[int] = []
+        peak_bytes_values: list[int] = []
+        for dev in jax.local_devices():
+            try:
+                stats = dev.memory_stats()
+            except Exception:
+                continue
+            if not isinstance(stats, dict):
+                continue
+            bytes_in_use = stats.get("bytes_in_use")
+            peak_bytes = stats.get("peak_bytes_in_use")
+            if bytes_in_use is not None:
+                bytes_in_use_values.append(int(bytes_in_use))
+            if peak_bytes is not None:
+                peak_bytes_values.append(int(peak_bytes))
+        return (
+            max(bytes_in_use_values) if bytes_in_use_values else None,
+            max(peak_bytes_values) if peak_bytes_values else None,
+        )
+
+    def _maybe_add_memory_metrics(log: dict[str, Any], *, prefix: str) -> None:
+        bytes_in_use, peak_bytes = _local_max_device_memory_bytes()
+        if bytes_in_use is not None:
+            log[f"{prefix}/bytes_in_use_max_gib"] = float(bytes_in_use) / float(1024**3)
+        if peak_bytes is not None:
+            log[f"{prefix}/peak_bytes_in_use_max_gib"] = float(peak_bytes) / float(1024**3)
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
@@ -523,6 +558,17 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         if jax.process_index() == 0:
             enabled_via = "config" if bool(getattr(cfg.rollout, "fast_generate", False)) else "env"
             print(f"rollout_fast_generate=1 (patched sampler.generate; enabled via {enabled_via})")
+
+    rollout_sharding_style = str(getattr(cfg.rollout, "sharding_style", "legacy") or "legacy").strip().lower()
+    if rollout_sharding_style == "maxtext":
+        from plugins.training.rollout.optimizations import patch_sampler_rollout_dp_only_sharding
+
+        patch_sampler_rollout_dp_only_sharding(sampler)
+        if jax.process_index() == 0:
+            print("rollout_sharding_style=maxtext (dp-only activation sharding; replicate over fsdp)")
+    elif rollout_sharding_style != "legacy":
+        raise ValueError("rollout.sharding_style must be one of: legacy, maxtext")
+
     rollout_backend = create_rollout_backend(
         name=rollout_backend_name,
         sampler=sampler,
@@ -537,9 +583,22 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         from jax.experimental.shard_map import shard_map
 
         eval_sampler = SamplerImpl(sampler.model, sampler.tokenizer, mesh=mesh)
+        if rollout_sharding_style == "maxtext":
+            from plugins.training.rollout.optimizations import patch_sampler_rollout_dp_only_sharding
+
+            patch_sampler_rollout_dp_only_sharding(eval_sampler)
 
         def _greedy_sample(rng, logits):
-            rngs = jax.random.split(rng, jax.device_count())
+            if rollout_sharding_style == "maxtext":
+                rngs = jax.random.split(rng, int(mesh.shape.get("dp", 1)))
+                rng_spec = PS("dp")
+                logits_spec = PS("dp", "tp")
+                out_spec = PS("dp")
+            else:
+                rngs = jax.random.split(rng, jax.device_count())
+                rng_spec = PS(["dp", "fsdp"])
+                logits_spec = PS(["dp", "fsdp"], "tp")
+                out_spec = PS(["dp", "fsdp"])
 
             def sample_inner(_rng, logits_local):
                 del _rng
@@ -548,8 +607,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             sample_fn = shard_map(
                 sample_inner,
                 mesh=mesh,
-                in_specs=(PS(["dp", "fsdp"]), PS(["dp", "fsdp"], "tp")),
-                out_specs=PS(["dp", "fsdp"]),
+                in_specs=(rng_spec, logits_spec),
+                out_specs=out_spec,
                 check_rep=False,
             )
             return sample_fn(rngs, logits)
@@ -805,6 +864,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             train_log["throughput/train/valid_tokens_per_s"] = float(valid_tokens_global) / float(t_step)
         if t_update > 0:
             train_log["throughput/train/valid_tokens_per_s_update"] = float(valid_tokens_global) / float(t_update)
+
+        if jax.process_index() == 0:
+            _maybe_add_memory_metrics(train_log, prefix="memory/train")
 
         if wandb is not None and jax.process_index() == 0:
             wandb.log(train_log, step=step)

@@ -220,6 +220,22 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         bool(rollout_fast_qwen2_decode_attention) if rollout_fast_qwen2_decode_attention is not None else False
     )
 
+    rollout_sharding_style_raw = _get_by_path(cfg, "rollout.sharding_style")
+    if rollout_sharding_style_raw is None:
+        rollout_sharding_style_raw = cfg.get("rollout_sharding_style")
+    rollout_sharding_style = str(rollout_sharding_style_raw or "legacy").strip().lower()
+    rollout_sharding_style_aliases = {
+        "default": "legacy",
+        "baseline": "legacy",
+        "dp_only": "maxtext",
+        "dp-only": "maxtext",
+        "maxtext_dp_only": "maxtext",
+        "maxtext-dp-only": "maxtext",
+    }
+    rollout_sharding_style = rollout_sharding_style_aliases.get(rollout_sharding_style, rollout_sharding_style)
+    if rollout_sharding_style not in {"legacy", "maxtext"}:
+        raise ValueError("rollout.sharding_style must be one of: legacy, maxtext")
+
     deprecated_rollout_keys = {
         "rollout.batch_size_per_process": _get_by_path(cfg, "rollout.batch_size_per_process"),
         "rollout.batch_size_per_device": _get_by_path(cfg, "rollout.batch_size_per_device"),
@@ -401,6 +417,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             max_prompts_per_pass_per_process=rollout_max_prompts_per_pass_per_process,
             fast_generate=rollout_fast_generate,
             fast_qwen2_decode_attention=rollout_fast_qwen2_decode_attention,
+            sharding_style=rollout_sharding_style,
             n=rollout_n,
             global_length=global_length,
             max_length_sample=max_length_sample,

@@ -89,6 +89,7 @@
 - `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 - `docs/sops/grpo-gsm8k-runner-batch-size.md`
 - `docs/sops/grpo-gsm8k-metrics.md`
+- `docs/sops/rl-ppo-reinforce-equivalence-ppo-epochs-1.md`
 - `docs/sops/grpo-gsm8k-length-and-eval.md`
 - `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`

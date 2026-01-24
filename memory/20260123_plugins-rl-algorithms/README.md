@@ -114,3 +114,50 @@
 ## SOP updated
 
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
+
+## PPO vs REINFORCE 曲线一致性核查（20 steps, algorithm_test）
+
+- Branch/commit: `algorithm` @ `1f6a42d`
+- TPU VM: `mllm-jax-v4-8-260122100610` (zone `us-central2-b`, project `civil-rarity-482610-s5`)
+
+### Reinforce 20-step run
+
+- W&B run URL: `https://wandb.ai/johntitordemon2036/algorithm_test/runs/d5zv5dat`
+- W&B run name: `rl_gsm8k_qwen25_3b_bs128_steps20_reinforce_algtest_1f6a42d_20260124_045430`
+- Log (latest): `/root/MLLM-JAX/logs/nohup_rl_gsm8k_qwen25_3b_bs128_steps20_reinforce_algtest_latest.log`
+- Log evidence:
+  - `2:config_path: plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps20_reinforce_algtest.yaml`
+  - `62:algo=reinforce`
+  - `146:step=19 loss=0.180230 entropy=0.4590 reward_mean=1.7090 dt=51.49s`
+
+### PPO 20-step run
+
+- W&B run URL: `https://wandb.ai/johntitordemon2036/algorithm_test/runs/pm1e4vof`
+- W&B run name: `rl_gsm8k_qwen25_3b_bs128_steps20_ppo_algtest_1f6a42d_20260124_052244`
+- Log (latest): `/root/MLLM-JAX/logs/nohup_rl_gsm8k_qwen25_3b_bs128_steps20_ppo_algtest_latest.log`
+- Log evidence:
+  - `2:config_path: plugins/training/configs/rl_gsm8k_qwen25_3b_bs128_steps20_ppo_algtest.yaml`
+  - `62:algo=ppo`
+  - `146:step=19 loss=0.180230 entropy=0.4590 reward_mean=1.7090 dt=51.53s`
+
+### W&B status verification
+
+- `wandb.Api()` states: `reinforce finished`, `ppo finished`
+
+### Root-cause note (why curves can match)
+
+- `plugins/training/algorithms/__init__.py` states the repo shares a single PPO-style update path.
+- `plugins/training/algorithms/factory.py` maps both `ppo` and `reinforce` to `GlobalNormAdvantageModule`.
+- `plugins/training/runner/grpo_gsm8k.py` uses `cfg.train.ppo_epochs` as `ppo_steps`.
+- Base config keeps `ppo_epochs: 1`, so with identical seeds/inputs, `ppo` and `reinforce` can produce identical metrics when only `algo.name` changes.
+
+### In-flight (started before interruption)
+
+- RLOO 20-step run is currently active:
+  - W&B run URL: `https://wandb.ai/johntitordemon2036/algorithm_test/runs/f2iek3u7`
+  - Last observed line: `72:step=1 ... dt=76.13s`
+  - Exit file not yet written (status unknown at note time)
+
+### Local validation (this pass)
+
+- `pytest -q` → `19 passed in 0.30s`

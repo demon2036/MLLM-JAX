@@ -57,3 +57,45 @@
   - TPU smoke eval speed: `plugins/sft/configs/sid_sft_jax_smoke_qwen25_1p5b_instruct_industrial_tpu.yaml` uses `sample_test=8` to reduce per-prompt-length JIT compiles.
   - 1.5B base model configs also available: `plugins/sft/configs/sid_sft_jax_smoke_qwen25_1p5b_base_industrial_tpu.yaml`, `plugins/sft/configs/sid_sft_jax_qwen25_1p5b_base_industrial_tpu.yaml`.
   - TPU spot may be preempted; rerun on a fresh `v4-8` if needed.
+  - NOTE (branch policy): follow user request to develop on `minionerec` branch; earlier TPU smoke evidence includes a `git checkout main` line but new TPU runs use `minionerec`.
+
+## Evidence: Official HF checkpoints eval (v6e-8, us-east5-b)
+
+- TPU VM (existing):
+  - `gcloud compute tpus tpu-vm list --zone us-east5-b` shows:
+    - `minionerec-sid-sft-v6e-8-official-eval-260124163806` (READY)
+
+- Download official checkpoints on TPU (exit=0):
+  - Industrial:
+    - `python - <<\"PY\"\nfrom huggingface_hub import snapshot_download\nsnapshot_download(repo_id=\"kkknight/MiniOneRec\", allow_patterns=[\"Industrial_ckpt/*\"], local_dir=\"workdir/hf_ckpts/kkknight_MiniOneRec\")\nPY`
+  - Office:
+    - `python - <<\"PY\"\nfrom huggingface_hub import snapshot_download\nsnapshot_download(repo_id=\"kkknight/MiniOneRec\", allow_patterns=[\"Office_ckpt/*\"], local_dir=\"workdir/hf_ckpts/kkknight_MiniOneRec\")\nPY`
+
+- Dependency fix for upstream metrics script on TPU (exit=0):
+  - `python -m pip install -U fire`
+
+- Industrial official ckpt eval (exit=0; W&B online):
+  - `./scripts/run_sid_sft.sh --config plugins/sft/configs/sid_sft_jax_eval_official_minionerec_industrial_ckpt.yaml --run-mode eval`
+  - W&B run: `https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/h1pvzowo`
+  - Output dir:
+    - `runs/sid_sft_jax_eval_official_minionerec_industrial_ckpt/`
+  - `calc.py` cross-check (exit=0):
+    - `python workdir/MiniOneRec/calc.py --path runs/sid_sft_jax_eval_official_minionerec_industrial_ckpt/eval_predictions.json --item_path workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt`
+    - HR@3/5/10: `0.11361129 / 0.13192146 / 0.15751158`
+    - NDCG@3/5/10: `0.10135163 / 0.10890869 / 0.11705931`
+    - invalid: `0`
+
+- Office official ckpt eval (exit=0; W&B online):
+  - `./scripts/run_sid_sft.sh --config plugins/sft/configs/sid_sft_jax_eval_official_minionerec_office_ckpt.yaml --run-mode eval`
+  - W&B run: `https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/wx3eu7kh`
+  - Output dir:
+    - `runs/sid_sft_jax_eval_official_minionerec_office_ckpt/`
+  - `calc.py` cross-check (exit=0):
+    - `python workdir/MiniOneRec/calc.py --path runs/sid_sft_jax_eval_official_minionerec_office_ckpt/eval_predictions.json --item_path workdir/MiniOneRec/data/Amazon/info/Office_Products_5_2016-10-2018-11.txt`
+    - HR@3/5/10: `0.12556515 / 0.14036169 / 0.15885738`
+    - NDCG@3/5/10: `0.11241461 / 0.11860701 / 0.12453964`
+    - invalid: `0`
+
+- Report alignment (from `workdir/MiniOneRec/assets/minionerec_main_result.png`):
+  - Industrial (report): HR@3/5/10=`0.1143/0.1321/0.1586`, NDCG@3/5/10=`0.1011/0.1084/0.1167` (official ckpt eval matches within ~0.0011).
+  - Office (report): HR@3/5/10=`0.1217/0.1420/0.1634`, NDCG@3/5/10=`0.1088/0.1172/0.1242` (official ckpt eval close; biggest delta is HR@10 ≈ -0.0045).

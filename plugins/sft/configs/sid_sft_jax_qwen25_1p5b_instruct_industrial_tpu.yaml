@@ -7,7 +7,8 @@ device: tpu
 jax:
   # Use only DP on v4-8 to avoid sharding embeddings by vocab.
   mesh_shape: "dp:-1,fsdp:1,tp:1"
-  param_dtype: float32
+  # Keep params/opt states in bf16 to fit 1.5B on v4-8.
+  param_dtype: bfloat16
   compute_dtype: bfloat16
   max_cache_length: 2048
 
@@ -68,4 +69,3 @@ wandb:
   project: minionerec-sid-sft
   mode: online
   name: null
-

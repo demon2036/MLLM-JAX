@@ -30,6 +30,8 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
     def test_print_config_default(self) -> None:
         out = self._run(["--print-config"])
         self.assertIn("rollout:", out)
+        self.assertIn("algo:", out)
+        self.assertIn("name: grpo", out)
         self.assertIn("model_path: Qwen/Qwen2.5-3B-Instruct", out)
         self.assertIn("batch_size: 16", out)
         self.assertIn("n: 8", out)
@@ -45,6 +47,8 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
                 "plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml",
             ]
         )
+        self.assertIn("algo:", out)
+        self.assertIn("name: grpo", out)
         self.assertIn("model_path: Qwen/Qwen2.5-3B-Instruct", out)
         self.assertIn("batch_size: 16", out)
         self.assertIn("n: 8", out)

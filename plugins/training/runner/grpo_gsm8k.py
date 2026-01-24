@@ -10,7 +10,10 @@ import math
 
 import numpy as np
 
+from plugins.training.advantage.estimators import compute_gae_advantages
 from plugins.training.update.optimizer import OptimizerConfig
+from plugins.training.algorithms import AlgoConfig, create_algorithm
+from plugins.training.ppo import get_ppo_state, ppo_training_step
 
 @dataclass(frozen=True)
 class GRPORolloutConfig:
@@ -55,6 +58,7 @@ class GRPOGsm8kConfig:
     wandb_project: str
     wandb_mode: str
     wandb_name: str
+    algo: AlgoConfig = field(default_factory=AlgoConfig)
     reward_weights: tuple[float, float, float] = (1.0, 0.5, 0.5)
     eval_every_steps: int = 0
     eval_batches_per_process: int = 1
@@ -164,7 +168,6 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     from plugins.training.reward.modules import WeightedRewardModule
     from plugins.training.rollout.modules import RolloutBackendModule
     from plugins.training.update.optimizer import build_tx
-    from plugins.training.update.modules import PPOUpdateModule
     from plugins.training.update.train_step import training_step
     from training2 import (
         get_state,
@@ -173,7 +176,6 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         tag_count_reward,
     )
 
-    train_fn = jax.jit(training_step, donate_argnums=(0,))
     # IMPORTANT: slice micro-batches inside a jitted function to preserve sharding.
     #
     # If we slice a sharded global batch with Python indexing (outside jit), JAX may
@@ -291,6 +293,16 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         local_device_buffers = jax.device_put(local_device_arrays, local_devices)
         sharding = NamedSharding(mesh, PS(mesh.axis_names))
         return jax.make_array_from_single_device_arrays(global_shape, sharding, local_device_buffers)
+
+    def _local_from_global(array: jax.Array) -> np.ndarray:
+        shards = array.addressable_shards
+        if not shards:
+            return np.asarray(array)
+        first_index = shards[0].index
+        if all(shard.index == first_index for shard in shards):
+            return np.asarray(shards[0].data)
+        shards_sorted = sorted(shards, key=lambda s: s.index[0].start)
+        return np.concatenate([np.asarray(shard.data) for shard in shards_sorted], axis=0)
 
     # --- Resolve rollout batch sizes ---
     # New semantics: `rollout.batch_size` is global prompts per training step (across all processes).
@@ -469,19 +481,64 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         pad_token_id = 0
     pad_token_id = int(pad_token_id)
 
+    reward_funcs = [reward_correct, reward_format, tag_count_reward]
+    reward_func_names = [fn.__name__ for fn in reward_funcs]
+    algo = create_algorithm(cfg.algo, reward_funcs=reward_funcs, reward_weights=cfg.reward_weights)
+    reward_module = algo.reward_module
+    advantage_module = algo.advantage_module
+    update_module = algo.update_module
+    use_value_head = algo.requires_value_head
+    use_gae_advantage = algo.estimator_name == "gae"
+    if jax.process_index() == 0:
+        print(
+            " ".join(
+                [
+                    f"algo={algo.name}",
+                    f"estimator={algo.estimator_name}",
+                    f"update={algo.update_name}",
+                    f"value_head={int(use_value_head)}",
+                ]
+            )
+        )
+
     tx = build_tx(training_steps=cfg.steps, cfg=cfg.train.optimizer)
 
-    state, sampler, _state_sharding = get_state(
-        mesh,
-        training_steps=cfg.steps,
-        grad_accum_steps=grad_accum_steps,
-        model_path=cfg.model_path,
-        num_pre_q=cfg.rollout.n,
-        max_lengths=cfg.train.max_length_total,
-        beta=cfg.train.beta,
-        create_sampler=True,
-        tx=tx,
-    )
+    value_fn = None
+    if use_value_head:
+        state, sampler, ppo_module = get_ppo_state(
+            mesh,
+            training_steps=cfg.steps,
+            grad_accum_steps=grad_accum_steps,
+            model_path=cfg.model_path,
+            update_cfg=cfg.algo.update,
+            beta=cfg.train.beta,
+            create_sampler=True,
+            tx=tx,
+        )
+        train_fn = jax.jit(ppo_training_step, donate_argnums=(0,))
+
+        def _value_forward(params, input_ids, attention_mask):
+            return ppo_module.apply(
+                {"params": params},
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                method=ppo_module.value,
+            )
+
+        value_fn = jax.jit(_value_forward)
+    else:
+        state, sampler, _state_sharding = get_state(
+            mesh,
+            training_steps=cfg.steps,
+            grad_accum_steps=grad_accum_steps,
+            model_path=cfg.model_path,
+            num_pre_q=cfg.rollout.n,
+            max_lengths=cfg.train.max_length_total,
+            beta=cfg.train.beta,
+            create_sampler=True,
+            tx=tx,
+        )
+        train_fn = jax.jit(training_step, donate_argnums=(0,))
     if os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1":
         from plugins.training.rollout.optimizations import patch_qwen2_attention_decode_fast
 
@@ -547,11 +604,10 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     wandb = _maybe_init_wandb(cfg)
 
-    reward_funcs = [reward_correct, reward_format, tag_count_reward]
-    reward_func_names = [fn.__name__ for fn in reward_funcs]
-    reward_module = WeightedRewardModule(reward_funcs=reward_funcs, reward_weights=cfg.reward_weights)
-    advantage_module = GroupIdGRPOAdvantageModule(eps=1e-4)
-    update_module = PPOUpdateModule()
+    def _policy_params_for_rollout(params):
+        if not use_value_head:
+            return params
+        return {"model": params["model"], "lm_head": params["lm_head"]}
 
     rng = random.Random(0xC0FFEE + jax.process_index())
     step_times: list[float] = []
@@ -588,14 +644,15 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
             # --- Rollout (sampling) ---
             t_sync0 = time.perf_counter()
-            rollout_module.sync_weights(state.params)
+            policy_params = _policy_params_for_rollout(state.params)
+            rollout_module.sync_weights(policy_params)
             t_rollout_sync += time.perf_counter() - t_sync0
 
             t_rollout0 = time.perf_counter()
             rollout = rollout_module.rollout(
                 prompts=repeated_prompts,
                 sampler=sampler,
-                params=state.params,
+                params=policy_params,
                 system_prompt=system_prompt,
                 global_length=int(cfg.rollout.global_length),
                 max_length_sample=cfg.rollout.max_length_sample,
@@ -615,20 +672,26 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             t_reward += time.perf_counter() - t_reward0
 
             # --- Advantages (group_id based) ---
-            t_adv0 = time.perf_counter()
-            advantages_np = advantage_module.compute(rewards=rewards_np, group_ids=group_ids).advantages
-            t_adv += time.perf_counter() - t_adv0
+            advantages_np = None
+            if not use_gae_advantage:
+                if advantage_module is None:
+                    raise RuntimeError("advantage_module is required for non-GAE estimators")
+                t_adv0 = time.perf_counter()
+                advantages_np = advantage_module.compute(rewards=rewards_np, group_ids=group_ids).advantages
+                t_adv += time.perf_counter() - t_adv0
 
             datas_np = dict(datas_np)
             datas_np["rewards"] = rewards_np
-            datas_np["advantages"] = advantages_np
+            if advantages_np is not None:
+                datas_np["advantages"] = advantages_np
             datas_np["group_ids"] = group_ids
 
             answers_all.extend(answers)
             datas_np_all.append(datas_np)
             rewards_per_func_all.append(rewards_per_func)
             rewards_all.append(rewards_np)
-            advantages_all.append(advantages_np)
+            if advantages_np is not None:
+                advantages_all.append(advantages_np)
             group_ids_all.append(group_ids)
 
         t_release0 = time.perf_counter()
@@ -665,6 +728,35 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 datas_np["input_ids"] = _pad_2d_right(datas_np["input_ids"], seq_len_global, pad_token_id)
                 datas_np["attention_mask"] = _pad_2d_right(datas_np["attention_mask"], seq_len_global, 0)
                 datas_np["labels"] = _pad_2d_right(datas_np["labels"], seq_len_global, 0)
+
+        if use_gae_advantage and datas_np:
+            t_adv0 = time.perf_counter()
+            if value_fn is None:
+                raise RuntimeError("GAE estimator requires value_fn (PPO update with value head)")
+            value_inputs = {
+                "input_ids": datas_np["input_ids"],
+                "attention_mask": datas_np["attention_mask"],
+            }
+            value_inputs_jax = jax.tree_util.tree_map_with_path(_form_training_global_array, value_inputs)
+            values = value_fn(state.params, value_inputs_jax["input_ids"], value_inputs_jax["attention_mask"])
+            jax.block_until_ready(values)
+            values_np = _local_from_global(values)
+            values_pred = np.asarray(values_np[:, :-1], dtype=np.float32)
+            completion_mask = np.asarray(datas_np["labels"][:, 1:], dtype=np.float32)
+            advantages_np, returns_np = compute_gae_advantages(
+                rewards=rewards_np,
+                values=values_pred,
+                completion_mask=completion_mask,
+                gamma=cfg.algo.estimator.gae_gamma,
+                gae_lambda=cfg.algo.estimator.gae_lambda,
+                normalize=cfg.algo.estimator.gae_normalize,
+                eps=cfg.algo.estimator.eps,
+                clip_range=cfg.algo.estimator.clip_range,
+            )
+            datas_np["values"] = values_pred
+            datas_np["returns"] = returns_np
+            datas_np["advantages"] = advantages_np
+            t_adv += time.perf_counter() - t_adv0
 
         rewards_global = np.asarray(process_allgather(rewards_np)).reshape(-1)
         reward_global_stats = _stats_1d(rewards_global)
@@ -707,8 +799,14 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             entropy_value = _as_float(entropy)
 
         # --- Derived stats (global) ---
-        advantages_global = np.asarray(process_allgather(advantages_np)).reshape(-1)
-        adv_global_stats = _stats_1d(advantages_global)
+        if advantages_np.ndim == 1:
+            advantages_global = np.asarray(process_allgather(advantages_np)).reshape(-1)
+            adv_global_stats = _stats_1d(advantages_global)
+        else:
+            advantages_global = np.asarray(process_allgather(advantages_np))
+            mask_global = np.asarray(process_allgather(np.asarray(datas_np["labels"][:, 1:], dtype=np.float32)))
+            advantages_flat = advantages_global[mask_global > 0]
+            adv_global_stats = _stats_1d(advantages_flat.astype(np.float32))
 
         rewards_per_func_global = np.asarray(process_allgather(rewards_per_func))
         # shape [process_count, num_funcs, B_local]
@@ -767,6 +865,14 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             "time/train/update_s": float(t_update),
             "time/train/step_s": float(t_step),
         }
+        if "policy_loss" in last_meta:
+            train_log["train-ppo/policy_loss"] = _as_float(last_meta["policy_loss"])
+        if "value_loss" in last_meta:
+            train_log["train-ppo/value_loss"] = _as_float(last_meta["value_loss"])
+        if "value_pred_mean" in last_meta:
+            train_log["train-ppo/value_pred_mean"] = _as_float(last_meta["value_pred_mean"])
+        if "return_mean" in last_meta:
+            train_log["train-ppo/return_mean"] = _as_float(last_meta["return_mean"])
         if len(step_times) >= 10:
             train_log["time/train/step_avg_last10_s"] = float(sum(step_times[-10:]) / 10.0)
         for name, mean_value in zip(reward_func_names, per_func_means):
@@ -838,14 +944,15 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_repeated_items = [item for item in eval_items for _ in range(int(n))]
 
                 t_eval_sync0 = time.perf_counter()
-                eval_rollout_module.sync_weights(state.params)
+                eval_policy_params = _policy_params_for_rollout(state.params)
+                eval_rollout_module.sync_weights(eval_policy_params)
                 eval_rollout_sync_s += time.perf_counter() - t_eval_sync0
 
                 t_eval_rollout0 = time.perf_counter()
                 eval_rollout = eval_rollout_module.rollout(
                     prompts=eval_repeated_prompts,
                     sampler=eval_sampler,
-                    params=state.params,
+                    params=eval_policy_params,
                     system_prompt=system_prompt,
                     global_length=int(cfg.rollout.global_length),
                     max_length_sample=cfg.rollout.max_length_sample,
@@ -953,7 +1060,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         local_completion_count = 0
 
         t0 = time.perf_counter()
-        eval_rollout_module.sync_weights(state.params)
+        eval_policy_params = _policy_params_for_rollout(state.params)
+        eval_rollout_module.sync_weights(eval_policy_params)
         t_eval_sync_s += time.perf_counter() - t0
 
         pad_item = eval_qas[0]
@@ -973,7 +1081,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             eval_rollout = eval_rollout_module.rollout(
                 prompts=eval_repeated_prompts,
                 sampler=eval_sampler,
-                params=state.params,
+                params=eval_policy_params,
                 system_prompt=system_prompt,
                 global_length=int(cfg.rollout.global_length),
                 max_length_sample=cfg.rollout.max_length_sample,

@@ -3,19 +3,25 @@
 ## Quick tasks (task-based)
 
 - Repo setup: `docs/sops/repo-setup.md`
+- Clone reference repos into `workdir/`: `docs/sops/clone-reference-repos-into-workdir.md`
 - Clone AkaliKong/MiniOneRec into repo workdir: `docs/sops/clone-akalikong-minionerec-workdir.md`
 - MiniOneRec SID SFT + eval (plugins/sft): `docs/sops/minionerec-sid-sft-and-eval.md`
 - MiniOneRec SID SFT on TPU (JAX): `docs/sops/minionerec-sid-sft-jax-tpu.md`
 - Network checks: `docs/sops/network-checks.md`
 - Update repo via `git pull`: `docs/sops/git-pull-update.md`
 - Inspect diffs via `git diff`: `docs/sops/git-diff-inspect.md`
+- Ignore local asset dirs in git: `docs/sops/git-ignore-local-assets.md`
 - Commit and push to GitHub: `docs/sops/github-push.md`
+- Merge branch into `main`: `docs/sops/git-merge-branch-into-main.md`
 - Backup `main`, replace it with `john`, and delete `join`: `docs/sops/git-main-copy-and-switch-to-john.md`
 - Reinstall Electerm (AppImage): `docs/sops/electerm-reinstall-appimage.md`
 - Slim repo (move unused code to `deprecated/`): `docs/sops/repo-slim-deprecated.md`
 - TPU alive check: `docs/sops/tpu-alive-check.md`
 - TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
 - TPU v4-8 GRPO runner smoke (`rollout.backend=naive`): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
+- TPU v4-8 RL/GSM8K `reinforce++` (100 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
+- TPU v4-8 RL/GSM8K bs128 `reinforce++` (100 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-reinforcepp-wandb-100steps.md`
+- TPU v4-8 RL/GSM8K bs128 algtest (20 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-algtest-20steps.md`
 - TPU v6e-8 GRPO train (100 steps, bs=128 seq, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`
 - TPU v6e-8 rollout speed debug (Qwen2.5-3B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - TPU v6e-8 full test-set eval sweep (Qwen2.5-3B, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-full-test-eval-sweep.md`
@@ -46,10 +52,13 @@
 
 - `docs/sops/git-pull-update.md`
 - `docs/sops/git-diff-inspect.md`
+- `docs/sops/git-ignore-local-assets.md`
+- `docs/sops/git-merge-branch-into-main.md`
 - `docs/sops/git-main-copy-and-switch-to-john.md`
 - `docs/sops/git-worktrees.md`
 - `docs/sops/github-push.md`
 - `docs/sops/repo-slim-deprecated.md`
+- `docs/sops/clone-reference-repos-into-workdir.md`
 - `docs/sops/clone-akalikong-minionerec-workdir.md`
 
 ### TPU
@@ -57,6 +66,9 @@
 - `docs/sops/tpu-alive-check.md`
 - `docs/sops/tpu-vm-create-v4-8-or-v6e-8.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
+- `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
+- `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-reinforcepp-wandb-100steps.md`
+- `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-algtest-20steps.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - `docs/sops/tpu-vm-v6e-8-v6e-16-grpo-gsm8k-speed-gap-debug.md`
@@ -89,6 +101,7 @@
 - `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 - `docs/sops/grpo-gsm8k-runner-batch-size.md`
 - `docs/sops/grpo-gsm8k-metrics.md`
+- `docs/sops/rl-ppo-reinforce-equivalence-ppo-epochs-1.md`
 - `docs/sops/grpo-gsm8k-length-and-eval.md`
 - `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`

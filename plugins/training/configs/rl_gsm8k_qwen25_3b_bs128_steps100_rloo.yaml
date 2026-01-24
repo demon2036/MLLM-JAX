@@ -29,13 +29,13 @@ train:
   beta: 0.0
 
 algo:
-  name: grpo
+  name: rloo
   estimator:
-    name: grpo
+    name: rloo
   update:
     name: policy_gradient
 
-mesh_shape: auto
+mesh_shape: 1,-1,1
 
 wandb_project: mllm-jax-grpo-gsm8k
 wandb_mode: online

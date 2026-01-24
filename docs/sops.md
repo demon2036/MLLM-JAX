@@ -12,6 +12,7 @@
 - Inspect diffs via `git diff`: `docs/sops/git-diff-inspect.md`
 - Ignore local asset dirs in git: `docs/sops/git-ignore-local-assets.md`
 - Commit and push to GitHub: `docs/sops/github-push.md`
+- Merge `origin/main` into branch: `docs/sops/git-merge-main-into-branch.md`
 - Merge branch into `main`: `docs/sops/git-merge-branch-into-main.md`
 - Backup `main`, replace it with `john`, and delete `join`: `docs/sops/git-main-copy-and-switch-to-john.md`
 - Reinstall Electerm (AppImage): `docs/sops/electerm-reinstall-appimage.md`
@@ -53,6 +54,7 @@
 - `docs/sops/git-pull-update.md`
 - `docs/sops/git-diff-inspect.md`
 - `docs/sops/git-ignore-local-assets.md`
+- `docs/sops/git-merge-main-into-branch.md`
 - `docs/sops/git-merge-branch-into-main.md`
 - `docs/sops/git-main-copy-and-switch-to-john.md`
 - `docs/sops/git-worktrees.md`

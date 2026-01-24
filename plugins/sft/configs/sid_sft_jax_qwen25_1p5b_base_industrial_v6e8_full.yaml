@@ -8,7 +8,7 @@ jax:
   mesh_shape: "auto"
   param_dtype: bfloat16
   compute_dtype: bfloat16
-  max_cache_length: 2048
+  max_cache_length: 512
 
 data:
   category: Industrial_and_Scientific
@@ -38,10 +38,11 @@ train:
   num_train_epochs: 10
   max_steps: -1
   warmup_steps: 0
-  logging_steps: 10
+  logging_steps: 1
   eval_steps: 0
-  save_steps: 50
-  save_total_limit: 2
+  save_steps: 0
+  save_total_limit: 0
+  save_last: false
   group_by_length: false
   freeze_LLM: false
   train_from_scratch: false
@@ -52,7 +53,7 @@ train:
 
 eval:
   enabled: true
-  batch_size: 2
+  batch_size: 1
   num_beams: 50
   max_new_tokens: 32
   length_penalty: 0.0

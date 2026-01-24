@@ -40,8 +40,9 @@
   - `run_summary.json`
   - `eval_predictions.json`
   - `eval_predictions.metrics.json`
-  - `sft_state_last.msgpack` (params-only checkpoint)
+  - `sft_state_last.msgpack` (params-only checkpoint, only when `train.save_last=true`)
 - Smoke config prints `effective_bs=1024` on v4-8 (JAX device_count=4, micro=8, accum=32), and W&B logs `train/effective_batch_size=1024`.
+  - If `train.logging_steps=1`, W&B also logs `train/step_time_sec` each step.
 
 ## Troubleshooting
 
@@ -56,6 +57,8 @@
 - v6e-8 queued-resources (flex-start) quota is 0 in `us-central2-b` (example failures):
   - `gcloud alpha compute tpus queued-resources create minionerec-sid-sft-v6e-8-flex-260124121715 --zone=us-central2-b --accelerator-type=v6e-8 --runtime-version=v6e-ubuntu-2404 --node-id=minionerec-sid-sft-v6e-8-flex-260124121715-node --provisioning-model=flex-start --max-run-duration=3600s --async`
   - `gcloud alpha compute tpus queued-resources create minionerec-sid-sft-v6e-8-guaranteed-260124121906 --zone=us-central2-b --accelerator-type=v6e-8 --runtime-version=v6e-ubuntu-2404 --node-id=minionerec-sid-sft-v6e-8-guaranteed-260124121906-node --guaranteed --async`
+- v6e-8 eval `RESOURCE_EXHAUSTED` (constrained beam search):
+  - Reduce `eval.batch_size` (start with `1`) and reduce `jax.max_cache_length` (Industrial test prompts fit within `256`, so `512` is safe).
 - Missing `workdir/MiniOneRec` data:
   - Re-run the `git clone https://github.com/AkaliKong/MiniOneRec workdir/MiniOneRec` step
 

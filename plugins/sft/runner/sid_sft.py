@@ -66,6 +66,7 @@ class SidSftTrainConfig:
     eval_steps: int = 200
     save_steps: int = 200
     save_total_limit: int = 1
+    save_last: bool = True
     group_by_length: bool = False
     freeze_LLM: bool = False
     train_from_scratch: bool = False
@@ -427,7 +428,17 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             seed=int(cfg.seed),
             logging_steps=int(cfg.train.logging_steps),
             log_cb=(
-                (lambda step, loss, effective_bs: wandb.log({"train/loss": loss, "train/effective_batch_size": effective_bs}, step=step))
+                (
+                    lambda step, loss, effective_bs, step_time_sec: wandb.log(
+                        {
+                            "train/loss": loss,
+                            "train/effective_batch_size": effective_bs,
+                            "train/step_time_sec": float(step_time_sec),
+                            "train/samples_per_sec": float(effective_bs) / max(float(step_time_sec), 1e-9),
+                        },
+                        step=step,
+                    )
+                )
                 if wandb is not None
                 else None
             ),
@@ -437,7 +448,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
         os.makedirs(cfg.output_dir, exist_ok=True)
         tokenizer.save_pretrained(cfg.output_dir)
-        if jax.process_index() == 0:
+        if bool(cfg.train.save_last) and jax.process_index() == 0:
             save_checkpoint(output_dir=cfg.output_dir, state=state, name="last")
 
     # Eval params: prefer trained state, else optionally load checkpoint, else use base params.

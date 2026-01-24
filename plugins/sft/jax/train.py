@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -51,7 +52,7 @@ def run_sft_train(
     max_steps: int,
     seed: int,
     logging_steps: int,
-    log_cb: Callable[[int, float, int], None] | None = None,
+    log_cb: Callable[[int, float, int, float], None] | None = None,
     checkpoint_every_steps: int = 0,
     checkpoint_cb: Callable[[int, Any], None] | None = None,
 ) -> tuple[Any, SftTrainStats]:
@@ -89,7 +90,9 @@ def run_sft_train(
 
     last_loss = float("nan")
     micro_steps = 0
+    run_t0 = time.perf_counter()
     for step in range(1, max_steps + 1):
+        step_t0 = time.perf_counter()
         losses = []
         for _ in range(int(grad_accum_steps)):
             if cursor + global_micro_batch > len(indices):
@@ -110,10 +113,12 @@ def run_sft_train(
             losses.append(loss_val)
 
         last_loss = float(np.mean(losses)) if losses else last_loss
+        step_dt = float(time.perf_counter() - step_t0)
+        wall_dt = float(time.perf_counter() - run_t0)
         if int(logging_steps) > 0 and (step % int(logging_steps) == 0 or step == 1 or step == max_steps):
-            print(f"[sft] step={step}/{max_steps} loss={last_loss:.6f} effective_bs={effective_batch}")
+            print(f"[sft] step={step}/{max_steps} loss={last_loss:.6f} effective_bs={effective_batch} dt={step_dt:.3f}s t={wall_dt:.1f}s")
             if log_cb is not None:
-                log_cb(int(step), float(last_loss), int(effective_batch))
+                log_cb(int(step), float(last_loss), int(effective_batch), float(step_dt))
 
         if checkpoint_cb is not None and int(checkpoint_every_steps) > 0 and step % int(checkpoint_every_steps) == 0:
             checkpoint_cb(int(step), bundle.state)

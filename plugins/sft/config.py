@@ -65,6 +65,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "eval_steps": 200,
         "save_steps": 200,
         "save_total_limit": 1,
+        # If false, the JAX backend won't write `sft_state_last.msgpack`.
+        "save_last": True,
         "group_by_length": False,
         "freeze_LLM": False,
         "train_from_scratch": False,

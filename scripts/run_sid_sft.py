@@ -129,6 +129,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
         eval_steps=int(_get_or_default(cfg, "train.eval_steps", DEFAULT_CONFIG["train"]["eval_steps"])),
         save_steps=int(_get_or_default(cfg, "train.save_steps", DEFAULT_CONFIG["train"]["save_steps"])),
         save_total_limit=int(_get_or_default(cfg, "train.save_total_limit", DEFAULT_CONFIG["train"]["save_total_limit"])),
+        save_last=bool(_get_or_default(cfg, "train.save_last", DEFAULT_CONFIG["train"].get("save_last", True))),
         group_by_length=bool(_get_or_default(cfg, "train.group_by_length", DEFAULT_CONFIG["train"]["group_by_length"])),
         freeze_LLM=bool(_get_or_default(cfg, "train.freeze_LLM", DEFAULT_CONFIG["train"]["freeze_LLM"])),
         train_from_scratch=bool(_get_or_default(cfg, "train.train_from_scratch", DEFAULT_CONFIG["train"]["train_from_scratch"])),

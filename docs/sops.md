@@ -4,6 +4,7 @@
 
 - Repo setup: `docs/sops/repo-setup.md`
 - Clone reference repos into `workdir/`: `docs/sops/clone-reference-repos-into-workdir.md`
+- Inspect JAX SplashAttention + design tiled CE kernel: `docs/sops/jax-splash-attention-tiled-ce-kernel-design.md`
 - Clone AkaliKong/MiniOneRec into repo workdir: `docs/sops/clone-akalikong-minionerec-workdir.md`
 - MiniOneRec SID SFT + eval (plugins/sft): `docs/sops/minionerec-sid-sft-and-eval.md`
 - Inspect SFT + GRPO GSM8K data stack: `docs/sops/inspect-sft-grpo-data-stack.md`

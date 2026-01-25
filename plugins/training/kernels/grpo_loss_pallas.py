@@ -158,10 +158,11 @@ def _grpo_pallas_fwd(
         idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
         block_start = pid_k * block_size
         offset = idx - block_start
+        in_range = (offset >= 0) & (offset < block_size)
         lane_ids = jnp.arange(block_size, dtype=jnp.int32)[None, :]
         onehot = lane_ids == offset[:, None]
         chosen_val = jnp.sum(jnp.where(onehot, logits_tile, 0.0), axis=-1)
-        chosen_ref[:] = jnp.where(jnp.any(onehot, axis=-1), chosen_val, chosen_ref[:])
+        chosen_ref[:] = jnp.where(in_range, chosen_val, chosen_ref[:])
 
         prev_max = max_ref[:]
         prev_sum = sum_ref[:]

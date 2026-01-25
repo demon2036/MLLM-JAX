@@ -132,9 +132,6 @@ def _grpo_pallas_fwd(
     out_loss = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
     out_logp = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
     out_lse = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_max = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_sum = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_chosen = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
 
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
@@ -156,9 +153,9 @@ def _grpo_pallas_fwd(
 
         @pl.when(pid_k == 0)
         def init():
-            max_ref[0, :, 0] = jnp.full((time_block,), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
-            sum_ref[0, :, 0] = jnp.zeros((time_block,), dtype=jnp.float32)
-            chosen_ref[0, :, 0] = jnp.zeros((time_block,), dtype=jnp.float32)
+            max_ref[:] = jnp.full((time_block,), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
+            sum_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
+            chosen_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
             out_loss_ref[...] = jnp.zeros_like(out_loss_ref)
             out_logp_ref[...] = jnp.zeros_like(out_logp_ref)
             out_lse_ref[...] = jnp.zeros_like(out_lse_ref)
@@ -172,24 +169,24 @@ def _grpo_pallas_fwd(
         lane_ids = jnp.arange(block_size, dtype=jnp.int32)[None, :]
         onehot = lane_ids == offset[:, None]
         chosen_val = jnp.sum(jnp.where(onehot, logits_tile, 0.0), axis=-1)
-        chosen_ref[0, :, 0] = jnp.where(in_range, chosen_val, chosen_ref[0, :, 0])
+        chosen_ref[:] = jnp.where(in_range, chosen_val, chosen_ref[:])
 
-        prev_max = max_ref[0, :, 0]
-        prev_sum = sum_ref[0, :, 0]
+        prev_max = max_ref[:]
+        prev_sum = sum_ref[:]
         tile_max = jnp.max(logits_tile, axis=-1)
         new_max = jnp.maximum(prev_max, tile_max)
         prev_sum = prev_sum * jnp.exp(prev_max - new_max)
         tile_sum = jnp.sum(jnp.exp(logits_tile - new_max[:, None]), axis=-1)
         new_sum = prev_sum + tile_sum
-        max_ref[0, :, 0] = new_max
-        sum_ref[0, :, 0] = new_sum
+        max_ref[:] = new_max
+        sum_ref[:] = new_sum
 
         @pl.when(pid_k == blocks - 1)
         def out():
-            lse = max_ref[0, :, 0] + jnp.log(sum_ref[0, :, 0])
+            lse = max_ref[:] + jnp.log(sum_ref[:])
             out_lse_ref[0, :, 0] = lse.astype(out_lse_ref.dtype)
 
-            logp = (chosen_ref[0, :, 0] - lse) / temperature
+            logp = (chosen_ref[:] - lse) / temperature
             out_logp_ref[0, :, 0] = logp.astype(out_logp_ref.dtype)
 
             old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
@@ -203,7 +200,7 @@ def _grpo_pallas_fwd(
 
     call = pl.pallas_call(
         functools.partial(kernel),
-        out_shape=(out_loss, out_logp, out_lse, out_max, out_sum, out_chosen),
+        out_shape=(out_loss, out_logp, out_lse),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
@@ -216,18 +213,20 @@ def _grpo_pallas_fwd(
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t * time_block, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t * time_block, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t * time_block, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t * time_block, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t * time_block, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t * time_block, 0)),
             ],
             grid=(batch, time_blocks, blocks),
+            scratch_shapes=[
+                pltpu.VMEM((time_block,), jnp.float32),
+                pltpu.VMEM((time_block,), jnp.float32),
+                pltpu.VMEM((time_block,), jnp.float32),
+            ],
         ),
         compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "arbitrary")),
         interpret=bool(interpret),
         debug=bool(debug),
     )
 
-    per_token_loss3, per_token_logps3, lse3, _max3, _sum3, _chosen3 = call(logits, chosen_ids3, old_logps3, advantages)
+    per_token_loss3, per_token_logps3, lse3 = call(logits, chosen_ids3, old_logps3, advantages)
     per_token_loss = per_token_loss3[:, :original_time, 0]
     per_token_logps = per_token_logps3[:, :original_time, 0]
     lse = lse3[:, :original_time, 0]

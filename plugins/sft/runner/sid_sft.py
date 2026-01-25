@@ -201,6 +201,37 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             return jnp.float16
         raise ValueError(f"Unsupported dtype: {name!r}")
 
+    require_multihost = os.environ.get("REQUIRE_MULTIHOST") == "1"
+    require_process_count_raw = os.environ.get("REQUIRE_JAX_PROCESS_COUNT")
+    require_process_count = int(require_process_count_raw) if require_process_count_raw else 0
+
+    try:
+        jax.distributed.initialize()
+    except Exception as e:
+        if require_multihost or require_process_count > 0:
+            raise RuntimeError(
+                "jax.distributed.initialize() failed but a multi-host runtime is required "
+                "(REQUIRE_MULTIHOST=1 or REQUIRE_JAX_PROCESS_COUNT is set). "
+                "Start the job on all workers (`gcloud ... tpu-vm ssh --worker=all`) "
+                "or launch one process per worker."
+            ) from e
+        if os.environ.get("PRINT_JAX_DISTRIBUTED_INIT_ERROR") == "1":
+            print(f"jax.distributed.initialize() skipped: {e}")
+
+    if require_multihost and int(jax.process_count()) <= 1:
+        raise RuntimeError(
+            "Expected a multi-host JAX runtime (REQUIRE_MULTIHOST=1) but got jax.process_count()==1. "
+            "This usually means only worker 0 launched the program."
+        )
+
+    if require_process_count > 0:
+        actual_process_count = int(jax.process_count())
+        if actual_process_count != require_process_count:
+            raise RuntimeError(
+                f"Expected jax.process_count()=={require_process_count} (from REQUIRE_JAX_PROCESS_COUNT), "
+                f"got {actual_process_count}. This usually means only a subset of TPU workers launched the program."
+            )
+
     mesh = create_mesh_from_config(cfg.jax.mesh_shape)
     compute_dtype = parse_dtype(cfg.jax.compute_dtype)
     param_dtype = parse_dtype(cfg.jax.param_dtype)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import os
 from typing import Any
 
 import flax
@@ -9,12 +8,13 @@ import jax
 import jax.numpy as jnp
 from chex import ArrayTree
 from flax.training import train_state
-from transformers import AutoConfig, AutoTokenizer
 
 from MLLM_JAX.language.llama.llama import LlamaJaxConfig
-from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
 from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
-from plugins.sample.mllm_sampler import Sampler, get_params
+from plugins.common.tokenizer import prepare_tokenizer
+from plugins.llm.bundle import build_llm_bundle
+from plugins.llm.dtypes import parse_dtype
+from plugins.sample.mllm_sampler import Sampler
 from plugins.training.algorithms import UpdateConfig
 from plugins.training.ppo.module import PPOActorCriticModule
 
@@ -24,19 +24,6 @@ class PPOTrainState(train_state.TrainState):
     micro_in_mini: int = 1
     grad_accum: ArrayTree | None = None
     ref_params: Any | None = None
-
-
-def _resolve_param_dtype() -> jnp.dtype:
-    param_dtype_raw = os.environ.get("MLLM_JAX_PARAM_DTYPE", "float32").strip().lower()
-    if param_dtype_raw in {"float32", "f32"}:
-        return jnp.float32
-    if param_dtype_raw in {"bfloat16", "bf16"}:
-        return jnp.bfloat16
-    if param_dtype_raw in {"float16", "f16"}:
-        return jnp.float16
-    raise ValueError(
-        f"Unsupported MLLM_JAX_PARAM_DTYPE={param_dtype_raw!r} (expected float32/bfloat16/float16)."
-    )
 
 
 def _init_value_head_params(*, hidden_size: int, param_dtype: jnp.dtype) -> dict[str, jnp.ndarray]:
@@ -55,12 +42,26 @@ def get_ppo_state(
     beta: float = 0.0,
     create_sampler: bool = True,
     tx: Any | None = None,
+    param_dtype: str = "float32",
+    compute_dtype: str = "bfloat16",
 ) -> tuple[PPOTrainState, Any, PPOActorCriticModule]:
-    config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+    bundle = build_llm_bundle(
+        mesh=mesh,
+        model_path=str(model_path),
+        param_dtype=str(param_dtype),
+        compute_dtype=str(compute_dtype),
+        trust_remote_code=True,
+        padding_side="right",
+        only_model=False,
+    )
+    config = bundle.hf_config
     if getattr(config, "model_type", None) not in {"qwen2"}:
-        raise ValueError(f"PPO value head currently supports Qwen2 only, got model_type={config.model_type!r}")
+        raise ValueError(f"PPO value head currently supports Qwen2 only, got model_type={getattr(config, 'model_type', None)!r}")
 
-    jax_config = LlamaJaxConfig(mesh=mesh)
+    attention_mesh = mesh if jax.devices()[0].platform == "tpu" else None
+    pdtype = parse_dtype(str(param_dtype))
+    cdtype = parse_dtype(str(compute_dtype))
+    jax_config = LlamaJaxConfig(mesh=attention_mesh, dtype=cdtype, param_dtype=pdtype)
     module = PPOActorCriticModule(
         config=config,
         jax_config=jax_config,
@@ -71,13 +72,10 @@ def get_ppo_state(
         entropy_coef=update_cfg.entropy_coef,
     )
 
-    params = get_params(model_path)
-    params = flax.core.unfreeze(params)
-
-    param_dtype = _resolve_param_dtype()
-    params["value_head"] = _init_value_head_params(hidden_size=int(config.hidden_size), param_dtype=param_dtype)
-    params = flax.core.freeze(params)
-    params = jax.tree_util.tree_map(lambda x: jnp.asarray(x, dtype=param_dtype), params)
+    if bundle.params is None:
+        raise RuntimeError("Expected bundle.params when only_model=False")
+    params = dict(bundle.params)
+    params["value_head"] = _init_value_head_params(hidden_size=int(config.hidden_size), param_dtype=pdtype)
 
     def init_fn(p):
         grad_accum = None
@@ -100,9 +98,8 @@ def get_ppo_state(
 
     sampler = None
     if create_sampler:
-        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        policy_model = Qwen2ForCausalLM(config, jax_config)
-        sampler = Sampler(policy_model, tokenizer, mesh=mesh)
+        tokenizer, _pad_token_id = prepare_tokenizer(bundle.tokenizer, padding_side="right")
+        sampler = Sampler(bundle.model, tokenizer, mesh=mesh)
 
     return state, sampler, module
 

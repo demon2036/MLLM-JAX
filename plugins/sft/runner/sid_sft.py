@@ -6,8 +6,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import numpy as np
-import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 
 from plugins.sft.datasets.concat_dataset import ConcatDataset
 from plugins.sft.datasets.eval_sid_next_item import SidNextItemEvalDataset
@@ -16,8 +15,11 @@ from plugins.sft.datasets.sid_item_alignment import SidItemAlignmentDataset
 from plugins.sft.datasets.sid_next_item import SidNextItemSftDataset
 from plugins.sft.jax.evaluator import SidNextItemJaxEvaluator, evaluate_sid_next_item_jax
 from plugins.sft.tokens import maybe_extend_tokenizer
-from plugins.common.wandb_utils import maybe_init_wandb
+from plugins.common.checkpoint import CheckpointManager, CheckpointManagerConfig
+from plugins.common.observability import StatsLogger, WandbRunSpec
 from plugins.common.tokenizer import prepare_tokenizer
+from plugins.llm.bundle import build_llm_bundle
+from plugins.llm.dtypes import parse_dtype
 
 
 def _set_seed(seed: int) -> None:
@@ -183,45 +185,30 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     import numpy as np
     from jax.sharding import NamedSharding
 
-    from MLLM_JAX.language.llama.llama import LlamaJaxConfig, convert_torch_to_flax_llama
-    from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
     from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 
-    from plugins.sft.jax.checkpoint import load_checkpoint, save_checkpoint
+    from plugins.sft.jax.checkpoint import load_checkpoint
     from plugins.sft.jax.params import resize_lm_vocab
     from plugins.sft.jax.train import create_mesh_from_config, run_sft_train
-
-    def parse_dtype(name: str) -> Any:
-        n = str(name or "float32").strip().lower()
-        if n in {"float32", "f32"}:
-            return jnp.float32
-        if n in {"bfloat16", "bf16"}:
-            return jnp.bfloat16
-        if n in {"float16", "f16"}:
-            return jnp.float16
-        raise ValueError(f"Unsupported dtype: {name!r}")
 
     mesh = create_mesh_from_config(cfg.jax.mesh_shape)
     compute_dtype = parse_dtype(cfg.jax.compute_dtype)
     param_dtype = parse_dtype(cfg.jax.param_dtype)
 
-    wandb = maybe_init_wandb(
+    stats_logger = StatsLogger(
         cfg=cfg,
-        project=cfg.wandb.project,
-        name=cfg.wandb.name,
-        mode=cfg.wandb.mode,
+        wandb=WandbRunSpec(project=cfg.wandb.project, mode=cfg.wandb.mode, name=cfg.wandb.name),
         process_index=jax.process_index(),
     )
 
     # Tokenizer + SID token extension (tokenizer-only; params resized below).
     tokenizer = AutoTokenizer.from_pretrained(cfg.base_model, trust_remote_code=True)
-    tokenizer, pad_token_id = prepare_tokenizer(tokenizer, padding_side="right")
-
+    tokenizer, _pad_token_id = prepare_tokenizer(tokenizer, padding_side="right")
     extension = maybe_extend_tokenizer(tokenizer=tokenizer, sid_index_path=cfg.data.sid_index_path)
 
-    tokenizer_vocab_size = int(len(tokenizer))
     # When using FSDP/TP sharding, some params shard over the vocab axis. Pad the
     # model vocab size so the embedding table shards evenly.
+    tokenizer_vocab_size = int(len(tokenizer))
     fsdp = int(mesh.shape.get("fsdp", 1))
     tp = int(mesh.shape.get("tp", 1))
     pad_multiple = max(1, fsdp * tp)
@@ -233,65 +220,73 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             if jax.process_index() == 0:
                 print(f"[sft] pad_vocab_size {tokenizer_vocab_size} -> {padded_vocab_size} (multiple={pad_multiple})")
 
-    # Model config must reflect the resized vocab (tokenizer + optional padding).
-    base_config = AutoConfig.from_pretrained(cfg.base_model, trust_remote_code=True)
-    base_config.vocab_size = int(padded_vocab_size)
-
-    # Avoid TPU-only fused attention kernels on CPU/GPU backends.
-    attention_mesh = mesh if jax.devices()[0].platform == "tpu" else None
-    jax_config = LlamaJaxConfig(mesh=attention_mesh, dtype=compute_dtype, param_dtype=param_dtype)
-    model = Qwen2ForCausalLM(base_config, jax_config)
-
     rng = jax.random.PRNGKey(int(cfg.seed))
+
+    def _place_params(params_tree: Any) -> tuple[Any, Any]:
+        params_tree = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), params_tree)
+        shapes = jax.eval_shape(lambda x: x, params_tree)
+        partitions = match_partition_rules(get_partition_rules_llama(), shapes)
+        shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), partitions)
+        params_tree = jax.tree_util.tree_map(
+            lambda x, sh: jax.device_put(jnp.asarray(x, dtype=param_dtype), sh), params_tree, shardings
+        )
+        return params_tree, shardings
+
+    needs_weights = not (run_mode_norm == "eval" and cfg.train.resume_from_checkpoint) and not bool(cfg.train.train_from_scratch)
+    bundle = build_llm_bundle(
+        mesh=mesh,
+        model_path=cfg.base_model,
+        tokenizer=tokenizer,
+        param_dtype=str(cfg.jax.param_dtype),
+        compute_dtype=str(cfg.jax.compute_dtype),
+        trust_remote_code=True,
+        padding_side="right",
+        allow_torch_fallback=True,
+        init_seed=int(cfg.seed),
+        only_model=not needs_weights,
+    )
+    model = bundle.model
+    tokenizer = bundle.tokenizer
+    pad_token_id = int(bundle.pad_token_id)
+
+    target_vocab_size = int(getattr(bundle.hf_config, "vocab_size", padded_vocab_size))
+    if int(target_vocab_size) != int(padded_vocab_size) and jax.process_index() == 0:
+        print(f"[sft] WARNING: bundle vocab_size={target_vocab_size} != expected_padded_vocab_size={padded_vocab_size}")
 
     # Param init / load:
     # - For eval-only runs with `resume_from_checkpoint`, skip loading base model weights.
     # - Otherwise, load from base model or init from scratch.
     loaded_from_checkpoint = False
+    shardings = None
+    vocab_resize = None
     if run_mode_norm == "eval" and cfg.train.resume_from_checkpoint:
         payload = load_checkpoint(str(cfg.train.resume_from_checkpoint))
         ckpt_params = payload.get("params")
         if ckpt_params is None:
             raise ValueError("Checkpoint payload missing 'params'")
-        params = ckpt_params
         loaded_from_checkpoint = True
+        params, vocab_resize = resize_lm_vocab(params=ckpt_params, new_vocab_size=int(target_vocab_size), rng=rng)
+        params, shardings = _place_params(params)
     elif cfg.train.train_from_scratch:
         dummy_len = 8
         dummy = jnp.zeros((1, dummy_len), dtype=jnp.int32)
         dummy_mask = jnp.ones((1, dummy_len), dtype=jnp.int32)
         dummy_pos = jnp.arange(dummy_len, dtype=jnp.int32)[None, :]
         variables = model.init(rng, input_ids=dummy, attention_mask=dummy_mask, position_ids=dummy_pos, cache=None)
-        params = flax.core.unfreeze(variables["params"])
+        params_init = flax.core.unfreeze(variables["params"])
+        params, vocab_resize = resize_lm_vocab(params=params_init, new_vocab_size=int(target_vocab_size), rng=rng)
+        params, shardings = _place_params(params)
     else:
-        torch_model = AutoModelForCausalLM.from_pretrained(
-            cfg.base_model,
-            torch_dtype=torch.bfloat16,
-            trust_remote_code=True,
-        )
-        state_dict = torch_model.state_dict()
-        params = convert_torch_to_flax_llama(state_dict)
+        params = bundle.params
+        if params is None:
+            raise RuntimeError("Expected bundle.params for weights-loaded run.")
+        vocab_resize = bundle.vocab_resize
+        if vocab_resize is None:
+            raise RuntimeError("Expected bundle.vocab_resize for weights-loaded run.")
+        shardings = jax.tree_util.tree_map(lambda x: x.sharding, params)
 
-        def _to_numpy(x: Any) -> np.ndarray:
-            if isinstance(x, torch.Tensor):
-                x = x.detach().cpu()
-                # PyTorch cannot export bfloat16 tensors to NumPy directly.
-                if x.dtype == torch.bfloat16:
-                    x = x.to(torch.float32)
-                return x.numpy()
-            return np.asarray(x)
-
-        params = jax.tree_util.tree_map(_to_numpy, params)
-        del torch_model
-
-    # Resize embeddings/lm_head for new SID tokens (+ optional padding for sharding divisibility).
-    params, vocab_resize = resize_lm_vocab(params=params, new_vocab_size=int(padded_vocab_size), rng=rng)
-
-    # Place params with sharding + dtype.
-    params = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), params)
-    shapes = jax.eval_shape(lambda x: x, params)
-    partitions = match_partition_rules(get_partition_rules_llama(), shapes)
-    shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), partitions)
-    params = jax.tree_util.tree_map(lambda x, sh: jax.device_put(jnp.asarray(x, dtype=param_dtype), sh), params, shardings)
+    if shardings is None or vocab_resize is None:
+        raise RuntimeError("Failed to construct params/shardings for SFT run.")
 
     # Train (optional).
     state = None
@@ -333,20 +328,26 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
         save_steps = int(cfg.train.save_steps)
         save_total_limit = int(cfg.train.save_total_limit)
-        saved_steps: list[int] = []
+        ckpt_mgr = CheckpointManager(
+            CheckpointManagerConfig(
+                output_dir=str(cfg.output_dir),
+                prefix="sft_state",
+                save_every_steps=int(save_steps),
+                save_total_limit=int(save_total_limit),
+                save_last=bool(cfg.train.save_last),
+                resume_from=str(cfg.train.resume_from_checkpoint) if cfg.train.resume_from_checkpoint else None,
+            ),
+            process_index=jax.process_index(),
+        )
+
+        def _ckpt_payload(st: Any) -> dict[str, Any]:
+            return {
+                "step": int(getattr(st, "step", 0)),
+                "params": getattr(st, "params"),
+            }
 
         def checkpoint_cb(step: int, st: Any) -> None:
-            if jax.process_index() != 0:
-                return
-            save_checkpoint(output_dir=cfg.output_dir, state=st, name=f"step{int(step)}")
-            if save_total_limit > 0:
-                saved_steps.append(int(step))
-                while len(saved_steps) > int(save_total_limit):
-                    old = saved_steps.pop(0)
-                    try:
-                        os.remove(os.path.join(cfg.output_dir, f"sft_state_step{int(old)}.msgpack"))
-                    except FileNotFoundError:
-                        pass
+            ckpt_mgr.maybe_save_step(step=int(step), payload=_ckpt_payload(st))
 
         evaluator = None
         eval_every_steps = 0
@@ -396,14 +397,14 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             )
             eval_metrics = metrics
 
-            if wandb is not None:
+            if int(jax.process_index()) == 0:
                 log = {"eval/epoch": epoch}
                 for k, v in metrics.hr.items():
                     log[f"eval/hr@{k}"] = v
                 for k, v in metrics.ndcg.items():
                     log[f"eval/ndcg@{k}"] = v
                 log["eval/invalid_prediction_count"] = metrics.invalid_prediction_count
-                wandb.log(log, step=int(step))
+                stats_logger.commit(log, step=int(step))
 
         state, train_stats = run_sft_train(
             mesh=mesh,
@@ -423,7 +424,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             warmup_steps=int(cfg.train.warmup_steps),
             log_cb=(
                 (
-                    lambda step, loss, effective_bs, step_time_sec: wandb.log(
+                    lambda step, loss, effective_bs, step_time_sec: stats_logger.commit(
                         {
                             "train/loss": loss,
                             "train/effective_batch_size": effective_bs,
@@ -433,7 +434,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
                         step=step,
                     )
                 )
-                if wandb is not None
+                if int(jax.process_index()) == 0
                 else None
             ),
             eval_every_steps=int(eval_every_steps),
@@ -444,8 +445,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
         os.makedirs(cfg.output_dir, exist_ok=True)
         tokenizer.save_pretrained(cfg.output_dir)
-        if bool(cfg.train.save_last) and jax.process_index() == 0:
-            save_checkpoint(output_dir=cfg.output_dir, state=state, name="last")
+        ckpt_mgr.maybe_save_last(payload=_ckpt_payload(state))
 
     # Eval params: prefer trained state, else use placed params.
     eval_params = state.params if state is not None else params
@@ -476,14 +476,14 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             output_predictions_json=output_predictions_json,
         )
 
-        if wandb is not None:
+        if int(jax.process_index()) == 0:
             log = {}
             for k, v in eval_metrics.hr.items():
                 log[f"eval/hr@{k}"] = v
             for k, v in eval_metrics.ndcg.items():
                 log[f"eval/ndcg@{k}"] = v
             log["eval/invalid_prediction_count"] = eval_metrics.invalid_prediction_count
-            wandb.log(log, step=int(getattr(state, "step", 0) or 0))
+            stats_logger.commit(log, step=int(getattr(state, "step", 0) or 0))
 
     if run_mode_norm == "eval" and cfg.eval.enabled:
         if not cfg.eval.constrained:
@@ -504,17 +504,16 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             output_predictions_json=output_predictions_json,
         )
 
-        if wandb is not None:
+        if int(jax.process_index()) == 0:
             log = {}
             for k, v in eval_metrics.hr.items():
                 log[f"eval/hr@{k}"] = v
             for k, v in eval_metrics.ndcg.items():
                 log[f"eval/ndcg@{k}"] = v
             log["eval/invalid_prediction_count"] = eval_metrics.invalid_prediction_count
-            wandb.log(log, step=0)
+            stats_logger.commit(log, step=0)
 
-    if wandb is not None:
-        wandb.finish()
+    stats_logger.finish()
 
     return {
         "config": asdict(cfg),

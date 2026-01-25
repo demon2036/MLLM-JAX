@@ -3,13 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-import flax
-import jax
-import numpy as np
-
-
-def _to_numpy_tree(tree: Any) -> Any:
-    return jax.tree_util.tree_map(lambda x: np.asarray(x), tree)
+from plugins.common.checkpoint.msgpack_backend import MsgpackCheckpointBackend
 
 
 def save_checkpoint(*, output_dir: str, state: Any, name: str = "last") -> str:
@@ -18,19 +12,15 @@ def save_checkpoint(*, output_dir: str, state: Any, name: str = "last") -> str:
 
     payload = {
         "step": int(getattr(state, "step", 0)),
-        "params": _to_numpy_tree(getattr(state, "params")),
+        "params": getattr(state, "params"),
     }
 
-    data = flax.serialization.msgpack_serialize(payload)
-    with open(path, "wb") as f:
-        f.write(data)
+    MsgpackCheckpointBackend().save(path, payload)
     return path
 
 
 def load_checkpoint(path: str) -> dict[str, Any]:
-    with open(path, "rb") as f:
-        data = f.read()
-    obj = flax.serialization.msgpack_restore(data)
+    obj = MsgpackCheckpointBackend().load(path)
     if not isinstance(obj, dict):
         raise TypeError(f"Invalid checkpoint payload type: {type(obj).__name__}")
     return obj  # type: ignore[return-value]

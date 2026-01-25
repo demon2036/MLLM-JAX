@@ -17,7 +17,13 @@ if REPO_ROOT not in sys.path:
 from plugins.common.env import load_dotenv_if_present
 from plugins.training.config import load_config
 from plugins.training.algorithms import AlgoConfig, EstimatorConfig, UpdateConfig
-from plugins.training.runner import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig, run_grpo_gsm8k
+from plugins.training.runner import (
+    GRPOGsm8kConfig,
+    GRPORolloutConfig,
+    GRPORolloutOptimizationsConfig,
+    GRPOTrainConfig,
+    run_grpo_gsm8k,
+)
 
 
 def _maybe_git_short_sha() -> str | None:
@@ -31,20 +37,6 @@ def _maybe_git_short_sha() -> str | None:
     except Exception:
         return None
     return out or None
-
-
-def _set_by_path(cfg: dict[str, Any], key_path: str, value: Any) -> None:
-    keys = [k for k in key_path.split(".") if k]
-    if not keys:
-        raise ValueError("Empty config key path")
-    cur: dict[str, Any] = cfg
-    for k in keys[:-1]:
-        nxt = cur.get(k)
-        if not isinstance(nxt, dict):
-            nxt = {}
-            cur[k] = nxt
-        cur = nxt
-    cur[keys[-1]] = value
 
 
 def _get_by_path(cfg: dict[str, Any], key_path: str) -> Any:
@@ -156,7 +148,21 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     rollout_backend_raw = _get_by_path(cfg, "rollout.backend")
     if rollout_backend_raw is None:
         rollout_backend_raw = cfg.get("rollout_backend")
-    rollout_backend = str(rollout_backend_raw or "naive")
+    rollout_backend = rollout_backend_raw if rollout_backend_raw is not None else (cfg.get("rollout_backend") or "naive")
+    if not isinstance(rollout_backend, (str, dict)):
+        raise ValueError(f"rollout.backend must be a string or dict spec, got {type(rollout_backend).__name__}")
+
+    fast_generate_raw = _get_by_path(cfg, "rollout.optimizations.fast_generate")
+    if fast_generate_raw is None:
+        fast_generate_raw = _get_by_path(cfg, "rollout.fast_generate")
+    fast_generate = bool(fast_generate_raw) if fast_generate_raw is not None else False
+
+    fast_qwen2_decode_attention_raw = _get_by_path(cfg, "rollout.optimizations.fast_qwen2_decode_attention")
+    if fast_qwen2_decode_attention_raw is None:
+        fast_qwen2_decode_attention_raw = _get_by_path(cfg, "rollout.fast_qwen2_decode_attention")
+    fast_qwen2_decode_attention = (
+        bool(fast_qwen2_decode_attention_raw) if fast_qwen2_decode_attention_raw is not None else False
+    )
 
     train_micro_batch_size = _get_int_from_aliases(
         cfg,
@@ -207,7 +213,21 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     if beta is None:
         beta = cfg.get("beta")
     beta = float(beta or 0.0)
-    mesh_shape = str(cfg.get("mesh_shape") or "1,-1,1")
+
+    mesh_shape_raw = _get_by_path(cfg, "jax.mesh_shape")
+    if mesh_shape_raw is None:
+        mesh_shape_raw = cfg.get("mesh_shape")
+    mesh_shape = str(mesh_shape_raw or "1,-1,1")
+
+    param_dtype_raw = _get_by_path(cfg, "jax.param_dtype")
+    if param_dtype_raw is None:
+        param_dtype_raw = cfg.get("param_dtype")
+    param_dtype = str(param_dtype_raw or "float32")
+
+    compute_dtype_raw = _get_by_path(cfg, "jax.compute_dtype")
+    if compute_dtype_raw is None:
+        compute_dtype_raw = cfg.get("compute_dtype")
+    compute_dtype = str(compute_dtype_raw or "bfloat16")
 
     from plugins.training.update.optimizer import LRScheduleConfig, OptimizerConfig
 
@@ -401,6 +421,10 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             n=rollout_n,
             global_length=global_length,
             max_length_sample=max_length_sample,
+            optimizations=GRPORolloutOptimizationsConfig(
+                fast_generate=fast_generate,
+                fast_qwen2_decode_attention=fast_qwen2_decode_attention,
+            ),
         ),
         train=GRPOTrainConfig(
             micro_batch_size_per_device=train_micro_batch_size_per_device,
@@ -412,6 +436,8 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             optimizer=optimizer_cfg,
         ),
         mesh_shape=mesh_shape,
+        param_dtype=param_dtype,
+        compute_dtype=compute_dtype,
         wandb_project=wandb_project,
         wandb_mode=wandb_mode,
         wandb_name=wandb_name,
@@ -429,12 +455,6 @@ def main() -> None:
         "--config",
         default="plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml",
         help="YAML config path.",
-    )
-    parser.add_argument(
-        "--set",
-        action="append",
-        default=[],
-        help="Override config entries (repeatable), e.g. --set steps=20",
     )
     parser.add_argument(
         "--print-config",
@@ -481,7 +501,7 @@ def main() -> None:
         print(f"WARNING: ignoring deprecated env var overrides (use YAML instead): {details}")
 
     config_path = str(args.config or "")
-    cfg_dict = load_config(config_path if config_path else None, args.set)
+    cfg_dict = load_config(config_path if config_path else None)
     cfg = _cfg_from_dict(cfg_dict, config_path=config_path or "<default>")
 
     cfg_out = asdict(cfg)

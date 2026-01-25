@@ -6,9 +6,6 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import numpy as np
-import torch
-
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from plugins.minionerec.rl.datasets import MiniOneRecNextItemRlDataset
 from plugins.minionerec.rl.grpo_module import MiniOneRecGrpoModule
@@ -17,7 +14,11 @@ from plugins.sft.jax.checkpoint import load_checkpoint
 from plugins.sft.jax.evaluator import evaluate_sid_next_item_jax
 from plugins.sft.jax.params import resize_lm_vocab
 from plugins.sft.jax.sid_trie import build_sid_trie_from_index
-from plugins.sft.wandb_utils import maybe_init_wandb
+from plugins.common.checkpoint import CheckpointManager, CheckpointManagerConfig
+from plugins.common.observability import StatsLogger, WandbRunSpec
+from plugins.common.tokenizer import prepare_tokenizer
+from plugins.llm.bundle import build_llm_bundle
+from plugins.llm.dtypes import parse_dtype
 from plugins.training.advantage.grpo import compute_grpo_advantages_by_group_id
 from plugins.training.update.optimizer import OptimizerConfig, build_tx
 
@@ -133,35 +134,35 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     from jax.sharding import NamedSharding
     from jax.sharding import PartitionSpec as P
 
-    from MLLM_JAX.language.llama.llama import LlamaJaxConfig, convert_torch_to_flax_llama
-    from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
     from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 
     from plugins.sft.jax.beam_search import constrained_beam_search_sid3
     from plugins.training.mesh import create_mesh
     from plugins.training.update.train_step import training_step
 
-    def parse_dtype(name: str) -> Any:
-        n = str(name or "float32").strip().lower()
-        if n in {"float32", "f32"}:
-            return jnp.float32
-        if n in {"bfloat16", "bf16"}:
-            return jnp.bfloat16
-        if n in {"float16", "f16"}:
-            return jnp.float16
-        raise ValueError(f"Unsupported dtype: {name!r}")
-
     mesh = create_mesh(str(cfg.jax.mesh_shape))
     compute_dtype = parse_dtype(cfg.jax.compute_dtype)
     param_dtype = parse_dtype(cfg.jax.param_dtype)
 
-    wandb = maybe_init_wandb(cfg=cfg, project=cfg.wandb.project, name=cfg.wandb.name, mode=cfg.wandb.mode) if jax.process_index() == 0 else None
+    stats_logger = StatsLogger(
+        cfg=cfg,
+        wandb=WandbRunSpec(project=cfg.wandb.project, mode=cfg.wandb.mode, name=cfg.wandb.name),
+        process_index=jax.process_index(),
+    )
 
-    tokenizer = AutoTokenizer.from_pretrained(cfg.base_model, trust_remote_code=True)
-    if getattr(tokenizer, "pad_token_id", None) is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-    tokenizer.padding_side = "right"
+    needs_weights = not (run_mode_norm in {"eval"} and cfg.resume_from_checkpoint)
+    bundle = build_llm_bundle(
+        mesh=mesh,
+        model_path=cfg.base_model,
+        param_dtype=str(cfg.jax.param_dtype),
+        compute_dtype=str(cfg.jax.compute_dtype),
+        trust_remote_code=True,
+        padding_side="right",
+        init_seed=int(cfg.seed),
+        only_model=not needs_weights,
+    )
+    model = bundle.model
+    tokenizer, _pad_token_id = prepare_tokenizer(bundle.tokenizer, padding_side="right")
 
     trie = build_sid_trie_from_index(
         tokenizer=tokenizer,
@@ -170,49 +171,44 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     )
     newline_id = _newline_token_id(tokenizer)
 
-    tokenizer_vocab_size = int(len(tokenizer))
-    fsdp = int(mesh.shape.get("fsdp", 1))
-    tp = int(mesh.shape.get("tp", 1))
-    pad_multiple = max(1, fsdp * tp)
-    padded_vocab_size = tokenizer_vocab_size
-    if pad_multiple > 1:
-        r = tokenizer_vocab_size % pad_multiple
-        if r != 0:
-            padded_vocab_size = tokenizer_vocab_size + (pad_multiple - r)
-            if jax.process_index() == 0:
-                print(f"[rl] pad_vocab_size {tokenizer_vocab_size} -> {padded_vocab_size} (multiple={pad_multiple})")
-
-    base_config = AutoConfig.from_pretrained(cfg.base_model, trust_remote_code=True)
-    base_config.vocab_size = int(padded_vocab_size)
-
-    attention_mesh = mesh if jax.devices()[0].platform == "tpu" else None
-    jax_config = LlamaJaxConfig(mesh=attention_mesh, dtype=compute_dtype, param_dtype=param_dtype)
-    model = Qwen2ForCausalLM(base_config, jax_config)
-    ref_model = Qwen2ForCausalLM(base_config, jax_config) if float(cfg.train.beta) != 0.0 else None
-
     rng = jax.random.PRNGKey(int(cfg.seed))
 
-    # Load params (torch HF -> flax) unless resuming from a msgpack checkpoint.
+    def _place_params(params_tree: Any) -> Any:
+        params_tree = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), params_tree)
+        shapes = jax.eval_shape(lambda x: x, params_tree)
+        partitions = match_partition_rules(get_partition_rules_llama(), shapes)
+        shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), partitions)
+        return jax.tree_util.tree_map(lambda x, sh: jax.device_put(jnp.asarray(x, dtype=param_dtype), sh), params_tree, shardings)
+
+    ref_model = None
+    if float(cfg.train.beta) != 0.0:
+        ref_model = build_llm_bundle(
+            mesh=mesh,
+            model_path=cfg.base_model,
+            tokenizer=tokenizer,
+            param_dtype=str(cfg.jax.param_dtype),
+            compute_dtype=str(cfg.jax.compute_dtype),
+            trust_remote_code=True,
+            padding_side="right",
+            init_seed=int(cfg.seed),
+            only_model=True,
+        ).model
+
     if run_mode_norm in {"eval"} and cfg.resume_from_checkpoint:
         payload = load_checkpoint(str(cfg.resume_from_checkpoint))
-        params = payload.get("params")
-        if params is None:
+        ckpt_params = payload.get("params")
+        if ckpt_params is None:
             raise ValueError("Checkpoint payload missing 'params'")
+        target_vocab_size = int(getattr(bundle.hf_config, "vocab_size", len(tokenizer)))
+        params, vocab_resize = resize_lm_vocab(params=ckpt_params, new_vocab_size=int(target_vocab_size), rng=rng)
+        params = _place_params(params)
     else:
-        torch_model = AutoModelForCausalLM.from_pretrained(
-            cfg.base_model,
-            torch_dtype=torch.bfloat16,
-            trust_remote_code=True,
-        )
-        params = convert_torch_to_flax_llama(torch_model.state_dict())
-        params = jax.tree_util.tree_map(lambda x: np.asarray(x.detach().cpu().to(torch.float32).numpy()) if hasattr(x, "detach") else np.asarray(x), params)
-
-    params, vocab_resize = resize_lm_vocab(params=params, new_vocab_size=int(padded_vocab_size), rng=rng)
-    params = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), params)
-    shapes = jax.eval_shape(lambda x: x, params)
-    partitions = match_partition_rules(get_partition_rules_llama(), shapes)
-    shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), partitions)
-    params = jax.tree_util.tree_map(lambda x, sh: jax.device_put(jnp.asarray(x, dtype=param_dtype), sh), params, shardings)
+        params = bundle.params
+        if params is None:
+            raise RuntimeError("Expected bundle.params when only_model=False")
+        vocab_resize = bundle.vocab_resize
+        if vocab_resize is None:
+            raise RuntimeError("Expected bundle.vocab_resize when only_model=False")
 
     train_stats: dict[str, Any] | None = None
     state = None
@@ -402,16 +398,15 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                 pass_at_k = float(np.mean(np.max(correct.reshape(prompt_batch, k), axis=1))) if correct.size else float("nan")
                 if jax.process_index() == 0:
                     print(f"[rl] step={step}/{max_steps} loss={last_loss:.6f} reward_mean={reward_mean:.6f} pass@1={pass_at_1:.4f} pass@K={pass_at_k:.4f}")
-                    if wandb is not None:
-                        wandb.log(
-                            {
-                                "train/loss": last_loss,
-                                "train/reward_mean": reward_mean,
-                                "train/pass@1": pass_at_1,
-                                "train/pass@K": pass_at_k,
-                            },
-                            step=step,
-                        )
+                    stats_logger.commit(
+                        {
+                            "train/loss": last_loss,
+                            "train/reward_mean": reward_mean,
+                            "train/pass@1": pass_at_1,
+                            "train/pass@K": pass_at_k,
+                        },
+                        step=step,
+                    )
 
             if cfg.eval.enabled and int(cfg.eval.every_steps) > 0 and step % int(cfg.eval.every_steps) == 0:
                 eval_dataset = MiniOneRecNextItemRlDataset(csv_path=cfg.data.eval_file, sample=cfg.data.sample_eval, seed=cfg.seed)
@@ -427,16 +422,24 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                 tok_eval = np.asarray(beam_search_jit(state.params, jnp.asarray(prompt_np_eval, dtype=jnp.int32), jnp.asarray(true_lens_eval, dtype=jnp.int32)))
                 preds_eval = [[_decode_sid_triplet(tokenizer, tok_eval[i, j]) for j in range(k)] for i in range(len(prompts_eval))]
                 rewards_eval, _correct_eval = compute_ranking_rewards(predictions=preds_eval, targets=targets_eval, rank_penalties=rank_penalties)
-                if wandb is not None and jax.process_index() == 0:
-                    wandb.log({"eval_small/reward_mean": float(np.mean(rewards_eval))}, step=step)
+                stats_logger.commit({"eval_small/reward_mean": float(np.mean(rewards_eval))}, step=step)
 
         train_stats = {"steps": int(max_steps), "final_loss": float(last_loss)}
 
         tokenizer.save_pretrained(cfg.output_dir)
-        if bool(cfg.train.save_last) and jax.process_index() == 0:
-            from plugins.sft.jax.checkpoint import save_checkpoint
-
-            save_checkpoint(output_dir=cfg.output_dir, state=state, name="rl_last")
+        if bool(cfg.train.save_last):
+            ckpt_mgr = CheckpointManager(
+                CheckpointManagerConfig(
+                    output_dir=str(cfg.output_dir),
+                    prefix="sft_state",
+                    save_last=True,
+                ),
+                process_index=jax.process_index(),
+            )
+            ckpt_mgr.save(
+                name="rl_last",
+                payload={"step": int(getattr(state, "step", 0)), "params": getattr(state, "params")},
+            )
 
     # Eval (full test HR/NDCG) on final params.
     eval_metrics = None
@@ -474,17 +477,16 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             topk=list(cfg.eval.topk),
             output_predictions_json=output_predictions_json,
         )
-        if wandb is not None and jax.process_index() == 0:
+        if jax.process_index() == 0:
             log = {}
             for kk, vv in eval_metrics.hr.items():
                 log[f"eval/hr@{kk}"] = vv
             for kk, vv in eval_metrics.ndcg.items():
                 log[f"eval/ndcg@{kk}"] = vv
             log["eval/invalid_prediction_count"] = eval_metrics.invalid_prediction_count
-            wandb.log(log)
+            stats_logger.commit(log)
 
-    if wandb is not None:
-        wandb.finish()
+    stats_logger.finish()
 
     return {
         "config": asdict(cfg),

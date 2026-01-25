@@ -8,6 +8,7 @@
 #
 # This config sets `rollout.batch_size=16`, `rollout.n=8` -> 128 sequences per step (global)
 # - train.micro_batch_size_per_device=4 -> runner infers grad_accum_steps at runtime
+# - `rollout.optimizations.*` enables the prior "rolloutfast" TPU path (config-driven; no env overrides)
 #
 # Intended use: v6e-8 / v6e-16 training (100 steps) with W&B logging.
 
@@ -21,6 +22,9 @@ rollout:
   n: 8
   global_length: 512
   max_length_sample: 1024
+  optimizations:
+    fast_generate: true
+    fast_qwen2_decode_attention: true
 
 train:
   micro_batch_size: null
@@ -36,6 +40,8 @@ algo:
     name: policy_gradient
 
 mesh_shape: auto
+param_dtype: float32
+compute_dtype: bfloat16
 
 wandb_project: mllm-jax-grpo-gsm8k
 wandb_mode: online

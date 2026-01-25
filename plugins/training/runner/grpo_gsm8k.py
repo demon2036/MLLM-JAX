@@ -12,12 +12,19 @@ import numpy as np
 
 from plugins.common.data.padding import pad_2d_right
 from plugins.common.sharding.batch import local_from_global, make_form_training_global_array
-from plugins.common.wandb_utils import maybe_init_wandb
+from plugins.common.observability import StatsLogger, WandbRunSpec
 from plugins.common.tokenizer import prepare_tokenizer
 from plugins.training.advantage.estimators import compute_gae_advantages
 from plugins.training.update.optimizer import OptimizerConfig
 from plugins.training.algorithms import AlgoConfig, create_algorithm
 from plugins.training.ppo import get_ppo_state, ppo_training_step
+
+
+@dataclass(frozen=True)
+class GRPORolloutOptimizationsConfig:
+    fast_generate: bool = False
+    fast_qwen2_decode_attention: bool = False
+
 
 @dataclass(frozen=True)
 class GRPORolloutConfig:
@@ -31,7 +38,8 @@ class GRPORolloutConfig:
     global_length: int = 512
     max_length_sample: int = 64
     # Rollout backend selector (swappable generation engine).
-    backend: str = "naive"
+    backend: Any = "naive"
+    optimizations: GRPORolloutOptimizationsConfig = field(default_factory=GRPORolloutOptimizationsConfig)
 
 
 @dataclass(frozen=True)
@@ -62,6 +70,8 @@ class GRPOGsm8kConfig:
     wandb_project: str
     wandb_mode: str
     wandb_name: str
+    param_dtype: str = "float32"
+    compute_dtype: str = "bfloat16"
     algo: AlgoConfig = field(default_factory=AlgoConfig)
     reward_weights: tuple[float, float, float] = (1.0, 0.5, 0.5)
     eval_every_steps: int = 0
@@ -131,7 +141,6 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     import jax.numpy as jnp
     from datasets import load_dataset
     from jax.experimental.multihost_utils import process_allgather
-    from transformers import AutoTokenizer
 
     from jax.sharding import NamedSharding
     from jax.sharding import PartitionSpec as PS
@@ -355,6 +364,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 local_batch=local_batch,
                 global_batch=global_batch,
                 mesh_shape=cfg.mesh_shape,
+                param_dtype=cfg.param_dtype,
+                compute_dtype=cfg.compute_dtype,
                 wandb_project=cfg.wandb_project,
                 wandb_name=cfg.wandb_name,
                 reward_weights=cfg.reward_weights,
@@ -384,12 +395,16 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
     from plugins.training.rollout.backends import create_rollout_backend
 
-    rollout_backend_name = str(cfg.rollout.backend).strip().lower()
-    if rollout_backend_name == "":
-        rollout_backend_name = "naive"
-
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model_path, trust_remote_code=True)
-    tokenizer, pad_token_id = prepare_tokenizer(tokenizer, padding_side="right")
+    rollout_backend_spec: Any = cfg.rollout.backend
+    if rollout_backend_spec is None:
+        rollout_backend_spec = "naive"
+    if isinstance(rollout_backend_spec, str):
+        rollout_backend_spec = rollout_backend_spec.strip()
+        if rollout_backend_spec == "":
+            rollout_backend_spec = "naive"
+        # Only normalize builtin aliases; don't break import-path targets.
+        if ":" not in rollout_backend_spec and "." not in rollout_backend_spec:
+            rollout_backend_spec = rollout_backend_spec.lower()
 
     reward_funcs = [reward_correct, reward_format, tag_count_reward]
     reward_func_names = [fn.__name__ for fn in reward_funcs]
@@ -424,6 +439,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             beta=cfg.train.beta,
             create_sampler=True,
             tx=tx,
+            param_dtype=cfg.param_dtype,
+            compute_dtype=cfg.compute_dtype,
         )
         train_fn = jax.jit(ppo_training_step, donate_argnums=(0,))
 
@@ -447,22 +464,28 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             beta=cfg.train.beta,
             create_sampler=True,
             tx=tx,
+            param_dtype=cfg.param_dtype,
+            compute_dtype=cfg.compute_dtype,
         )
         train_fn = jax.jit(training_step, donate_argnums=(0,))
-    if os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1":
+
+    if sampler is None:
+        raise RuntimeError("Sampler is required (create_sampler=True).")
+    _tokenizer, pad_token_id = prepare_tokenizer(sampler.tokenizer, padding_side="right")
+    if bool(cfg.rollout.optimizations.fast_qwen2_decode_attention):
         from plugins.training.rollout.optimizations import patch_qwen2_attention_decode_fast
 
         patch_qwen2_attention_decode_fast()
         if jax.process_index() == 0:
-            print("rollout_fast_qwen2_decode_attention=1 (patched attention._naive_sdpa for decode)")
-    if os.environ.get("ROLLOUT_FAST_GENERATE") == "1":
+            print("rollout.optimizations.fast_qwen2_decode_attention=true (patched attention._naive_sdpa for decode)")
+    if bool(cfg.rollout.optimizations.fast_generate):
         from plugins.training.rollout.optimizations import patch_sampler_generate_fast
 
         patch_sampler_generate_fast(sampler)
         if jax.process_index() == 0:
-            print("rollout_fast_generate=1 (patched sampler.generate)")
+            print("rollout.optimizations.fast_generate=true (patched sampler.generate)")
     rollout_backend = create_rollout_backend(
-        name=rollout_backend_name,
+        spec=rollout_backend_spec,
         sampler=sampler,
         tokenizer=None,
         model_path=cfg.model_path,
@@ -495,13 +518,13 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         eval_sampler.sample_fn = jax.jit(_greedy_sample)
         eval_sampler.jit_infer_step = jax.jit(eval_sampler.infer, donate_argnums=(0,))
 
-        if os.environ.get("ROLLOUT_FAST_GENERATE") == "1":
+        if bool(cfg.rollout.optimizations.fast_generate):
             from plugins.training.rollout.optimizations import patch_sampler_generate_fast
 
             patch_sampler_generate_fast(eval_sampler)
 
         eval_rollout_backend = create_rollout_backend(
-            name=rollout_backend_name,
+            spec=rollout_backend_spec,
             sampler=eval_sampler,
             tokenizer=None,
             model_path=cfg.model_path,
@@ -512,11 +535,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     rollout_module = RolloutBackendModule(backend=rollout_backend)
     eval_rollout_module = RolloutBackendModule(backend=eval_rollout_backend)
 
-    wandb = maybe_init_wandb(
+    stats_logger = StatsLogger(
         cfg=cfg,
-        project=cfg.wandb_project,
-        name=cfg.wandb_name,
-        mode=cfg.wandb_mode,
+        wandb=WandbRunSpec(project=cfg.wandb_project, mode=cfg.wandb_mode, name=cfg.wandb_name),
         process_index=jax.process_index(),
     )
 
@@ -799,8 +820,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         if t_update > 0:
             train_log["throughput/train/valid_tokens_per_s_update"] = float(valid_tokens_global) / float(t_update)
 
-        if wandb is not None and jax.process_index() == 0:
-            wandb.log(train_log, step=step)
+        stats_logger.commit(train_log, step=step)
 
         if jax.process_index() == 0:
             parts = [
@@ -921,8 +941,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             eval_logs["time/eval/reward_s"] = float(eval_reward_s)
             eval_logs["time/eval/step_s"] = float(eval_step_s)
 
-            if wandb is not None and jax.process_index() == 0:
-                wandb.log(eval_logs, step=step)
+            stats_logger.commit(eval_logs, step=step)
 
     # --- Full eval sweep (optional; no updates) ---
     #
@@ -1131,5 +1150,6 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                     ]
                 )
             )
-        if wandb is not None and jax.process_index() == 0:
-            wandb.log(full_eval_logs, step=int(cfg.steps) - 1)
+        stats_logger.commit(full_eval_logs, step=int(cfg.steps) - 1)
+
+    stats_logger.finish()

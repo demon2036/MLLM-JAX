@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from plugins.training.api import RolloutResult, RolloutSampler
-from plugins.training.rollout.sampling import generate_answers_and_training_batch
+from plugins.sample.backends.jax_sampler import JaxSamplerGenerationBackend
 
 
 @dataclass
@@ -40,12 +40,11 @@ class NaiveSamplerRolloutBackend:
     ) -> RolloutResult:
         if self._last_synced_params is not None:
             params = self._last_synced_params
-        chat_prompts, answers, batch = generate_answers_and_training_batch(
+        result = JaxSamplerGenerationBackend(sampler=self.sampler).generate(
             prompts=list(prompts),
-            sampler=self.sampler,
-            params=params,
             system_prompt=system_prompt,
             global_length=int(global_length),
             max_length_sample=int(max_length_sample),
+            params=params,
         )
-        return RolloutResult(chat_prompts=chat_prompts, answers=answers, batch=batch)
+        return RolloutResult(chat_prompts=result.chat_prompts, answers=result.answers, batch=result.batch)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import random
 from functools import partial
 from typing import Any
@@ -11,27 +10,12 @@ import jax.numpy as jnp
 import numpy as np
 from jax.experimental.shard_map import shard_map
 from jax.sharding import PartitionSpec as P
-from transformers import AutoConfig, AutoTokenizer
 
-from plugins.common.hf_safetensors import load_hf_safetensors_state_dict
+from plugins.llm.bundle import build_llm_bundle
+from plugins.llm.weights import convert_hf_state_dict_to_flax_llama_params, ensure_tied_lm_head, load_hf_state_dict
 
-from MLLM_JAX.language.llama.llama import LlamaForCausalLM, LlamaJaxConfig, convert_torch_to_flax_llama
 from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache_right
-from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
-from MLLM_JAX.utils import collect_process_data, get_partition_rules_llama, match_partition_rules, _form_global_array
-
-
-def _resolve_param_dtype() -> jnp.dtype:
-    param_dtype_raw = os.environ.get("MLLM_JAX_PARAM_DTYPE", "float32").strip().lower()
-    if param_dtype_raw in {"float32", "f32"}:
-        return jnp.float32
-    if param_dtype_raw in {"bfloat16", "bf16"}:
-        return jnp.bfloat16
-    if param_dtype_raw in {"float16", "f16"}:
-        return jnp.float16
-    raise ValueError(
-        f"Unsupported MLLM_JAX_PARAM_DTYPE={param_dtype_raw!r} (expected float32/bfloat16/float16)."
-    )
+from MLLM_JAX.utils import _form_global_array, collect_process_data
 
 
 def _top_k_sampling_batched(rng, logits, k: int = 50, t: float = 0.9):
@@ -47,80 +31,32 @@ def _top_k_sampling_batched(rng, logits, k: int = 50, t: float = 0.9):
 
 
 def get_params(model_path: str, *, allow_torch_fallback: bool = True):
-    """Load HF weights and convert to the MLLM_JAX Flax param tree.
-
-    Prefers `*.safetensors` (via `plugins/common/hf_safetensors.py`). When a model
-    repo only provides PyTorch `pytorch_model.bin`, `allow_torch_fallback=True`
-    falls back to `transformers.AutoModelForCausalLM` + `state_dict()`.
-    """
-    try:
-        state_dict = load_hf_safetensors_state_dict(model_path)
-    except Exception as safetensors_error:
-        if not allow_torch_fallback:
-            raise
-        try:
-            import torch
-            from transformers import AutoModelForCausalLM
-        except Exception as torch_import_error:
-            raise RuntimeError(
-                f"Failed to load safetensors for {model_path!r} and torch fallback is unavailable. "
-                "Either install torch or provide a model with safetensors weights."
-            ) from torch_import_error
-
-        model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            torch_dtype=torch.float16,
-            trust_remote_code=True,
-        )
-        state_dict = model.state_dict()
-        del model
-
-        # Keep the original exception around for debugging.
-        _ = safetensors_error
-
-    # Some HF repos tie `lm_head` to `embed_tokens` and omit `lm_head.weight`.
-    # Our Flax param tree expects an `lm_head.kernel`, so synthesize the missing
-    # key before conversion (the conversion function will transpose it).
-    if "lm_head.weight" not in state_dict:
-        tied = state_dict.get("model.embed_tokens.weight")
-        if tied is not None:
-            state_dict = dict(state_dict)
-            state_dict["lm_head.weight"] = tied
-
-    params = convert_torch_to_flax_llama(state_dict)
+    """Load HF weights and convert to the MLLM_JAX Flax param tree (CPU arrays)."""
+    state_dict = ensure_tied_lm_head(load_hf_state_dict(model_path, allow_torch_fallback=allow_torch_fallback))
+    params = convert_hf_state_dict_to_flax_llama_params(state_dict)
     return jax.tree_util.tree_map(lambda x: np.asarray(x), params)
 
 
-def get_model(mesh: Any, model_path: str = "Qwen/Qwen2.5-14B", *, only_model: bool = False):
-    config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
-
-    jax_config = LlamaJaxConfig(mesh=mesh)
-    model_type = str(getattr(config, "model_type", "") or "")
-    if model_type in {"qwen2"}:
-        model = Qwen2ForCausalLM(config, jax_config)
-    elif model_type in {"llama"}:
-        model = LlamaForCausalLM(config, jax_config=jax_config)
-    else:
-        raise ValueError(f"Unsupported model_type={model_type!r} for Sampler (expected qwen2/llama)")
-
+def get_model(
+    mesh: Any,
+    model_path: str = "Qwen/Qwen2.5-14B",
+    *,
+    only_model: bool = False,
+    param_dtype: str = "float32",
+    compute_dtype: str = "bfloat16",
+    trust_remote_code: bool = True,
+):
+    bundle = build_llm_bundle(
+        mesh=mesh,
+        model_path=str(model_path),
+        param_dtype=str(param_dtype),
+        compute_dtype=str(compute_dtype),
+        trust_remote_code=bool(trust_remote_code),
+        only_model=bool(only_model),
+    )
     if only_model:
-        return model
-
-    params = get_params(model_path)
-
-    def init_fn(p):
-        return p
-
-    state_shapes = jax.eval_shape(init_fn, params)
-    train_state_partition = match_partition_rules(get_partition_rules_llama(), state_shapes)
-    train_state_sharding = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh, x), train_state_partition)
-
-    param_dtype = _resolve_param_dtype()
-    params = jax.tree_util.tree_map(lambda x, d: jnp.asarray(x, dtype=param_dtype, device=d), params, train_state_sharding)
-    params = jax.jit(init_fn, out_shardings=train_state_sharding)(params)
-
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    return model, params, tokenizer
+        return bundle.model
+    return bundle.model, bundle.params, bundle.tokenizer
 
 
 @chex.dataclass

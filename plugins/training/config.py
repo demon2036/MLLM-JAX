@@ -24,6 +24,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "n": 8,
         "global_length": 512,
         "max_length_sample": 1024,
+        "optimizations": {
+            # Mirrors the previous TPU launcher defaults (rolloutfast). Keep these
+            # in config so runs are reproducible via W&B config snapshots.
+            "fast_generate": True,
+            "fast_qwen2_decode_attention": True,
+        },
     },
     "train": {
         # Optional: sequences per process per micro-step.
@@ -71,6 +77,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     # Mesh
     "mesh_shape": "auto",
+    # Dtypes (LLM bundle)
+    "param_dtype": "float32",
+    "compute_dtype": "bfloat16",
     # Logging
     "wandb_project": "mllm-jax-grpo-gsm8k",
     "wandb_mode": "online",

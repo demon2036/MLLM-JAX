@@ -1,0 +1,30 @@
+# Example multi-stage pipeline config (SFT → RL/GRPO).
+#
+# Run:
+#   python -u scripts/run_pipeline.py --config plugins/pipeline/configs/pipeline_sft_then_grpo_smoke.yaml
+#
+# Notes:
+# - Each stage is a subprocess command so stages can own their own JAX runtime.
+# - The pipeline runner exports `PIPELINE_OUTPUT_DIR` for convenience if you
+#   want stage YAMLs to reference a shared run root via `${PIPELINE_OUTPUT_DIR}`.
+
+run:
+  output_dir: runs/pipeline_sft_then_grpo_smoke
+
+stages:
+  - name: sft_smoke
+    command:
+      - python
+      - -u
+      - scripts/run_sid_sft.py
+      - --config
+      - plugins/sft/configs/sid_sft_smoke_tiny_wandb_online.yaml
+      - --run-mode
+      - train_eval
+  - name: grpo_smoke
+    command:
+      - python
+      - -u
+      - scripts/run_grpo_gsm8k_training.py
+      - --config
+      - plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps2_v6e8_rolloutfast_smoke.yaml

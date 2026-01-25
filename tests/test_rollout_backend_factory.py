@@ -30,14 +30,29 @@ class TestRolloutBackendFactory(unittest.TestCase):
         self.assertEqual(DEFAULT_CONFIG["rollout"]["backend"], "naive")
 
     def test_create_rollout_backend_naive(self) -> None:
-        backend = create_rollout_backend(name="naive", sampler=_DummySampler())
+        backend = create_rollout_backend(spec="naive", sampler=_DummySampler())
+        self.assertEqual(backend.__class__.__name__, "NaiveSamplerRolloutBackend")
+
+    def test_create_rollout_backend_import_path(self) -> None:
+        backend = create_rollout_backend(
+            spec="plugins.training.rollout.backends.naive_sampler:NaiveSamplerRolloutBackend",
+            sampler=_DummySampler(),
+        )
+        self.assertEqual(backend.__class__.__name__, "NaiveSamplerRolloutBackend")
+
+    def test_create_rollout_backend_import_path_does_not_inject_unknown_kwargs(self) -> None:
+        backend = create_rollout_backend(
+            spec="plugins.training.rollout.backends.naive_sampler:NaiveSamplerRolloutBackend",
+            sampler=_DummySampler(),
+            model_path="Qwen/Qwen2.5-3B-Instruct",
+        )
         self.assertEqual(backend.__class__.__name__, "NaiveSamplerRolloutBackend")
 
     def test_create_rollout_backend_rejects_unknown(self) -> None:
         with self.assertRaises(ValueError) as ctx:
-            create_rollout_backend(name="does_not_exist", sampler=_DummySampler())
+            create_rollout_backend(spec="does_not_exist", sampler=_DummySampler())
         msg = str(ctx.exception)
-        self.assertIn("rollout.backend", msg)
+        self.assertIn("does_not_exist", msg)
         for key in SUPPORTED_ROLLOUT_BACKENDS:
             self.assertIn(key, msg)
 

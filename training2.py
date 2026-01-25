@@ -54,9 +54,29 @@ def get_state(
     beta: float = 0.04,
     create_sampler: bool = True,
     tx: Any | None = None,
+    param_dtype: str = "float32",
+    compute_dtype: str = "bfloat16",
+    trust_remote_code: bool = True,
 ):
-    model, params, tokenizer = get_model(mesh,model_path=model_path, )
-    model_ref = get_model(mesh, model_path=model_path, only_model=True) if beta != 0 else None
+    model, params, tokenizer = get_model(
+        mesh,
+        model_path=model_path,
+        param_dtype=param_dtype,
+        compute_dtype=compute_dtype,
+        trust_remote_code=trust_remote_code,
+    )
+    model_ref = (
+        get_model(
+            mesh,
+            model_path=model_path,
+            only_model=True,
+            param_dtype=param_dtype,
+            compute_dtype=compute_dtype,
+            trust_remote_code=trust_remote_code,
+        )
+        if beta != 0
+        else None
+    )
 
     train_module = flax.linen.remat(TrainGRPOModule,policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)(model=model,
                                    pad_token_id=tokenizer.pad_token_id,

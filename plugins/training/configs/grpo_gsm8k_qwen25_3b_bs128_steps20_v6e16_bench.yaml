@@ -6,6 +6,7 @@
 # - `mesh_shape: auto` builds a host-local mesh on multi-host TPUs:
 #   dp=process_count (across workers), fsdp=local_device_count (within worker).
 #   This avoids cross-host FSDP collectives that can dominate rollout decode.
+# - Rollout speedups are enabled via `rollout.optimizations.*` (config-driven).
 
 model_path: Qwen/Qwen2.5-3B-Instruct
 
@@ -17,6 +18,9 @@ rollout:
   n: 8
   global_length: 512
   max_length_sample: 1024
+  optimizations:
+    fast_generate: true
+    fast_qwen2_decode_attention: true
 
 train:
   micro_batch_size: null
@@ -25,6 +29,8 @@ train:
   beta: 0.0
 
 mesh_shape: auto
+param_dtype: float32
+compute_dtype: bfloat16
 
 wandb_project: mllm-jax-grpo-gsm8k
 wandb_mode: online
@@ -35,4 +41,3 @@ reward_weights: [1.0, 0.5, 0.5]
 eval_every_steps: 0
 eval_batches_per_process: 1
 eval_split: test
-

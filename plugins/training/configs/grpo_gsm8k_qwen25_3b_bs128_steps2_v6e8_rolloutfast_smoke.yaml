@@ -1,0 +1,38 @@
+# GRPO/GSM8K smoke config (Qwen2.5-3B-Instruct) on v6e-8.
+#
+# Notes:
+# - This config itself does NOT enable rollout optimizations.
+# - For the "fast rollout" path, launch with:
+#     ROLLOUT_FAST_GENERATE=1 ROLLOUT_FAST_QWEN2_DECODE_ATTENTION=1
+#
+# Intended use: quick end-to-end validation before a full 100-step run.
+
+model_path: Qwen/Qwen2.5-3B-Instruct
+
+steps: 2
+
+rollout:
+  backend: naive
+  batch_size: 16
+  n: 8
+  global_length: 512
+  max_length_sample: 1024
+
+train:
+  micro_batch_size: null
+  micro_batch_size_per_device: 4
+  ppo_epochs: 1
+  beta: 0.0
+
+mesh_shape: 1,-1,1
+
+wandb_project: mllm-jax-grpo-gsm8k
+wandb_mode: online
+wandb_name: grpo_gsm8k_qwen25_3b_bs128_steps2_v6e8_rolloutfast_smoke
+
+reward_weights: [1.0, 0.5, 0.5]
+
+eval_every_steps: 0
+eval_batches_per_process: 1
+eval_split: test
+

@@ -152,6 +152,9 @@ def _grpo_pallas_fwd(
             max_ref[:] = jnp.full((time_block,), -jnp.inf, dtype=jnp.float32)
             sum_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
             chosen_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
+            out_loss_ref[...] = jnp.zeros_like(out_loss_ref)
+            out_logp_ref[...] = jnp.zeros_like(out_logp_ref)
+            out_lse_ref[...] = jnp.zeros_like(out_lse_ref)
 
         logits_tile = logits_ref[0, :, :].astype(jnp.float32)
 
@@ -174,20 +177,22 @@ def _grpo_pallas_fwd(
         max_ref[:] = new_max
         sum_ref[:] = new_sum
 
-        lse = new_max + jnp.log(new_sum)
-        out_lse_ref[0, :, 0] = lse.astype(out_lse_ref.dtype)
+        @pl.when(pid_k == blocks - 1)
+        def out():
+            lse = max_ref[:] + jnp.log(sum_ref[:])
+            out_lse_ref[0, :, 0] = lse.astype(out_lse_ref.dtype)
 
-        logp = (chosen_ref[:] - lse) / temperature
-        out_logp_ref[0, :, 0] = logp.astype(out_logp_ref.dtype)
+            logp = (chosen_ref[:] - lse) / temperature
+            out_logp_ref[0, :, 0] = logp.astype(out_logp_ref.dtype)
 
-        old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
-        ratio = jnp.exp(logp - old_logp)
-        clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
-        advantage = advantages_ref[0].astype(jnp.float32)
-        loss1 = ratio * advantage
-        loss2 = clipped_ratio * advantage
-        per_token_loss = -jnp.minimum(loss1, loss2)
-        out_loss_ref[0, :, 0] = per_token_loss.astype(out_loss_ref.dtype)
+            old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
+            ratio = jnp.exp(logp - old_logp)
+            clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
+            advantage = advantages_ref[0].astype(jnp.float32)
+            loss1 = ratio * advantage
+            loss2 = clipped_ratio * advantage
+            per_token_loss = -jnp.minimum(loss1, loss2)
+            out_loss_ref[0, :, 0] = per_token_loss.astype(out_loss_ref.dtype)
 
     call = pl.pallas_call(
         functools.partial(kernel),

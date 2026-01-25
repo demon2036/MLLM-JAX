@@ -1,5 +1,7 @@
 import jax
 import jax.numpy as jnp
+import pytest
+from jax.experimental.pallas import tpu as pltpu
 
 from plugins.training.kernels.grpo_loss_pallas import (
     GRPOKernelConfig,
@@ -8,12 +10,12 @@ from plugins.training.kernels.grpo_loss_pallas import (
 )
 
 
-def test_grpo_pallas_kernel_matches_reference_forward_and_backward():
+@pytest.mark.parametrize("vocab", [15, 24])
+def test_grpo_pallas_kernel_matches_reference_forward_and_backward(vocab: int):
     key = jax.random.PRNGKey(0)
 
     batch = 2
     time = 3
-    vocab = 15
 
     logits = jax.random.normal(key, (batch, time, vocab), dtype=jnp.float32)
     chosen_ids = jax.random.randint(key, (batch, time), 0, vocab, dtype=jnp.int32)
@@ -41,13 +43,14 @@ def test_grpo_pallas_kernel_matches_reference_forward_and_backward():
     )
 
     cfg = GRPOKernelConfig(block_size=8, epsilon_low=0.2, epsilon_high=0.2, temperature=1.0)
+    interpret = pltpu.InterpretParams(out_of_bounds_reads="raise", random_seed=0)
     per_loss_k, per_logp_k = grpo_per_token_loss_pallas(
         logits=logits,
         chosen_ids=chosen_ids,
         old_per_token_logps=old_per_token_logps,
         advantages=advantages,
         cfg=cfg,
-        interpret=True,
+        interpret=interpret,
         debug=False,
     )
 
@@ -73,7 +76,7 @@ def test_grpo_pallas_kernel_matches_reference_forward_and_backward():
             old_per_token_logps=old_per_token_logps,
             advantages=advantages,
             cfg=cfg,
-            interpret=True,
+            interpret=interpret,
             debug=False,
         )
         return jnp.sum(per_loss)

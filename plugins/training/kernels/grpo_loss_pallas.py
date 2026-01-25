@@ -26,7 +26,11 @@ def _pad_vocab(logits: Any, *, block_size: int):
     pad = (-vocab) % block_size
     if pad == 0:
         return logits, vocab
-    logits = jnp.pad(logits, ((0, 0), (0, 0), (0, pad)), constant_values=-jnp.inf)
+    logits = jnp.pad(
+        logits,
+        ((0, 0), (0, 0), (0, pad)),
+        constant_values=jnp.finfo(logits.dtype).min,
+    )
     return logits, vocab
 
 
@@ -149,7 +153,7 @@ def _grpo_pallas_fwd(
 
         @pl.when(pid_k == 0)
         def init():
-            max_ref[:] = jnp.full((time_block,), -jnp.inf, dtype=jnp.float32)
+            max_ref[:] = jnp.full((time_block,), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
             sum_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
             chosen_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
             out_loss_ref[...] = jnp.zeros_like(out_loss_ref)

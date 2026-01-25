@@ -1,0 +1,28 @@
+# Logits-level GRPO kernel gradcheck on TPU (Qwen2.5-1.5B).
+#
+# Purpose: compare reference JAX vs Pallas kernel loss + dlogits.
+
+model_path: Qwen/Qwen2.5-1.5B-Instruct
+mesh_shape: 1,-1,1
+
+batch_size: 1
+seq_len: 64
+seed: 0
+
+epsilon_low: 0.2
+epsilon_high: 0.3
+temperature: 1.0
+old_logp_noise_scale: 0.3
+
+kernel:
+  block_size: 2048
+
+tolerances:
+  loss_atol: 1.0e-4
+  dlogits_max_abs: 5.0e-3
+  dlogits_max_rel: 5.0e-2
+
+wandb_project: mllm-jax-grpo-kernel
+wandb_mode: online
+wandb_name: grpo_kernel_gradcheck_qwen25_1p5b
+

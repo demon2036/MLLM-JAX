@@ -40,7 +40,13 @@ def _broadcast_vec_from_process0(vec: np.ndarray) -> np.ndarray:
     if int(jax.process_count()) <= 1:
         return np.asarray(vec)
     gathered = np.asarray(process_allgather(np.asarray(vec)))
-    return np.asarray(gathered[0])
+    # Do not assume process_allgather returns rows in process_index order. Find
+    # the row that corresponds to process 0 explicitly.
+    proc_ids = np.asarray(process_allgather(np.asarray([int(jax.process_index())], dtype=np.int32))).reshape((-1,))
+    idx = np.where(proc_ids == 0)[0]
+    if idx.size != 1:
+        raise RuntimeError(f"process_allgather returned invalid process indices: {proc_ids.tolist()}")
+    return np.asarray(gathered[int(idx[0])])
 
 
 def _pack_metrics_vec(*, metrics: RankingMetrics, topk_list: list[int]) -> np.ndarray:
@@ -151,6 +157,19 @@ class SidNextItemJaxEvaluator:
 
         self._process_count = int(jax.process_count())
         self._process_index = int(jax.process_index())
+        self._gather_slot_to_process_index = list(range(int(self._process_count)))
+        if int(self._process_count) > 1:
+            proc_ids = np.asarray(
+                process_allgather(np.asarray([int(self._process_index)], dtype=np.int32)),
+            ).reshape((-1,))
+            if proc_ids.shape != (int(self._process_count),):
+                raise RuntimeError(f"Unexpected gathered process indices shape: {proc_ids.shape}")
+            slot_to_proc = [int(x) for x in proc_ids.tolist()]
+            if sorted(slot_to_proc) != list(range(int(self._process_count))):
+                raise RuntimeError(f"process_allgather returned unexpected process indices: {slot_to_proc}")
+            self._gather_slot_to_process_index = slot_to_proc
+            if self._is_coordinator:
+                print(f"[eval] process_allgather_order={slot_to_proc}")
 
         self._pad_token_id = int(getattr(tokenizer, "pad_token_id", 0) or 0)
         prompt_lens = [len(eval_dataset[i]["input_ids"]) for i in range(n)]
@@ -278,13 +297,14 @@ class SidNextItemJaxEvaluator:
 
             if self._is_coordinator:
                 assert predictions is not None
-                for p in range(int(self._process_count)):
-                    proc_base = int(p) * int(self._local_n) + int(start)
+                for slot in range(int(self._process_count)):
+                    proc_index = int(self._gather_slot_to_process_index[int(slot)])
+                    proc_base = int(proc_index) * int(self._local_n) + int(start)
                     for row in range(int(self._batch_size)):
                         sample_idx = int(proc_base) + int(row)
                         if sample_idx >= int(self._n):
                             continue
-                        preds = [_decode_sid_triplet(self._tokenizer, tok_np[p, row, b].tolist()) for b in range(tok_np.shape[2])]
+                        preds = [_decode_sid_triplet(self._tokenizer, tok_np[int(slot), row, b].tolist()) for b in range(tok_np.shape[2])]
                         predictions[sample_idx] = preds
 
         topk_list = sorted({int(k) for k in self._topk if int(k) > 0 and int(k) <= int(self._num_beams)})

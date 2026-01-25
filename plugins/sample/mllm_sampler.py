@@ -78,6 +78,15 @@ def get_params(model_path: str, *, allow_torch_fallback: bool = True):
         # Keep the original exception around for debugging.
         _ = safetensors_error
 
+    # Some HF repos tie `lm_head` to `embed_tokens` and omit `lm_head.weight`.
+    # Our Flax param tree expects an `lm_head.kernel`, so synthesize the missing
+    # key before conversion (the conversion function will transpose it).
+    if "lm_head.weight" not in state_dict:
+        tied = state_dict.get("model.embed_tokens.weight")
+        if tied is not None:
+            state_dict = dict(state_dict)
+            state_dict["lm_head.weight"] = tied
+
     params = convert_torch_to_flax_llama(state_dict)
     return jax.tree_util.tree_map(lambda x: np.asarray(x), params)
 

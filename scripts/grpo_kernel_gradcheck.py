@@ -208,9 +208,20 @@ def main(argv: list[str] | None = None) -> int:
     logits_for_loss = logits[:, :-1, :]
     chosen_ids = input_ids[:, 1:]
     mask_loss = labels[:, 1:].astype(jnp.float32)
+    device0 = jax.devices()[0]
+
+    def _to_device0(x):
+        return jax.device_put(jax.device_get(x), device0)
+
+    # Mosaic kernels cannot be auto-partitioned by SPMD; run the kernel on a
+    # single TPU device by materializing single-device arrays.
+    logits_for_loss = _to_device0(logits_for_loss)
+    chosen_ids = _to_device0(chosen_ids)
+    mask_loss = _to_device0(mask_loss)
     denom = mask_loss.sum()
 
     advantages = jax.random.normal(key_adv, (int(cfg.batch_size),), dtype=jnp.float32)
+    advantages = _to_device0(advantages)
 
     _, logps_seed = grpo_per_token_loss_reference(
         logits=logits_for_loss,
@@ -222,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         temperature=cfg.temperature,
     )
     noise = jax.random.normal(key_noise, logps_seed.shape, dtype=jnp.float32) * float(cfg.old_logp_noise_scale)
-    old_per_token_logps = jax.lax.stop_gradient(logps_seed + noise)
+    old_per_token_logps = jax.lax.stop_gradient(logps_seed + _to_device0(noise))
 
     def _scalar_loss_ref(l):
         per_loss, _ = grpo_per_token_loss_reference(

@@ -152,12 +152,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     from plugins.training.rollout.modules import RolloutBackendModule
     from plugins.training.update.optimizer import build_tx
     from plugins.training.update.train_step import training_step
-    from training2 import (
-        get_state,
-        reward_correct,
-        reward_format,
-        tag_count_reward,
-    )
+    from plugins.training.grpo.state import get_grpo_state
+    from plugins.training.reward.gsm8k import reward_correct, reward_format, tag_count_reward
 
     # IMPORTANT: slice micro-batches inside a jitted function to preserve sharding.
     #
@@ -454,7 +450,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
         value_fn = jax.jit(_value_forward)
     else:
-        state, sampler, _state_sharding = get_state(
+        state, sampler, _state_sharding = get_grpo_state(
             mesh,
             training_steps=cfg.steps,
             grad_accum_steps=grad_accum_steps,

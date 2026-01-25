@@ -6,8 +6,6 @@ import flax
 
 os.environ['JAX_TRACEBACK_FILTERING']='off'
 
-import re
-
 import jax.tree_util
 import optax
 from chex import ArrayTree
@@ -18,7 +16,8 @@ from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama
 from plugins.sample.mllm_sampler import Sampler, get_model
 # from sample_state_left_padding import get_model, Sampler
 import jax.numpy as jnp
-from math_verify import parse, verify, ExprExtractionConfig
+
+from plugins.training.reward.gsm8k import reward_correct, reward_format, tag_count_reward
 
 
 def slice_data(x,accumulate_steps,i):
@@ -191,50 +190,6 @@ def training_step(state: TrainState, inputs: ArrayTree) -> tuple[TrainState, Arr
 
 def repeat(lst:list,repeats:int):
     return [x    for x in lst  for _ in range(repeats) ]
-
-
-
-def reward_correct(item, answer):
-    pattern = r'\d+\.\d+|\d+/\d+|\d+'
-    nums = re.findall(pattern, answer) # 使用正则表达式在answer中查找所有数字
-    if len(nums) == 0: return 0.0
-    lastnum = nums[-1] # 用answer中最后一个数字和ground_truth做比较
-    ans = parse(lastnum, extraction_config=[ExprExtractionConfig()])
-    ground_truth = parse(item["A"], extraction_config=[ExprExtractionConfig()])
-    # print(item["A"],ans)
-
-    return 1 if verify(ans, ground_truth) else 0.0
-
-
-
-def reward_format(item, answer, **kwargs):
-    """Reward function that checks if the reasoning process is enclosed within <think> and </think> tags, while the final answer is enclosed within <answer> and </answer> tags."""
-    # pattern = r"^<think>\n.*?\n</think>\n<answer>\n.*?\n</answer>$"
-    pattern = r"^<think>.*?</think>\n<answer>.*?</answer>$"
-    match = re.match(pattern, answer, re.DOTALL | re.MULTILINE)
-    return 1.0 if match else 0.0
-
-
-
-def tag_count_reward(item, answer, **kwargs) -> float:
-    """Reward function that checks if we produce the desired number of think and answer tags associated with `format_reward()`.
-
-    Adapted from: https://gist.github.com/willccbb/4676755236bb08cab5f4e54a0475d6fb#file-grpo_demo-py-L90
-    """
-
-    def count_tags(text: str) -> float:
-        count = 0.0
-        if text.count("<think>") == 1:
-            count += 0.25
-        if text.count("</think>") == 1:
-            count += 0.25
-        if text.count("<answer>") == 1:
-            count += 0.25
-        if text.count("</answer>") == 1:
-            count += 0.25
-        return count
-
-    return count_tags(answer)
 
 
 

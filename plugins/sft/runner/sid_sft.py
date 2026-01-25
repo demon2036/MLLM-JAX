@@ -17,6 +17,7 @@ from plugins.sft.jax.evaluator import SidNextItemJaxEvaluator, evaluate_sid_next
 from plugins.sft.tokens import maybe_extend_tokenizer
 from plugins.common.checkpoint import CheckpointManager, CheckpointManagerConfig
 from plugins.common.observability import StatsLogger, WandbRunSpec
+from plugins.common.sharding import place_params_llama
 from plugins.common.tokenizer import prepare_tokenizer
 from plugins.llm.bundle import build_llm_bundle
 from plugins.llm.dtypes import parse_dtype
@@ -183,9 +184,6 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     import jax
     import jax.numpy as jnp
     import numpy as np
-    from jax.sharding import NamedSharding
-
-    from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 
     from plugins.sft.jax.checkpoint import load_checkpoint
     from plugins.sft.jax.params import resize_lm_vocab
@@ -223,14 +221,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     rng = jax.random.PRNGKey(int(cfg.seed))
 
     def _place_params(params_tree: Any) -> tuple[Any, Any]:
-        params_tree = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), params_tree)
-        shapes = jax.eval_shape(lambda x: x, params_tree)
-        partitions = match_partition_rules(get_partition_rules_llama(), shapes)
-        shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), partitions)
-        params_tree = jax.tree_util.tree_map(
-            lambda x, sh: jax.device_put(jnp.asarray(x, dtype=param_dtype), sh), params_tree, shardings
-        )
-        return params_tree, shardings
+        return place_params_llama(mesh=mesh, params=params_tree, dtype=param_dtype)
 
     needs_weights = not (run_mode_norm == "eval" and cfg.train.resume_from_checkpoint) and not bool(cfg.train.train_from_scratch)
     bundle = build_llm_bundle(

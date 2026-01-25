@@ -16,6 +16,7 @@ from plugins.sft.jax.params import resize_lm_vocab
 from plugins.sft.jax.sid_trie import build_sid_trie_from_index
 from plugins.common.checkpoint import CheckpointManager, CheckpointManagerConfig
 from plugins.common.observability import StatsLogger, WandbRunSpec
+from plugins.common.sharding import place_params_llama
 from plugins.common.tokenizer import prepare_tokenizer
 from plugins.llm.bundle import build_llm_bundle
 from plugins.llm.dtypes import parse_dtype
@@ -174,11 +175,8 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     rng = jax.random.PRNGKey(int(cfg.seed))
 
     def _place_params(params_tree: Any) -> Any:
-        params_tree = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), params_tree)
-        shapes = jax.eval_shape(lambda x: x, params_tree)
-        partitions = match_partition_rules(get_partition_rules_llama(), shapes)
-        shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), partitions)
-        return jax.tree_util.tree_map(lambda x, sh: jax.device_put(jnp.asarray(x, dtype=param_dtype), sh), params_tree, shardings)
+        placed, _shardings = place_params_llama(mesh=mesh, params=params_tree, dtype=param_dtype)
+        return placed
 
     ref_model = None
     if float(cfg.train.beta) != 0.0:

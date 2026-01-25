@@ -418,16 +418,17 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
                     output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json")
 
             _preds, metrics = evaluator.evaluate(params=st.params, output_predictions_json=output_predictions_json)
-            if is_coordinator:
-                eval_metrics = metrics
-                if wandb is not None:
-                    log = {"eval/epoch": epoch}
-                    for k, v in metrics.hr.items():
-                        log[f"eval/hr@{k}"] = v
-                    for k, v in metrics.ndcg.items():
-                        log[f"eval/ndcg@{k}"] = v
-                    log["eval/invalid_prediction_count"] = metrics.invalid_prediction_count
-                    wandb.log(log, step=int(step))
+            # IMPORTANT: set `eval_metrics` on every process so the post-train
+            # final-eval branch is skipped consistently on multi-host runs.
+            eval_metrics = metrics
+            if is_coordinator and wandb is not None:
+                log = {"eval/epoch": epoch}
+                for k, v in metrics.hr.items():
+                    log[f"eval/hr@{k}"] = v
+                for k, v in metrics.ndcg.items():
+                    log[f"eval/ndcg@{k}"] = v
+                log["eval/invalid_prediction_count"] = metrics.invalid_prediction_count
+                wandb.log(log, step=int(step))
 
         state, train_stats = run_sft_train(
             mesh=mesh,

@@ -5,7 +5,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import optax
 from chex import ArrayTree
 from flax.training import train_state
 from jax.sharding import Mesh, NamedSharding
@@ -14,46 +13,13 @@ from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 
 from plugins.sft.jax.sft_module import TrainSftModule
 
+from plugins.training.update.optimizer import LRScheduleConfig, OptimizerConfig, build_tx
+
 
 class SftTrainState(train_state.TrainState):
     micro_step: int = 0
     micro_in_mini: int = 1
     grad_accum: ArrayTree | None = None
-
-
-def _build_lr_schedule(*, peak_lr: float, total_steps: int, warmup_steps: int) -> Any:
-    peak_lr = float(peak_lr)
-    total_steps = int(total_steps)
-    warmup_steps = int(warmup_steps)
-
-    if total_steps <= 0:
-        raise ValueError("total_steps must be > 0")
-    if warmup_steps < 0:
-        raise ValueError("warmup_steps must be >= 0")
-    warmup_steps = min(warmup_steps, total_steps)
-
-    if warmup_steps == 0:
-        return optax.linear_schedule(init_value=peak_lr, end_value=0.0, transition_steps=total_steps)
-
-    warmup = optax.linear_schedule(init_value=0.0, end_value=peak_lr, transition_steps=warmup_steps)
-    decay_steps = max(1, total_steps - warmup_steps)
-    decay = optax.linear_schedule(init_value=peak_lr, end_value=0.0, transition_steps=decay_steps)
-    return optax.join_schedules([warmup, decay], [warmup_steps])
-
-
-def _build_optimizer(*, name: str, learning_rate: Any, weight_decay: float) -> optax.GradientTransformation:
-    name_norm = str(name or "adamw").strip().lower()
-    weight_decay = float(weight_decay)
-
-    if name_norm in {"adamw", "adam"}:
-        tx = optax.adamw(learning_rate=learning_rate, weight_decay=weight_decay)
-    elif name_norm in {"lion"}:
-        tx = optax.lion(learning_rate=learning_rate, weight_decay=weight_decay)
-    else:
-        raise ValueError(f"Unsupported optimizer: {name!r} (expected adamw|lion)")
-
-    # Keep it conservative by default; this repo does not have a global knob yet.
-    return optax.chain(optax.clip_by_global_norm(1.0), tx)
 
 
 @dataclass(frozen=True)
@@ -67,21 +33,35 @@ def create_sft_state(
     mesh: Mesh,
     model: Any,
     params: ArrayTree,
+    training_steps: int,
     optimizer_name: str,
     learning_rate: float,
     weight_decay: float,
     grad_accum_steps: int,
-    training_steps: int,
     warmup_steps: int = 0,
     label_ignore_id: int = -100,
 ) -> SftStateBundle:
     grad_accum_steps = int(grad_accum_steps)
     if grad_accum_steps <= 0:
         raise ValueError("grad_accum_steps must be >= 1")
+    training_steps = int(training_steps)
+    if training_steps <= 0:
+        raise ValueError("training_steps must be > 0")
 
     train_module = TrainSftModule(model=model, label_ignore_id=int(label_ignore_id))
-    lr_schedule = _build_lr_schedule(peak_lr=float(learning_rate), total_steps=int(training_steps), warmup_steps=int(warmup_steps))
-    tx = _build_optimizer(name=optimizer_name, learning_rate=lr_schedule, weight_decay=float(weight_decay))
+    tx_cfg = OptimizerConfig(
+        name=str(optimizer_name),
+        clip_norm=1.0,
+        weight_decay=float(weight_decay),
+        lr_schedule=LRScheduleConfig(
+            type="warmup_linear",
+            init_value=0.0,
+            peak_value=float(learning_rate),
+            end_value=0.0,
+            warmup_steps=int(warmup_steps),
+        ),
+    )
+    tx = build_tx(training_steps=training_steps, cfg=tx_cfg)
 
     def init_fn(p):
         grad_accum = jax.tree_util.tree_map(jnp.zeros_like, p) if grad_accum_steps > 1 else None

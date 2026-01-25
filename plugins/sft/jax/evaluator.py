@@ -10,10 +10,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from plugins.sft.constrained_decoding import load_valid_sids_from_info
-from plugins.sft.jax.beam_search import constrained_beam_search_sid3
-from plugins.sft.jax.sid_trie import build_sid_trie_from_index
+from plugins.sample.decoding.sid3_constrained_beam_search import constrained_beam_search_sid3
+from plugins.sample.constraints.sid_trie import build_sid_trie_from_index
 from plugins.sft.metrics import RankingMetrics, compute_hr_ndcg
+from plugins.sft.sid_utils import load_valid_sids_from_info
 
 
 def _decode_sid_triplet(tokenizer: Any, triplet: list[int]) -> str:

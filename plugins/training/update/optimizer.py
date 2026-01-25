@@ -10,7 +10,7 @@ class LRScheduleConfig:
     Defaults match the hardcoded schedule in `training2.get_state`.
     """
 
-    # Supported: warmup_cosine, constant
+    # Supported: warmup_cosine, warmup_linear, constant
     type: str = "warmup_cosine"
 
     init_value: float = 0.0
@@ -61,10 +61,26 @@ def build_lr_schedule(*, training_steps: int, cfg: LRScheduleConfig):
             end_value=float(cfg.end_value),
         )
 
+    if schedule_type in {"warmup_linear", "warmup_linear_decay", "linear_warmup"}:
+        warmup_steps = cfg.warmup_steps
+        if warmup_steps is None:
+            warmup_steps = int(round(float(steps) * float(cfg.warmup_ratio)))
+        warmup_steps = int(warmup_steps)
+        if warmup_steps < 0:
+            raise ValueError(f"warmup_steps must be >= 0, got {warmup_steps}")
+        warmup_steps = min(warmup_steps, steps)
+        if warmup_steps == 0:
+            return optax.linear_schedule(init_value=float(cfg.peak_value), end_value=float(cfg.end_value), transition_steps=steps)
+
+        warmup = optax.linear_schedule(init_value=float(cfg.init_value), end_value=float(cfg.peak_value), transition_steps=warmup_steps)
+        decay_steps = max(1, steps - warmup_steps)
+        decay = optax.linear_schedule(init_value=float(cfg.peak_value), end_value=float(cfg.end_value), transition_steps=decay_steps)
+        return optax.join_schedules([warmup, decay], [warmup_steps])
+
     if schedule_type in {"constant", "const"}:
         return optax.constant_schedule(float(cfg.peak_value))
 
-    raise ValueError(f"Unsupported lr_schedule.type={cfg.type!r} (expected warmup_cosine|constant)")
+    raise ValueError(f"Unsupported lr_schedule.type={cfg.type!r} (expected warmup_cosine|warmup_linear|constant)")
 
 
 def build_tx(*, training_steps: int, cfg: OptimizerConfig):
@@ -96,4 +112,3 @@ def build_tx(*, training_steps: int, cfg: OptimizerConfig):
 
 
 __all__ = ["LRScheduleConfig", "OptimizerConfig", "build_lr_schedule", "build_tx"]
-

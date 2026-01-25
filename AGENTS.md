@@ -16,6 +16,7 @@
 - TPU 使用隔离：除非用户明确指定复用已有 TPU/同一集群，否则每个任务新建独立 TPU（按任务名命名），避免在无关 TPU 上复用环境导致相互影响。
 - TPU 上的覆盖/替换通过自写 shell 脚本完成（例如同步到覆盖目录 + `PYTHONPATH`），避免改动原始仓库内容。
 - TPU 开发/运行采用 Git 同步：本地修改代码 → `git commit`/`git push` 到 GitHub → TPU VM 通过 `scripts/ssh_tpu_vm_root.sh`（或 `gcloud ... tpu-vm ssh`）执行 `git clone`/`git pull` 获取代码并运行；不要用 `gcloud ... scp` / `scp` 手动拷贝代码（见 `docs/sops.md#tpu-vm-repo-sync`）。（例外：同步本地 secret 如 `.env`，用 `scripts/sync_env_to_tpu_vm.sh` 分发到 worker=all。）
+- 只能在自己分支开发；除非用户明确下达命令，禁止 push 到 main（main 绝对禁止）。
 - `memory/` 为临时工作区：只保留与本任务相关记录；不再使用 `memo/`（草稿也写到 `memory/<task>/`，必要时可直接删除）。
 
 ## Project Structure & Module Organization

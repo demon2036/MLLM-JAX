@@ -6,6 +6,17 @@
 - Clone reference repos into `workdir/`: `docs/sops/clone-reference-repos-into-workdir.md`
 - Clone AkaliKong/MiniOneRec into repo workdir: `docs/sops/clone-akalikong-minionerec-workdir.md`
 - MiniOneRec SID SFT + eval (plugins/sft): `docs/sops/minionerec-sid-sft-and-eval.md`
+- Inspect SFT + GRPO GSM8K data stack: `docs/sops/inspect-sft-grpo-data-stack.md`
+- Scan plugins/sft for Torch remnants: `docs/sops/scan-plugins-sft-torch-remnants.md`
+- Inspect loader + sampler stack (SFT vs GRPO): `docs/sops/inspect-loader-sampler-sft-grpo.md`
+- Inspect mesh/sharding/optimizer/checkpoint duplication: `docs/sops/inspect-mesh-sharding-optimizer-duplication.md`
+- Make plugins/sft JAX-only (remove torch): `docs/sops/plugins-sft-jax-only-remove-torch.md`
+- Inspect plugin utility duplicates: `docs/sops/inspect-plugin-utility-duplicates.md`
+- Refactor plan to consolidate `plugins/sft` + `plugins/training`: `docs/sops/plugins-refactor-sft-training-consolidation.md`
+- Add `plugins/common/` shared abstractions: `docs/sops/plugins-common-shared-abstractions.md`
+- Add `plugins/sample/` shared sampling package: `docs/sops/plugins-sample-shared-sampling.md`
+- Vendor MLLM sampler into `plugins/sample/`: `docs/sops/plugins-sample-vendor-mllm-sampler.md`
+- Extract SID3 beam search into `plugins/sample/`: `docs/sops/plugins-sample-decoding-sid3-beam-search.md`
 - MiniOneRec SID SFT on TPU (JAX): `docs/sops/minionerec-sid-sft-jax-tpu.md`
 - Network checks: `docs/sops/network-checks.md`
 - Update repo via `git pull`: `docs/sops/git-pull-update.md`
@@ -93,6 +104,9 @@
 - `docs/sops/training-modularization-plan.md`
 - `docs/sops/minionerec-sid-sft-and-eval.md`
 - `docs/sops/minionerec-sid-sft-jax-tpu.md`
+- `docs/sops/inspect-loader-sampler-sft-grpo.md`
+- `docs/sops/plugins-refactor-sft-training-consolidation.md`
+- `docs/sops/plugins-common-shared-abstractions.md`
 - `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - `docs/sops/areal-rl-organization.md`
 - `docs/sops/areal-logging-system.md`
@@ -100,6 +114,7 @@
 - `docs/sops/rl-four-phase-interface-implementation.md`
 - `docs/sops/rl-phase-folder-layout.md`
 - `docs/sops/rl-pluggable-optimizer.md`
+- `docs/sops/inspect-mesh-sharding-optimizer-duplication.md`
 - `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 - `docs/sops/grpo-gsm8k-runner-batch-size.md`
 - `docs/sops/grpo-gsm8k-metrics.md`

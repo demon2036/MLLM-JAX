@@ -1,7 +1,14 @@
-base_model: sshleifer/tiny-gpt2
+backend: jax
+base_model: hf-internal-testing/tiny-random-LlamaForCausalLM
 output_dir: runs/sid_sft_smoke_tiny_wandb_online
 seed: 42
 device: cpu
+
+jax:
+  mesh_shape: "1,-1,1"
+  param_dtype: float32
+  compute_dtype: float32
+  max_cache_length: 512
 
 data:
   category: Industrial_and_Scientific
@@ -55,4 +62,3 @@ wandb:
   project: minionerec-sid-sft
   mode: online
   name: null
-

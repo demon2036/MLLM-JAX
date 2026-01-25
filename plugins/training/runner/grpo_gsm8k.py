@@ -10,6 +10,10 @@ import math
 
 import numpy as np
 
+from plugins.common.data.padding import pad_2d_right
+from plugins.common.sharding.batch import local_from_global, make_form_training_global_array
+from plugins.common.wandb_utils import maybe_init_wandb
+from plugins.common.tokenizer import prepare_tokenizer
 from plugins.training.advantage.estimators import compute_gae_advantages
 from plugins.training.update.optimizer import OptimizerConfig
 from plugins.training.algorithms import AlgoConfig, create_algorithm
@@ -71,24 +75,6 @@ def _ensure_batch_multiple_of_local_devices(local_batch: int, local_device_count
     return ((local_batch + local_device_count - 1) // local_device_count) * local_device_count
 
 
-def _maybe_init_wandb(cfg: GRPOGsm8kConfig):
-    import jax
-
-    if jax.process_index() != 0:
-        return None
-    mode = str(cfg.wandb_mode or "online").strip().lower()
-    if mode in {"disabled", "disable", "off"}:
-        return None
-    try:
-        import wandb
-
-        wandb.init(project=cfg.wandb_project, name=cfg.wandb_name, config=asdict(cfg), mode=mode)
-        return wandb
-    except Exception as e:
-        print(f"wandb disabled due to init error: {e}")
-        return None
-
-
 def _as_float(x: Any) -> float:
     return float(np.asarray(x))
 
@@ -106,18 +92,6 @@ def _stats_1d(x: np.ndarray) -> dict[str, float]:
         "min": float(x.min()),
         "max": float(x.max()),
     }
-
-
-def _pad_2d_right(x: np.ndarray, target_len: int, pad_value: int) -> np.ndarray:
-    if x.ndim != 2:
-        raise ValueError(f"Expected rank-2 array, got shape={x.shape}")
-    cur = int(x.shape[1])
-    target = int(target_len)
-    if cur == target:
-        return x
-    if cur > target:
-        raise ValueError(f"Cannot pad to a smaller length: {cur} -> {target}")
-    return np.pad(x, ((0, 0), (0, target - cur)), constant_values=pad_value)
 
 
 def _group_correct_per_prompt(correct_per_completion: np.ndarray, *, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -243,66 +217,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 "or an explicit host-local mesh like `mesh_shape: 4,4,1` on v6e-16."
             )
 
-    # When training on a TP mesh (tp_size > 1), sharding the batch axis across TP
-    # can lead to heavy all-to-all reshards (TP axis used for both data and model).
-    # Instead, shard batches across (dp, fsdp) and replicate across tp.
-    #
-    # NOTE: This helper focuses on the "training batch" arrays that are always
-    # shaped [B, ...] with B consistent across processes.
-    mesh_devices = np.asarray(mesh.devices)
-    device_to_coords: dict[Any, tuple[int, ...]] = {dev: coords for coords, dev in np.ndenumerate(mesh_devices)}
-    local_devices = list(mesh.local_devices)
-    local_dp_fsdp_coords = sorted({device_to_coords[d][:2] for d in local_devices})
-    local_dp_fsdp_count = len(local_dp_fsdp_coords)
-    dp_fsdp_total = int(mesh.shape.get("dp", 1)) * int(mesh.shape.get("fsdp", 1))
-
-    # Multi-host + TP-on-host-boundary is not fully supported by the dp/fsdp-only
-    # sharding rule because the dp/fsdp coords may be replicated across processes.
-    # Fall back to sharding across all mesh axes in that case.
-    use_dp_fsdp_batch_sharding = True
-    if process_count != 1 and tp_size > 1 and local_dp_fsdp_count * process_count != dp_fsdp_total:
-        use_dp_fsdp_batch_sharding = False
-
-    def _form_training_global_array(path, array: np.ndarray) -> jax.Array:
-        if array.ndim == 0:
-            raise ValueError(f"Expected batched array at {jax.tree_util.keystr(path)}, got scalar shape={array.shape}.")
-
-        global_shape = (jax.process_count() * int(array.shape[0]),) + tuple(int(x) for x in array.shape[1:])
-
-        if use_dp_fsdp_batch_sharding:
-            if int(array.shape[0]) % local_dp_fsdp_count != 0:
-                raise ValueError(
-                    f"Unable to shard batch={int(array.shape[0])} across local (dp,fsdp) shards={local_dp_fsdp_count} "
-                    f"at {jax.tree_util.keystr(path)}. Consider adjusting rollout/train batch sizes."
-                )
-            shard_chunks = np.split(array, local_dp_fsdp_count, axis=0) if local_dp_fsdp_count > 1 else [array]
-            coord_to_chunk = dict(zip(local_dp_fsdp_coords, shard_chunks, strict=True))
-            local_device_arrays = [coord_to_chunk[device_to_coords[d][:2]] for d in local_devices]
-            local_device_buffers = jax.device_put(local_device_arrays, local_devices)
-            sharding = NamedSharding(mesh, PS(("dp", "fsdp")))
-            return jax.make_array_from_single_device_arrays(global_shape, sharding, local_device_buffers)
-
-        # Fallback: shard the batch axis across *all* mesh axes (dp,fsdp,tp), so
-        # each device owns a distinct batch slice (matches the legacy behavior).
-        if int(array.shape[0]) % len(local_devices) != 0:
-            raise ValueError(
-                f"Unable to shard batch={int(array.shape[0])} across local devices={len(local_devices)} "
-                f"at {jax.tree_util.keystr(path)}. Consider adjusting rollout/train batch sizes."
-            )
-        local_device_arrays = np.split(array, len(local_devices), axis=0) if len(local_devices) > 1 else [array]
-        local_device_buffers = jax.device_put(local_device_arrays, local_devices)
-        sharding = NamedSharding(mesh, PS(mesh.axis_names))
-        return jax.make_array_from_single_device_arrays(global_shape, sharding, local_device_buffers)
-
-    def _local_from_global(array: jax.Array) -> np.ndarray:
-        shards = array.addressable_shards
-        if not shards:
-            return np.asarray(array)
-        first_index = shards[0].index
-        if all(shard.index == first_index for shard in shards):
-            return np.asarray(shards[0].data)
-        shards_sorted = sorted(shards, key=lambda s: s.index[0].start)
-        return np.concatenate([np.asarray(shard.data) for shard in shards_sorted], axis=0)
+    _form_training_global_array = make_form_training_global_array(mesh)
 
     # --- Resolve rollout batch sizes ---
     # New semantics: `rollout.batch_size` is global prompts per training step (across all processes).
@@ -474,12 +389,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         rollout_backend_name = "naive"
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_path, trust_remote_code=True)
-    pad_token_id = getattr(tokenizer, "pad_token_id", None)
-    if pad_token_id is None:
-        pad_token_id = getattr(tokenizer, "eos_token_id", None)
-    if pad_token_id is None:
-        pad_token_id = 0
-    pad_token_id = int(pad_token_id)
+    tokenizer, pad_token_id = prepare_tokenizer(tokenizer, padding_side="right")
 
     reward_funcs = [reward_correct, reward_format, tag_count_reward]
     reward_func_names = [fn.__name__ for fn in reward_funcs]
@@ -561,8 +471,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     eval_rollout_backend = rollout_backend
     eval_greedy_enabled = os.environ.get("EVAL_GREEDY") == "1" or os.environ.get("EVAL_FULL_GREEDY") == "1"
     if eval_greedy_enabled and eval_qas:
-        from MLLM_JAX.sample.sample_state_right_padding2 import Sampler as SamplerImpl
         from jax.experimental.shard_map import shard_map
+        from plugins.sample.mllm_sampler import Sampler as SamplerImpl
 
         eval_sampler = SamplerImpl(sampler.model, sampler.tokenizer, mesh=mesh)
 
@@ -602,7 +512,13 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     rollout_module = RolloutBackendModule(backend=rollout_backend)
     eval_rollout_module = RolloutBackendModule(backend=eval_rollout_backend)
 
-    wandb = _maybe_init_wandb(cfg)
+    wandb = maybe_init_wandb(
+        cfg=cfg,
+        project=cfg.wandb_project,
+        name=cfg.wandb_name,
+        mode=cfg.wandb_mode,
+        process_index=jax.process_index(),
+    )
 
     def _policy_params_for_rollout(params):
         if not use_value_head:
@@ -717,7 +633,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                         pad_value = pad_token_id
                     else:
                         pad_value = 0
-                    parts = [_pad_2d_right(d[k], max_len_local, pad_value) for d in datas_np_all]
+                    parts = [pad_2d_right(d[k], max_len_local, pad_value) for d in datas_np_all]
                     datas_np[k] = np.concatenate(parts, axis=0)
                 else:
                     datas_np[k] = np.concatenate([d[k] for d in datas_np_all], axis=0)
@@ -725,9 +641,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             seq_len_local = int(datas_np["input_ids"].shape[1])
             seq_len_global = int(np.asarray(process_allgather(np.asarray([seq_len_local], dtype=np.int32))).max())
             if seq_len_global != seq_len_local:
-                datas_np["input_ids"] = _pad_2d_right(datas_np["input_ids"], seq_len_global, pad_token_id)
-                datas_np["attention_mask"] = _pad_2d_right(datas_np["attention_mask"], seq_len_global, 0)
-                datas_np["labels"] = _pad_2d_right(datas_np["labels"], seq_len_global, 0)
+                datas_np["input_ids"] = pad_2d_right(datas_np["input_ids"], seq_len_global, pad_token_id)
+                datas_np["attention_mask"] = pad_2d_right(datas_np["attention_mask"], seq_len_global, 0)
+                datas_np["labels"] = pad_2d_right(datas_np["labels"], seq_len_global, 0)
 
         if use_gae_advantage and datas_np:
             t_adv0 = time.perf_counter()
@@ -740,7 +656,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             value_inputs_jax = jax.tree_util.tree_map_with_path(_form_training_global_array, value_inputs)
             values = value_fn(state.params, value_inputs_jax["input_ids"], value_inputs_jax["attention_mask"])
             jax.block_until_ready(values)
-            values_np = _local_from_global(values)
+            values_np = local_from_global(values)
             values_pred = np.asarray(values_np[:, :-1], dtype=np.float32)
             completion_mask = np.asarray(datas_np["labels"][:, 1:], dtype=np.float32)
             advantages_np, returns_np = compute_gae_advantages(

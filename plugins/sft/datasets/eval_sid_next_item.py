@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from torch.utils.data import Dataset
-
 from plugins.sft.datasets.csv_utils import parse_sid_example, read_csv_rows, sample_rows
 from plugins.sft.datasets.tokenizer_utils import TokenizerAdapter, encode_supervised_example
 
@@ -32,7 +30,7 @@ class SidNextItemEvalExample:
     target_sid: str
 
 
-class SidNextItemEvalDataset(Dataset):
+class SidNextItemEvalDataset:
     """Eval dataset: prompt-only encodings + ground-truth SID (for HR/NDCG)."""
 
     def __init__(
@@ -86,4 +84,3 @@ class SidNextItemEvalDataset(Dataset):
 
     def get_targets(self) -> list[str]:
         return [e.target_sid for e in self._examples]
-

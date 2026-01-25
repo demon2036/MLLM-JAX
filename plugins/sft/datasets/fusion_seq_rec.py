@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from torch.utils.data import Dataset
-
 from plugins.sft.datasets.csv_utils import parse_sid_example, read_csv_rows, sample_rows
 from plugins.sft.datasets.tokenizer_utils import TokenizerAdapter, encode_supervised_example
 
@@ -44,7 +42,7 @@ class FusionSeqRecExample:
     completion: str
 
 
-class FusionSeqRecSftDataset(Dataset):
+class FusionSeqRecSftDataset:
     """Auxiliary task: history SIDs -> next item title (language alignment)."""
 
     def __init__(
@@ -116,4 +114,3 @@ class FusionSeqRecSftDataset(Dataset):
         if self._encoded is not None:
             return self._encoded[idx]
         return self._encode(self._examples[idx])
-

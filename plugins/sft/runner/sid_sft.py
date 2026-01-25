@@ -7,25 +7,23 @@ from typing import Any
 
 import numpy as np
 import torch
-from torch.utils.data import ConcatDataset
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
+from plugins.sft.datasets.concat_dataset import ConcatDataset
 from plugins.sft.datasets.eval_sid_next_item import SidNextItemEvalDataset
 from plugins.sft.datasets.fusion_seq_rec import FusionSeqRecSftDataset
 from plugins.sft.datasets.sid_item_alignment import SidItemAlignmentDataset
 from plugins.sft.datasets.sid_next_item import SidNextItemSftDataset
-from plugins.sft.evaluator import evaluate_sid_next_item
 from plugins.sft.jax.evaluator import evaluate_sid_next_item_jax
-from plugins.sft.tokens import freeze_llm_only_train_new_embeddings, maybe_extend_tokenizer, maybe_extend_tokenizer_and_model
-from plugins.sft.trainer import SftTrainResult, run_trainer
-from plugins.sft.wandb_utils import maybe_init_wandb
+from plugins.sft.tokens import maybe_extend_tokenizer
+from plugins.common.wandb_utils import maybe_init_wandb
+from plugins.common.tokenizer import prepare_tokenizer
 
 
 def _set_seed(seed: int) -> None:
     seed = int(seed)
     random.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)
 
 
 @dataclass(frozen=True)
@@ -176,95 +174,6 @@ def _build_eval_dataset(cfg: SidSftConfig, tokenizer: Any) -> SidNextItemEvalDat
     )
 
 
-def _run_sid_sft_hf(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]:
-    # --- Load model/tokenizer ---
-    if cfg.train.train_from_scratch:
-        base_config = AutoConfig.from_pretrained(cfg.base_model, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_config(base_config)
-    else:
-        model = AutoModelForCausalLM.from_pretrained(cfg.base_model, trust_remote_code=True)
-
-    tokenizer = AutoTokenizer.from_pretrained(cfg.base_model, trust_remote_code=True)
-    if getattr(tokenizer, "pad_token_id", None) is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-    tokenizer.padding_side = "left"
-
-    extension = maybe_extend_tokenizer_and_model(tokenizer=tokenizer, model=model, sid_index_path=cfg.data.sid_index_path)
-    if cfg.train.freeze_LLM:
-        freeze_llm_only_train_new_embeddings(model=model, original_vocab_size=extension.original_vocab_size)
-
-    wandb = maybe_init_wandb(cfg=cfg, project=cfg.wandb.project, name=cfg.wandb.name, mode=cfg.wandb.mode)
-    wandb_enabled = wandb is not None
-
-    train_result: SftTrainResult | None = None
-    if run_mode_norm in {"train", "train_eval"}:
-        train_dataset = _build_train_dataset(cfg, tokenizer)
-        eval_dataset = SidNextItemSftDataset(
-            csv_path=cfg.data.eval_file,
-            tokenizer=tokenizer,
-            max_len=cfg.data.max_len,
-            sample=cfg.data.sample_eval,
-            seed=cfg.seed,
-            include_labels=True,
-            pretokenize=True,
-        )
-        train_result = run_trainer(
-            model=model,
-            tokenizer=tokenizer,
-            train_dataset=train_dataset,
-            eval_dataset=eval_dataset,
-            output_dir=cfg.output_dir,
-            run_name=cfg.wandb.name,
-            seed=cfg.seed,
-            train_cfg=asdict(cfg.train),
-            wandb_enabled=wandb_enabled,
-            device=cfg.device,
-        )
-
-    eval_metrics = None
-    if run_mode_norm in {"eval", "train_eval"} and cfg.eval.enabled:
-        eval_dataset = _build_eval_dataset(cfg, tokenizer)
-
-        output_predictions_json = None
-        if cfg.eval.save_predictions_json:
-            output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json")
-
-        _preds, eval_metrics = evaluate_sid_next_item(
-            model=model,
-            tokenizer=tokenizer,
-            eval_dataset=eval_dataset,
-            info_file=cfg.data.info_file,
-            batch_size=cfg.eval.batch_size,
-            num_beams=cfg.eval.num_beams,
-            max_new_tokens=cfg.eval.max_new_tokens,
-            length_penalty=cfg.eval.length_penalty,
-            topk=list(cfg.eval.topk),
-            constrained=cfg.eval.constrained,
-            output_predictions_json=output_predictions_json,
-            device=cfg.device,
-        )
-
-        if wandb is not None:
-            log = {}
-            for k, v in eval_metrics.hr.items():
-                log[f"eval/hr@{k}"] = v
-            for k, v in eval_metrics.ndcg.items():
-                log[f"eval/ndcg@{k}"] = v
-            log["eval/invalid_prediction_count"] = eval_metrics.invalid_prediction_count
-            wandb.log(log)
-
-    if wandb is not None:
-        wandb.finish()
-
-    return {
-        "config": asdict(cfg),
-        "token_extension": asdict(extension),
-        "train": asdict(train_result) if train_result else None,
-        "eval": asdict(eval_metrics) if eval_metrics else None,
-    }
-
-
 def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]:
     import math
 
@@ -272,7 +181,6 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     import jax
     import jax.numpy as jnp
     import numpy as np
-    import torch
     from jax.sharding import NamedSharding
 
     from MLLM_JAX.language.llama.llama import LlamaJaxConfig, convert_torch_to_flax_llama
@@ -297,14 +205,17 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     compute_dtype = parse_dtype(cfg.jax.compute_dtype)
     param_dtype = parse_dtype(cfg.jax.param_dtype)
 
-    wandb = maybe_init_wandb(cfg=cfg, project=cfg.wandb.project, name=cfg.wandb.name, mode=cfg.wandb.mode) if jax.process_index() == 0 else None
+    wandb = maybe_init_wandb(
+        cfg=cfg,
+        project=cfg.wandb.project,
+        name=cfg.wandb.name,
+        mode=cfg.wandb.mode,
+        process_index=jax.process_index(),
+    )
 
     # Tokenizer + SID token extension (tokenizer-only; params resized below).
     tokenizer = AutoTokenizer.from_pretrained(cfg.base_model, trust_remote_code=True)
-    if getattr(tokenizer, "pad_token_id", None) is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-    tokenizer.padding_side = "right"
+    tokenizer, pad_token_id = prepare_tokenizer(tokenizer, padding_side="right")
 
     extension = maybe_extend_tokenizer(tokenizer=tokenizer, sid_index_path=cfg.data.sid_index_path)
 
@@ -334,7 +245,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     rng = jax.random.PRNGKey(int(cfg.seed))
 
     # Param init / load:
-    # - For eval-only runs with `resume_from_checkpoint`, skip loading base torch weights.
+    # - For eval-only runs with `resume_from_checkpoint`, skip loading base model weights.
     # - Otherwise, load from base model or init from scratch.
     loaded_from_checkpoint = False
     if run_mode_norm == "eval" and cfg.train.resume_from_checkpoint:
@@ -370,6 +281,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             return np.asarray(x)
 
         params = jax.tree_util.tree_map(_to_numpy, params)
+        del torch_model
 
     # Resize embeddings/lm_head for new SID tokens (+ optional padding for sharding divisibility).
     params, vocab_resize = resize_lm_vocab(params=params, new_vocab_size=int(padded_vocab_size), rng=rng)
@@ -439,7 +351,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             model=model,
             params=params,
             train_dataset=train_dataset,
-            pad_token_id=int(tokenizer.pad_token_id),
+            pad_token_id=int(pad_token_id),
             pad_to_length=int(cfg.data.max_len) if int(cfg.data.max_len) > 0 else None,
             optimizer_name=cfg.train.optimizer,
             learning_rate=float(cfg.train.learning_rate),
@@ -536,6 +448,4 @@ def run_sid_sft(cfg: SidSftConfig, *, run_mode: str) -> dict[str, Any]:
     backend = str(cfg.backend or "jax").strip().lower()
     if backend in {"jax", "tpu"}:
         return _run_sid_sft_jax(cfg, run_mode_norm=run_mode_norm)
-    if backend in {"hf", "torch", "pytorch"}:
-        return _run_sid_sft_hf(cfg, run_mode_norm=run_mode_norm)
-    raise ValueError(f"Unknown backend={cfg.backend!r} (expected jax|hf)")
+    raise ValueError(f"Unknown backend={cfg.backend!r} (expected jax|tpu)")

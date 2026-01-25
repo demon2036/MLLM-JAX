@@ -70,6 +70,7 @@ def run_sft_train(
         mesh=mesh,
         model=model,
         params=params,
+        training_steps=max_steps,
         optimizer_name=optimizer_name,
         learning_rate=float(learning_rate),
         weight_decay=float(weight_decay),

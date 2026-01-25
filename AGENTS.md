@@ -19,6 +19,68 @@
 - 只能在自己分支开发；除非用户明确下达命令，禁止 push 到 main（main 绝对禁止）。
 - `memory/` 为临时工作区：只保留与本任务相关记录；不再使用 `memo/`（草稿也写到 `memory/<task>/`，必要时可直接删除）。
 
+## 大局观与接口先行（Required）
+
+核心目标：**让后人能在不改训练主流程的前提下，按配置替换/新增组件**（loss、optimizer、rollout backend、reward、sampler、data 等），并且在 W&B 上可追踪、可复现。
+
+### 原则（Why）
+
+- 把 “配置 + 接口” 当成 API：稳定、可扩展、可测试。
+- 训练 loop/runner 尽量只依赖接口，不依赖具体实现细节（避免到处 `if/else` 特判）。
+- 默认实现可以是最简单的（例如 SFT 的 CE loss），但必须预留扩展点（例如 label smoothing / focal / distillation / 多任务 loss / mix-in loss）。
+
+### 怎么做（How）
+
+- **先写接口/契约，再写实现**：先定义输入/输出、shape/dtype、mask 语义、返回的 metrics 命名，再落地默认实现。
+- **可插拔（pluggable）优先**：用 registry/factory 通过配置选择实现；不要在 runner 里 hardcode 某个实现。
+- **新增行为必须新增 config**：禁止用脚本参数拼接/环境变量暗改超参；新增 loss/optimizer 等必须新建 YAML config（W&B 才能完整追踪）。
+- **自定义代码放 `plugins/`**：接口通常放 `plugins/**/api/` 或 `plugins/common/`；上游目录只做最小必要 glue（如 import / wiring），避免侵入式改动。
+- **文档先行**：接口落地后，在 SOP/README 里写清楚 “扩展点 + 默认实现 + 如何新增一个实现 + 验证命令”。
+
+### 例子：SFT 的 loss 不要 hardcode CE
+
+我们希望：SFT 默认用 CE，但以后加别的 loss 时，不需要改训练主循环，只需要：
+1) 新增一个实现文件；2) 在 registry 里注册；3) 新建 YAML config 指向它。
+
+推荐结构（示意）：
+
+```python
+# runner/loop 里（只依赖接口，不关心具体 loss）
+loss_fn = build_loss(config.train.loss)
+loss, metrics = loss_fn(model, batch, rng=rng)
+```
+
+```yaml
+# configs/sft/qwen2_5_3b_ce.yaml
+train:
+  loss:
+    name: ce
+    label_smoothing: 0.0
+```
+
+```yaml
+# configs/sft/qwen2_5_3b_focal.yaml
+train:
+  loss:
+    name: focal
+    gamma: 2.0
+```
+
+落地时优先复用现有接口与拆分方式：
+- `plugins/training/api/interfaces.py`（接口定义）
+- `docs/sops/training-modularization-plan.md`（接口先行的拆分路线）
+- `docs/sops/rl-pluggable-optimizer.md`（“把 hardcode 变成可配置扩展点”的具体范例）
+
+### PR 自查清单（Checklist）
+
+- 是否先定义了接口契约（输入/输出/语义/metrics）而不是直接写实现？
+- 新增实现是否能通过配置启用（而不是改 runner）？
+- 新增实现是否有独立 YAML config（可复现、可在 W&B 对齐）？
+- 新增实现是否放在 `plugins/` 且侵入改动最小？
+- 默认配置/不配置时，行为是否保持与历史一致（避免无意破坏已有实验）？
+- metrics 命名是否稳定、可对比（避免随意改 key 导致 W&B 面板断档）？
+- 是否补充了最小验证步骤（smoke 或目标配置），并记录在 SOP/memory？
+
 ## Project Structure & Module Organization
 
 This repository is focused on validating and documenting `sglang-jax`. The repo is currently minimal; keep the layout simple and documented as it grows. Recommended folders:

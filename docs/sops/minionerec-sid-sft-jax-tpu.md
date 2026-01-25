@@ -90,6 +90,14 @@
   - Cross-check via upstream `calc.py`:
     - `scripts/ssh_tpu_vm_root.sh --name minionerec-sid-sft-v6e-8-official-eval-260124163806 --zone us-east5-b --command 'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; python workdir/MiniOneRec/calc.py --path runs/sid_sft_jax_eval_official_minionerec_office_ckpt/eval_predictions.json --item_path workdir/MiniOneRec/data/Amazon/info/Office_Products_5_2016-10-2018-11.txt'`
 
+### Verified example (v6e-16 multi-host, official ckpt)
+
+- TPU: `mllm-jax-v6e-16-spot-260124044423` (zone `us-east1-d`), multi-host (`jax.process_count()==4`)
+- Repo SHA: `570a627` (branch `sft`)
+- Industrial (full test, W&B online): `https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/h8ergida` (HR@10=`0.0269`, NDCG@10=`0.0170`, invalid=`0`)
+- Office (full test, W&B online): `https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/qk555zuc` (HR@10=`0.0189`, NDCG@10=`0.0100`, invalid=`0`)
+- Note: these numbers do not match `workdir/MiniOneRec/assets/minionerec_main_result.png` yet; further alignment work is needed.
+
 ## Extra: Measure SFT train step time (v6e-8)
 
 - Note: JAX training requires static batch shapes; training batches are padded to fixed `data.max_len` (commit `2b5208a`) to avoid JIT recompiles from dynamic padding.

@@ -25,6 +25,7 @@
 - Commit and push to GitHub: `docs/sops/github-push.md`
 - Merge `origin/main` into branch: `docs/sops/git-merge-main-into-branch.md`
 - Merge branch into `main`: `docs/sops/git-merge-branch-into-main.md`
+- Merge `sft` into `minionerec` + enable GRPO rolloutfast launcher defaults: `docs/sops/minionerec-merge-sft-and-enable-grpo-rolloutfast-launcher.md`
 - Backup `main`, replace it with `john`, and delete `join`: `docs/sops/git-main-copy-and-switch-to-john.md`
 - Reinstall Electerm (AppImage): `docs/sops/electerm-reinstall-appimage.md`
 - Slim repo (move unused code to `deprecated/`): `docs/sops/repo-slim-deprecated.md`

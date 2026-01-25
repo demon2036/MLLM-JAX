@@ -1,0 +1,24 @@
+# SOP: Inspect duplicated utilities across plugins/sft and plugins/training
+
+- **Title**: Inspect duplicated utilities across plugins/sft and plugins/training
+- **Prereqs**: Linux shell with `rg` available; repo checkout
+- **Steps**:
+  - `rg --files plugins/sft plugins/training`
+  - `sed -n '1,200p' plugins/sft/config.py`
+  - `sed -n '1,200p' plugins/training/config.py`
+  - `rg -n "wandb" plugins/sft plugins/training`
+  - `sed -n '1,200p' plugins/sft/wandb_utils.py`
+  - `sed -n '1,140p' plugins/training/runner/grpo_gsm8k.py`
+  - `rg -n "checkpoint" plugins/sft plugins/training`
+  - `sed -n '1,200p' plugins/sft/jax/checkpoint.py`
+  - `sed -n '1,200p' plugins/training/mesh.py`
+  - `rg -n "mesh" plugins/sft`
+  - `rg -n "tokenizer" plugins/sft`
+  - `rg -n "token" plugins/training`
+  - `sed -n '430,560p' plugins/training/runner/grpo_gsm8k.py`
+  - `sed -n '180,260p' plugins/sft/runner/sid_sft.py`
+  - `sed -n '1,200p' plugins/sft/datasets/tokenizer_utils.py`
+  - `sed -n '1,200p' plugins/training/rollout/sampling.py`
+- **Expected Result**: Identify duplicated utilities (config loader, W&B init), shared mesh helper usage, and confirm which utilities are unique to a plugin.
+- **Troubleshooting**: None.
+- **References**: None.

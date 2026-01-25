@@ -1,0 +1,25 @@
+# SOP: Inspect loader + sampler stack (SFT vs GRPO)
+
+- **Prereqs**: Repo checkout on a local Linux shell; no Python/JAX runtime needed (read-only inspection).
+- **Steps**:
+  - `rg --files MLLM_JAX/sample plugins/training/rollout plugins/sft | sort`
+  - `sed -n '1,200p' MLLM_JAX/sample/sample_state_right_padding2.py`
+  - `sed -n '1,260p' plugins/training/rollout/sampling.py`
+  - `sed -n '1,260p' plugins/sft/runner/sid_sft.py`
+  - `sed -n '1,240p' plugins/common/hf_safetensors.py`
+  - `sed -n '1,220p' plugins/sft/hf_safetensors.py`
+  - `sed -n '1,240p' plugins/sft/jax/beam_search.py`
+  - `sed -n '1,200p' plugins/training/ppo/state.py`
+  - `sed -n '1,220p' training2.py`
+- **Expected Result**: You can list where SFT and GRPO load model/config/tokenizer/params, and where sampling is implemented (beam search for SFT eval vs Sampler.generate for GRPO rollout).
+- **Troubleshooting**:
+  - If `rg` is unavailable, use `find`/`git grep` to locate files.
+- **References**:
+  - `MLLM_JAX/sample/sample_state_right_padding2.py`
+  - `plugins/training/rollout/sampling.py`
+  - `plugins/sft/runner/sid_sft.py`
+  - `plugins/common/hf_safetensors.py`
+  - `plugins/sft/hf_safetensors.py`
+  - `plugins/sft/jax/beam_search.py`
+  - `plugins/training/ppo/state.py`
+  - `training2.py`

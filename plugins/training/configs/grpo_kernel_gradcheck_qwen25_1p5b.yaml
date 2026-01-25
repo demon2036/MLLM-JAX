@@ -6,7 +6,7 @@ model_path: Qwen/Qwen2.5-1.5B-Instruct
 mesh_shape: 1,-1,1
 
 batch_size: 1
-seq_len: 64
+seq_len: 33
 seed: 0
 
 epsilon_low: 0.2
@@ -15,7 +15,7 @@ temperature: 1.0
 old_logp_noise_scale: 0.3
 
 kernel:
-  block_size: 2048
+  block_size: 1024
 
 tolerances:
   loss_atol: 1.0e-4
@@ -25,4 +25,3 @@ tolerances:
 wandb_project: mllm-jax-grpo-kernel
 wandb_mode: online
 wandb_name: grpo_kernel_gradcheck_qwen25_1p5b
-

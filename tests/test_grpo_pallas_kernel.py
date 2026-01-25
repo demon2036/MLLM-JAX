@@ -13,7 +13,7 @@ def test_grpo_pallas_kernel_matches_reference_forward_and_backward():
 
     batch = 2
     time = 3
-    vocab = 16
+    vocab = 15
 
     logits = jax.random.normal(key, (batch, time, vocab), dtype=jnp.float32)
     chosen_ids = jax.random.randint(key, (batch, time), 0, vocab, dtype=jnp.int32)
@@ -82,4 +82,3 @@ def test_grpo_pallas_kernel_matches_reference_forward_and_backward():
     grad_k = jax.grad(loss_k_fn)(logits).astype(jnp.float32)
 
     assert jnp.max(jnp.abs(grad_ref - grad_k)) < 1e-5
-

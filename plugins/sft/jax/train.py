@@ -75,7 +75,6 @@ def run_sft_train(
         learning_rate=float(learning_rate),
         weight_decay=float(weight_decay),
         grad_accum_steps=int(grad_accum_steps),
-        training_steps=int(max_steps),
         warmup_steps=int(warmup_steps),
     )
 

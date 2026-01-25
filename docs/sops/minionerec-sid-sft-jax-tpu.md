@@ -54,6 +54,9 @@
   - SID eval now pads prompts to the global max prompt length and JIT-compiles once (vector `prompt_true_len`, no prompt-length bucketing). If eval is still slow:
     - For smoke: reduce `data.sample_test` (already `8` in `plugins/sft/configs/sid_sft_jax_smoke_qwen25_1p5b_instruct_industrial_tpu.yaml`).
     - Reduce `data.max_len` / `jax.max_cache_length` / `eval.num_beams` / `eval.batch_size` to cut compile + decode cost.
+- Can't find `eval_predictions.json` after a multi-host run:
+  - Artifacts are written by the coordinator process (`jax.process_index()==0`), which is not guaranteed to be TPU worker `0`.
+  - Check on all workers: `scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone "$ZONE" --worker all --command 'cd /root/MLLM-JAX; ls -la runs/<output_dir>'`
 - `ValueError ... global size ... should be divisible by ...` when placing params:
   - Ensure you are on a recent `minionerec` that prints `[sft] pad_vocab_size ...` (this repo pads vocab to be divisible by `fsdp*tp` and resizes embedding/lm_head).
 - Constrained decoding not working (CC > 0 in `calc.py`):

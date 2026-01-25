@@ -1,15 +1,15 @@
 backend: tpu
 # Official MiniOneRec Office checkpoint (HF repo subfolder).
-# Download it first (e.g. on TPU): `huggingface_hub.snapshot_download(... allow_patterns=["Office_ckpt/*"] ...)`
+# Float32 eval experiment: helps diagnose paper/torch alignment drift.
 base_model: workdir/hf_ckpts/kkknight_MiniOneRec/Office_ckpt
-output_dir: runs/sid_sft_jax_eval_official_minionerec_office_ckpt
+output_dir: runs/sid_sft_jax_eval_official_minionerec_office_ckpt_f32
 seed: 42
 device: tpu
 
 jax:
   mesh_shape: "auto"
-  param_dtype: bfloat16
-  compute_dtype: bfloat16
+  param_dtype: float32
+  compute_dtype: float32
   max_cache_length: 512
 
 data:
@@ -67,3 +67,4 @@ wandb:
   project: minionerec-sid-sft
   mode: online
   name: null
+

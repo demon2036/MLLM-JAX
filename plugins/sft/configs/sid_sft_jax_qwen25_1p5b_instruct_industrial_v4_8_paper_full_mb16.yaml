@@ -1,6 +1,6 @@
 backend: tpu
-base_model: Qwen/Qwen2.5-1.5B
-output_dir: runs/sid_sft_jax_qwen25_1p5b_base_industrial_v6e8_full
+base_model: Qwen/Qwen2.5-1.5B-Instruct
+output_dir: runs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v4_8_paper_full_mb16
 seed: 42
 device: tpu
 
@@ -29,6 +29,7 @@ tasks:
   fusion_seq_rec: true
 
 train:
+  # Faster setting: micro=16 => global_micro=64 on v4-8 auto-mesh (FSDP=4), so grad_accum=16 for global_bs=1024.
   per_device_train_batch_size: 16
   per_device_eval_batch_size: 1
   global_batch_size: 1024
@@ -53,7 +54,7 @@ train:
 
 eval:
   enabled: true
-  batch_size: 1
+  batch_size: 2
   num_beams: 50
   max_new_tokens: 32
   length_penalty: 0.0

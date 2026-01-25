@@ -1,23 +1,25 @@
 backend: tpu
-base_model: Qwen/Qwen2.5-1.5B
-output_dir: runs/sid_sft_jax_qwen25_1p5b_base_industrial_v6e8_full
+# Official MiniOneRec Office checkpoint (HF repo subfolder).
+# DP-only mesh (no FSDP/TP vocab padding) for paper-alignment experiments.
+base_model: workdir/hf_ckpts/kkknight_MiniOneRec/Office_ckpt
+output_dir: runs/sid_sft_jax_eval_official_minionerec_office_ckpt_dp4
 seed: 42
 device: tpu
 
 jax:
-  mesh_shape: "auto"
+  mesh_shape: "4,1,1"
   param_dtype: bfloat16
   compute_dtype: bfloat16
   max_cache_length: 512
 
 data:
-  category: Industrial_and_Scientific
-  train_file: workdir/MiniOneRec/data/Amazon/train/Industrial_and_Scientific_5_2016-10-2018-11.csv
-  eval_file: workdir/MiniOneRec/data/Amazon/valid/Industrial_and_Scientific_5_2016-10-2018-11.csv
-  test_file: workdir/MiniOneRec/data/Amazon/test/Industrial_and_Scientific_5_2016-10-2018-11.csv
-  info_file: workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt
-  sid_index_path: workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.index.json
-  item_meta_path: workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.item.json
+  category: Office_Products
+  train_file: workdir/MiniOneRec/data/Amazon/train/Office_Products_5_2016-10-2018-11.csv
+  eval_file: workdir/MiniOneRec/data/Amazon/valid/Office_Products_5_2016-10-2018-11.csv
+  test_file: workdir/MiniOneRec/data/Amazon/test/Office_Products_5_2016-10-2018-11.csv
+  info_file: workdir/MiniOneRec/data/Amazon/info/Office_Products_5_2016-10-2018-11.txt
+  sid_index_path: workdir/MiniOneRec/data/Amazon/index/Office_Products.index.json
+  item_meta_path: workdir/MiniOneRec/data/Amazon/index/Office_Products.item.json
   max_len: 512
   sample_train: -1
   sample_eval: -1
@@ -37,12 +39,12 @@ train:
   weight_decay: 0.0
   num_train_epochs: 10
   max_steps: -1
-  warmup_steps: 20
+  warmup_steps: 0
   logging_steps: 1
   eval_steps: 0
   save_steps: 0
   save_total_limit: 0
-  save_last: true
+  save_last: false
   group_by_length: false
   freeze_LLM: false
   train_from_scratch: false
@@ -53,7 +55,7 @@ train:
 
 eval:
   enabled: true
-  batch_size: 1
+  batch_size: 2
   num_beams: 50
   max_new_tokens: 32
   length_penalty: 0.0
@@ -65,3 +67,4 @@ wandb:
   project: minionerec-sid-sft
   mode: online
   name: null
+

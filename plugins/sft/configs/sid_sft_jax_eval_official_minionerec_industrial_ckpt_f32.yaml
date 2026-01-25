@@ -1,13 +1,15 @@
 backend: tpu
-base_model: Qwen/Qwen2.5-1.5B
-output_dir: runs/sid_sft_jax_qwen25_1p5b_base_industrial_v6e8_full
+# Official MiniOneRec Industrial checkpoint (HF repo subfolder).
+# Float32 eval experiment: helps diagnose paper/torch alignment drift.
+base_model: workdir/hf_ckpts/kkknight_MiniOneRec/Industrial_ckpt
+output_dir: runs/sid_sft_jax_eval_official_minionerec_industrial_ckpt_f32
 seed: 42
 device: tpu
 
 jax:
   mesh_shape: "auto"
-  param_dtype: bfloat16
-  compute_dtype: bfloat16
+  param_dtype: float32
+  compute_dtype: float32
   max_cache_length: 512
 
 data:
@@ -37,12 +39,12 @@ train:
   weight_decay: 0.0
   num_train_epochs: 10
   max_steps: -1
-  warmup_steps: 20
+  warmup_steps: 0
   logging_steps: 1
   eval_steps: 0
   save_steps: 0
   save_total_limit: 0
-  save_last: true
+  save_last: false
   group_by_length: false
   freeze_LLM: false
   train_from_scratch: false
@@ -53,7 +55,7 @@ train:
 
 eval:
   enabled: true
-  batch_size: 1
+  batch_size: 2
   num_beams: 50
   max_new_tokens: 32
   length_penalty: 0.0
@@ -65,3 +67,4 @@ wandb:
   project: minionerec-sid-sft
   mode: online
   name: null
+

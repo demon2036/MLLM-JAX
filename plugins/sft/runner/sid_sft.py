@@ -6,14 +6,15 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import numpy as np
-from transformers import AutoConfig, AutoTokenizer
+import torch
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from plugins.sft.datasets.concat_dataset import ConcatDataset
 from plugins.sft.datasets.eval_sid_next_item import SidNextItemEvalDataset
 from plugins.sft.datasets.fusion_seq_rec import FusionSeqRecSftDataset
 from plugins.sft.datasets.sid_item_alignment import SidItemAlignmentDataset
 from plugins.sft.datasets.sid_next_item import SidNextItemSftDataset
-from plugins.sft.jax.evaluator import evaluate_sid_next_item_jax
+from plugins.sft.jax.evaluator import SidNextItemJaxEvaluator, evaluate_sid_next_item_jax
 from plugins.sft.tokens import maybe_extend_tokenizer
 from plugins.common.wandb_utils import maybe_init_wandb
 from plugins.common.tokenizer import prepare_tokenizer
@@ -186,7 +187,6 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
     from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 
-    from plugins.common.hf_safetensors import load_hf_safetensors_state_dict
     from plugins.sft.jax.checkpoint import load_checkpoint, save_checkpoint
     from plugins.sft.jax.params import resize_lm_vocab
     from plugins.sft.jax.train import create_mesh_from_config, run_sft_train
@@ -263,9 +263,25 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
         variables = model.init(rng, input_ids=dummy, attention_mask=dummy_mask, position_ids=dummy_pos, cache=None)
         params = flax.core.unfreeze(variables["params"])
     else:
-        state_dict = load_hf_safetensors_state_dict(cfg.base_model)
+        torch_model = AutoModelForCausalLM.from_pretrained(
+            cfg.base_model,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+        )
+        state_dict = torch_model.state_dict()
         params = convert_torch_to_flax_llama(state_dict)
-        params = jax.tree_util.tree_map(lambda x: np.asarray(x), params)
+
+        def _to_numpy(x: Any) -> np.ndarray:
+            if isinstance(x, torch.Tensor):
+                x = x.detach().cpu()
+                # PyTorch cannot export bfloat16 tensors to NumPy directly.
+                if x.dtype == torch.bfloat16:
+                    x = x.to(torch.float32)
+                return x.numpy()
+            return np.asarray(x)
+
+        params = jax.tree_util.tree_map(_to_numpy, params)
+        del torch_model
 
     # Resize embeddings/lm_head for new SID tokens (+ optional padding for sharding divisibility).
     params, vocab_resize = resize_lm_vocab(params=params, new_vocab_size=int(padded_vocab_size), rng=rng)
@@ -280,6 +296,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     # Train (optional).
     state = None
     train_stats = None
+    eval_metrics = None
     if run_mode_norm in {"train", "train_eval"}:
         train_dataset = _build_train_dataset(cfg, tokenizer)
 
@@ -307,10 +324,11 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             grad_accum_steps = ga
 
         max_steps = int(cfg.train.max_steps)
+        micro = micro_per_replica * replicas
+        effective = micro * int(grad_accum_steps)
+        steps_per_epoch = int(math.ceil(len(train_dataset) / max(1, int(effective))))
+
         if max_steps <= 0:
-            micro = micro_per_replica * replicas
-            effective = micro * int(grad_accum_steps)
-            steps_per_epoch = int(math.ceil(len(train_dataset) / max(1, effective)))
             max_steps = int(math.ceil(float(cfg.train.num_train_epochs) * steps_per_epoch))
 
         save_steps = int(cfg.train.save_steps)
@@ -330,6 +348,63 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
                     except FileNotFoundError:
                         pass
 
+        evaluator = None
+        eval_every_steps = 0
+
+        # For `train_eval`, run constrained-decoding eval periodically so W&B
+        # shows metrics during training (at least once per epoch).
+        if run_mode_norm == "train_eval" and cfg.eval.enabled:
+            if int(jax.process_count()) != 1:
+                print("[eval] periodic eval requires single-process JAX; skipping epoch eval.")
+            else:
+                eval_dataset = _build_eval_dataset(cfg, tokenizer)
+                evaluator = SidNextItemJaxEvaluator(
+                    model=model,
+                    tokenizer=tokenizer,
+                    eval_dataset=eval_dataset,
+                    sid_index_path=cfg.data.sid_index_path,
+                    info_file=cfg.data.info_file,
+                    batch_size=cfg.eval.batch_size,
+                    num_beams=cfg.eval.num_beams,
+                    max_cache_length=cfg.jax.max_cache_length,
+                    topk=list(cfg.eval.topk),
+                    show_progress=False,
+                )
+                eval_every_steps = int(cfg.train.eval_steps)
+                if eval_every_steps < 0:
+                    eval_every_steps = 0
+                elif eval_every_steps == 0:
+                    eval_every_steps = int(steps_per_epoch)
+
+        def eval_cb(step: int, st: Any) -> None:
+            nonlocal eval_metrics
+            if evaluator is None:
+                return
+            if int(jax.process_index()) != 0:
+                return
+
+            epoch = float(step) / max(1.0, float(steps_per_epoch))
+            print(f"[eval] step={int(step)}/{int(max_steps)} epoch={epoch:.2f}")
+
+            output_predictions_json = None
+            if int(step) == int(max_steps) and bool(cfg.eval.save_predictions_json):
+                output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json")
+
+            _preds, metrics = evaluator.evaluate(
+                params=st.params,
+                output_predictions_json=output_predictions_json,
+            )
+            eval_metrics = metrics
+
+            if wandb is not None:
+                log = {"eval/epoch": epoch}
+                for k, v in metrics.hr.items():
+                    log[f"eval/hr@{k}"] = v
+                for k, v in metrics.ndcg.items():
+                    log[f"eval/ndcg@{k}"] = v
+                log["eval/invalid_prediction_count"] = metrics.invalid_prediction_count
+                wandb.log(log, step=int(step))
+
         state, train_stats = run_sft_train(
             mesh=mesh,
             model=model,
@@ -345,6 +420,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             max_steps=int(max_steps),
             seed=int(cfg.seed),
             logging_steps=int(cfg.train.logging_steps),
+            warmup_steps=int(cfg.train.warmup_steps),
             log_cb=(
                 (
                     lambda step, loss, effective_bs, step_time_sec: wandb.log(
@@ -360,6 +436,8 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
                 if wandb is not None
                 else None
             ),
+            eval_every_steps=int(eval_every_steps),
+            eval_cb=(eval_cb if eval_every_steps > 0 else None),
             checkpoint_every_steps=int(save_steps),
             checkpoint_cb=(checkpoint_cb if save_steps > 0 else None),
         )
@@ -379,8 +457,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             ckpt_params = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), ckpt_params)
             eval_params = jax.tree_util.tree_map(lambda x, sh: jax.device_put(jnp.asarray(x, dtype=param_dtype), sh), ckpt_params, shardings)
 
-    eval_metrics = None
-    if run_mode_norm in {"eval", "train_eval"} and cfg.eval.enabled:
+    if run_mode_norm == "train_eval" and cfg.eval.enabled and eval_metrics is None:
         if not cfg.eval.constrained:
             raise NotImplementedError("JAX evaluator currently supports only constrained=true (SID trie).")
         eval_dataset = _build_eval_dataset(cfg, tokenizer)
@@ -406,7 +483,35 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             for k, v in eval_metrics.ndcg.items():
                 log[f"eval/ndcg@{k}"] = v
             log["eval/invalid_prediction_count"] = eval_metrics.invalid_prediction_count
-            wandb.log(log)
+            wandb.log(log, step=int(getattr(state, "step", 0) or 0))
+
+    if run_mode_norm == "eval" and cfg.eval.enabled:
+        if not cfg.eval.constrained:
+            raise NotImplementedError("JAX evaluator currently supports only constrained=true (SID trie).")
+        eval_dataset = _build_eval_dataset(cfg, tokenizer)
+        output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json") if cfg.eval.save_predictions_json else None
+        _preds, eval_metrics = evaluate_sid_next_item_jax(
+            model=model,
+            params=eval_params,
+            tokenizer=tokenizer,
+            eval_dataset=eval_dataset,
+            sid_index_path=cfg.data.sid_index_path,
+            info_file=cfg.data.info_file,
+            batch_size=cfg.eval.batch_size,
+            num_beams=cfg.eval.num_beams,
+            max_cache_length=cfg.jax.max_cache_length,
+            topk=list(cfg.eval.topk),
+            output_predictions_json=output_predictions_json,
+        )
+
+        if wandb is not None:
+            log = {}
+            for k, v in eval_metrics.hr.items():
+                log[f"eval/hr@{k}"] = v
+            for k, v in eval_metrics.ndcg.items():
+                log[f"eval/ndcg@{k}"] = v
+            log["eval/invalid_prediction_count"] = eval_metrics.invalid_prediction_count
+            wandb.log(log, step=0)
 
     if wandb is not None:
         wandb.finish()

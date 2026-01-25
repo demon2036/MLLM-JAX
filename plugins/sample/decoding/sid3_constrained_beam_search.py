@@ -40,6 +40,7 @@ def constrained_beam_search_sid3(
     num_beams: int,
     max_cache_length: int,
     suffix_token_ids: Sequence[int] | None = None,
+    prompt_true_len: jax.Array | None = None,
 ) -> BeamSearchOutput:
     """Constrained beam search for 3-token SIDs.
 
@@ -47,23 +48,60 @@ def constrained_beam_search_sid3(
     generate SID tokens (t1,t2,t3) and stop (EOS is implicit for scoring/metrics).
     """
     bsz, prompt_len = prompt_input_ids.shape
+    has_prompt_true_len = prompt_true_len is not None
+
+    true_len = prompt_true_len
+    if true_len is None:
+        true_len = jnp.asarray(int(prompt_len), dtype=jnp.int32)
+    else:
+        true_len = jnp.asarray(true_len, dtype=jnp.int32)
 
     first_ids = jnp.asarray(trie.first_ids, dtype=jnp.int32)
     second_table = jnp.asarray(trie.second_table, dtype=jnp.int32)
     third_table = jnp.asarray(trie.third_table, dtype=jnp.int32)
     pad_id = int(trie.pad_id)
 
-    k = int(min(int(num_beams), int(first_ids.shape[0])))
+    n1 = int(first_ids.shape[0])
+    k = int(num_beams)
     if k <= 0:
-        raise ValueError("num_beams must be > 0 and <= number of valid first SID tokens")
+        raise ValueError("num_beams must be > 0")
+    if n1 <= 0:
+        raise ValueError("SID trie has no first-token ids")
 
     suffix = [int(x) for x in (suffix_token_ids or [])]
     suffix.append(int(trie.eos_token_id))
     max_pos = int(prompt_len) + 2 + len(suffix)
-    if int(max_cache_length) <= max_pos:
+    if not has_prompt_true_len:
+        if int(max_cache_length) <= max_pos:
+            raise ValueError(
+                f"max_cache_length too small: need > {max_pos} (prompt_len={int(prompt_len)}, suffix_len={len(suffix)})"
+            )
+    elif int(max_cache_length) < int(prompt_len):
         raise ValueError(
-            f"max_cache_length too small: need > {max_pos} (prompt_len={int(prompt_len)}, suffix_len={len(suffix)})"
+            f"max_cache_length too small: need >= {int(prompt_len)} (prompt_len={int(prompt_len)}) when using prompt_true_len"
         )
+
+    def _pad_cache_variable(cache_in: Any, prefill_length: int, target_cache_length: int, end_index: jax.Array):
+        """Like `pad_cache`, but supports per-sample end_index (vector)."""
+        end_index = jnp.asarray(end_index, dtype=jnp.int32)
+        if int(target_cache_length) == int(prefill_length):
+            for i in range(len(cache_in)):
+                cache_in[f"layer_{i}"]["end_index"] = end_index
+            return cache_in
+
+        for i in range(len(cache_in)):
+            cache_in[f"layer_{i}"]["k"] = jnp.pad(
+                cache_in[f"layer_{i}"]["k"],
+                ((0, 0), (0, 0), (0, int(target_cache_length) - int(prefill_length)), (0, 0)),
+                constant_values=0,
+            )
+            cache_in[f"layer_{i}"]["v"] = jnp.pad(
+                cache_in[f"layer_{i}"]["v"],
+                ((0, 0), (0, 0), (0, int(target_cache_length) - int(prefill_length)), (0, 0)),
+                constant_values=0,
+            )
+            cache_in[f"layer_{i}"]["end_index"] = end_index
+        return cache_in
 
     # --- Prefill ---
     attention_mask = jnp.ones((bsz, prompt_len), dtype=jnp.int32)
@@ -77,23 +115,63 @@ def constrained_beam_search_sid3(
         attention_mask=attention_mask,
         cache=cache,
     )
-    cache = pad_cache(cache, int(prompt_len), int(max_cache_length), int(prompt_len))
-    next_logits = logits[:, -1, :]  # [B, V]
+    # Reset cache end_index to the true (unpadded) prompt length so decoding
+    # overwrites any right-padding slots (and masks them out via step masks).
+    if true_len.ndim == 0:
+        cache = pad_cache(cache, int(prompt_len), int(max_cache_length), true_len)
+    elif true_len.ndim == 1:
+        cache = _pad_cache_variable(cache, int(prompt_len), int(max_cache_length), true_len)
+    else:
+        raise ValueError(f"prompt_true_len must be scalar or rank-1, got shape={true_len.shape}")
+
+    # Grab logits at the last *true* prompt token (not the right-padding).
+    if true_len.ndim == 0:
+        idx0 = jnp.clip(true_len - jnp.asarray(1, dtype=jnp.int32), 0, int(prompt_len) - 1)
+        next_logits = jnp.take(logits, idx0, axis=1)  # [B, V]
+    else:
+        idx0 = jnp.clip(true_len - jnp.asarray(1, dtype=jnp.int32), 0, int(prompt_len) - 1).astype(jnp.int32)
+        next_logits = logits[jnp.arange(bsz, dtype=jnp.int32), idx0]  # [B, V]
     log_probs0 = jax.nn.log_softmax(next_logits.astype(jnp.float32), axis=-1)
-    log_probs0_allowed = jnp.take(log_probs0, first_ids, axis=1)  # [B, N1]
-    top0_scores, top0_idx = jax.lax.top_k(log_probs0_allowed, k=k)  # [B, K]
-    tok1 = jnp.take(first_ids, top0_idx, axis=0)  # [B, K]
-    tok1_row = top0_idx.astype(jnp.int32)  # row index into second/third tables
+    # Step0 needs to support `num_beams > len(first_ids)` (e.g. Industrial has fewer
+    # unique <a_*> tokens than beam width). Match Transformers by doing a masked
+    # full-vocab top-k when needed.
+    if n1 < k:
+        vocab = int(log_probs0.shape[1])
+        first_mask = jnp.zeros((vocab,), dtype=jnp.bool_)
+        first_mask = first_mask.at[first_ids].set(True)
+        masked0 = jnp.where(first_mask[None, :], log_probs0, -jnp.inf)
+        top0_scores, tok1 = jax.lax.top_k(masked0, k=k)  # tok1 are token ids
+
+        # Map token id -> row index in `first_ids` (sorted).
+        row = jnp.searchsorted(first_ids, tok1)
+        row = jnp.clip(row, 0, n1 - 1)
+        row_tok = first_ids[row]
+        tok1_valid = tok1 == row_tok
+        tok1_row = row.astype(jnp.int32)
+        top0_scores = jnp.where(tok1_valid, top0_scores, -jnp.inf)
+    else:
+        log_probs0_allowed = jnp.take(log_probs0, first_ids, axis=1)  # [B, N1]
+        top0_scores, top0_idx = jax.lax.top_k(log_probs0_allowed, k=k)  # [B, K]
+        tok1 = jnp.take(first_ids, top0_idx, axis=0)  # [B, K]
+        tok1_row = top0_idx.astype(jnp.int32)  # row index into second/third tables
+        tok1_valid = jnp.ones_like(tok1_row, dtype=jnp.bool_)
 
     # Repeat cache for beams.
     cache_k = _repeat_for_beams(cache, k)  # [B*K, ...]
 
     # --- Step 1: score token_2 (after updating cache with token_1) ---
     tok1_flat = tok1.reshape((bsz * k,))
-    pos1 = jnp.full((bsz * k, 1), int(prompt_len), dtype=jnp.int32)
-    # Mask includes the new slot at `prompt_len` for the token we insert.
-    step1_mask = (jnp.arange(int(max_cache_length), dtype=jnp.int32) <= int(prompt_len)).astype(jnp.int32)
-    step1_mask = jnp.broadcast_to(step1_mask[None, :], (bsz * k, int(max_cache_length)))
+    if true_len.ndim == 0:
+        pos1 = jnp.zeros((bsz * k, 1), dtype=jnp.int32) + true_len
+        # Mask includes the new slot at `true_len` for the token we insert.
+        step1_mask = (jnp.arange(int(max_cache_length), dtype=jnp.int32) <= true_len).astype(jnp.int32)
+        step1_mask = jnp.broadcast_to(step1_mask[None, :], (bsz * k, int(max_cache_length)))
+    else:
+        true_len_flat = jnp.repeat(true_len, k, axis=0).astype(jnp.int32)
+        pos1 = true_len_flat[:, None]
+        step1_mask = (
+            jnp.arange(int(max_cache_length), dtype=jnp.int32)[None, :] <= true_len_flat[:, None]
+        ).astype(jnp.int32)
     logits1, cache1 = model.apply(
         {"params": params},
         input_ids=tok1_flat[:, None],
@@ -104,7 +182,9 @@ def constrained_beam_search_sid3(
     log_probs1 = jax.nn.log_softmax(logits1[:, -1, :].astype(jnp.float32), axis=-1)  # [B*K, V]
 
     # Allowed token_2 lists keyed by token_1 row index (top0_idx already indexes second_table).
+    tok1_valid_flat = tok1_valid.reshape((bsz * k,))
     allowed2 = jnp.take(second_table, tok1_row.reshape((bsz * k,)), axis=0)  # [B*K, M2]
+    allowed2 = jnp.where(tok1_valid_flat[:, None], allowed2, jnp.full_like(allowed2, int(pad_id)))
     valid2 = allowed2 != int(pad_id)
     safe2 = jnp.where(valid2, allowed2, 0).astype(jnp.int32)
     lp2 = jnp.take_along_axis(log_probs1, safe2, axis=1)
@@ -136,9 +216,19 @@ def constrained_beam_search_sid3(
 
     # --- Step 2: score token_3 ---
     tok2_flat = tok2_sel.reshape((bsz * k,))
-    pos2 = jnp.full((bsz * k, 1), int(prompt_len) + 1, dtype=jnp.int32)
-    step2_mask = (jnp.arange(int(max_cache_length), dtype=jnp.int32) <= int(prompt_len) + 1).astype(jnp.int32)
-    step2_mask = jnp.broadcast_to(step2_mask[None, :], (bsz * k, int(max_cache_length)))
+    if true_len.ndim == 0:
+        pos2 = jnp.zeros((bsz * k, 1), dtype=jnp.int32) + (true_len + jnp.asarray(1, dtype=jnp.int32))
+        step2_mask = (jnp.arange(int(max_cache_length), dtype=jnp.int32) <= (true_len + jnp.asarray(1, dtype=jnp.int32))).astype(
+            jnp.int32
+        )
+        step2_mask = jnp.broadcast_to(step2_mask[None, :], (bsz * k, int(max_cache_length)))
+    else:
+        true_len_flat = jnp.repeat(true_len, k, axis=0).astype(jnp.int32)
+        pos2 = (true_len_flat + jnp.asarray(1, dtype=jnp.int32))[:, None]
+        step2_mask = (
+            jnp.arange(int(max_cache_length), dtype=jnp.int32)[None, :]
+            <= (true_len_flat[:, None] + jnp.asarray(1, dtype=jnp.int32))
+        ).astype(jnp.int32)
     logits2, _cache2 = model.apply(
         {"params": params},
         input_ids=tok2_flat[:, None],
@@ -180,9 +270,19 @@ def constrained_beam_search_sid3(
     cache2_sel_flat = jax.tree_util.tree_map(lambda x: x.reshape((bsz * k,) + x.shape[2:]), cache2_sel)
 
     tok3_flat = tok3_final.reshape((bsz * k,))
-    pos3 = jnp.full((bsz * k, 1), int(prompt_len) + 2, dtype=jnp.int32)
-    step3_mask = (jnp.arange(int(max_cache_length), dtype=jnp.int32) <= int(prompt_len) + 2).astype(jnp.int32)
-    step3_mask = jnp.broadcast_to(step3_mask[None, :], (bsz * k, int(max_cache_length)))
+    if true_len.ndim == 0:
+        pos3 = jnp.zeros((bsz * k, 1), dtype=jnp.int32) + (true_len + jnp.asarray(2, dtype=jnp.int32))
+        step3_mask = (jnp.arange(int(max_cache_length), dtype=jnp.int32) <= (true_len + jnp.asarray(2, dtype=jnp.int32))).astype(
+            jnp.int32
+        )
+        step3_mask = jnp.broadcast_to(step3_mask[None, :], (bsz * k, int(max_cache_length)))
+    else:
+        true_len_flat = jnp.repeat(true_len, k, axis=0).astype(jnp.int32)
+        pos3 = (true_len_flat + jnp.asarray(2, dtype=jnp.int32))[:, None]
+        step3_mask = (
+            jnp.arange(int(max_cache_length), dtype=jnp.int32)[None, :]
+            <= (true_len_flat[:, None] + jnp.asarray(2, dtype=jnp.int32))
+        ).astype(jnp.int32)
     logits3, cache3 = model.apply(
         {"params": params},
         input_ids=tok3_flat[:, None],
@@ -198,9 +298,19 @@ def constrained_beam_search_sid3(
         scores_flat = scores_flat + log_probs[:, int(token_id)]
         if i == len(suffix) - 1:
             break
-        pos = jnp.full((bsz * k, 1), int(prompt_len) + 3 + i, dtype=jnp.int32)
-        step_mask = (jnp.arange(int(max_cache_length), dtype=jnp.int32) <= int(prompt_len) + 3 + i).astype(jnp.int32)
-        step_mask = jnp.broadcast_to(step_mask[None, :], (bsz * k, int(max_cache_length)))
+        if true_len.ndim == 0:
+            pos = jnp.zeros((bsz * k, 1), dtype=jnp.int32) + (true_len + jnp.asarray(3 + i, dtype=jnp.int32))
+            step_mask = (jnp.arange(int(max_cache_length), dtype=jnp.int32) <= (true_len + jnp.asarray(3 + i, dtype=jnp.int32))).astype(
+                jnp.int32
+            )
+            step_mask = jnp.broadcast_to(step_mask[None, :], (bsz * k, int(max_cache_length)))
+        else:
+            true_len_flat = jnp.repeat(true_len, k, axis=0).astype(jnp.int32)
+            pos = (true_len_flat + jnp.asarray(3 + i, dtype=jnp.int32))[:, None]
+            step_mask = (
+                jnp.arange(int(max_cache_length), dtype=jnp.int32)[None, :]
+                <= (true_len_flat[:, None] + jnp.asarray(3 + i, dtype=jnp.int32))
+            ).astype(jnp.int32)
         logits_next, cache_next = model.apply(
             {"params": params},
             input_ids=jnp.full((bsz * k, 1), int(token_id), dtype=jnp.int32),
@@ -221,4 +331,3 @@ def constrained_beam_search_sid3(
 
 
 __all__ = ["BeamSearchOutput", "constrained_beam_search_sid3"]
-

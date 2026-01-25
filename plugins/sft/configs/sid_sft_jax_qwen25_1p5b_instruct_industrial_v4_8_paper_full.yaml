@@ -1,6 +1,6 @@
 backend: tpu
-base_model: Qwen/Qwen2.5-1.5B
-output_dir: runs/sid_sft_jax_qwen25_1p5b_base_industrial_v6e8_full
+base_model: Qwen/Qwen2.5-1.5B-Instruct
+output_dir: runs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v4_8_paper_full
 seed: 42
 device: tpu
 
@@ -18,6 +18,7 @@ data:
   info_file: workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt
   sid_index_path: workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.index.json
   item_meta_path: workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.item.json
+  # Fixed padding (no length bucketing).
   max_len: 512
   sample_train: -1
   sample_eval: -1
@@ -29,7 +30,9 @@ tasks:
   fusion_seq_rec: true
 
 train:
-  per_device_train_batch_size: 16
+  # Target global batch size: 1024.
+  # TPU v4-8: JAX reports 4 devices; auto-mesh uses FSDP=4, so micro=8 => global_micro=32 and grad_accum=32.
+  per_device_train_batch_size: 8
   per_device_eval_batch_size: 1
   global_batch_size: 1024
   learning_rate: 0.0003
@@ -53,7 +56,7 @@ train:
 
 eval:
   enabled: true
-  batch_size: 1
+  batch_size: 2
   num_beams: 50
   max_new_tokens: 32
   length_penalty: 0.0

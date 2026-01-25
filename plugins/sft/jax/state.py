@@ -38,6 +38,7 @@ def create_sft_state(
     learning_rate: float,
     weight_decay: float,
     grad_accum_steps: int,
+    warmup_steps: int = 0,
     label_ignore_id: int = -100,
 ) -> SftStateBundle:
     grad_accum_steps = int(grad_accum_steps)
@@ -52,7 +53,13 @@ def create_sft_state(
         name=str(optimizer_name),
         clip_norm=1.0,
         weight_decay=float(weight_decay),
-        lr_schedule=LRScheduleConfig(type="constant", peak_value=float(learning_rate)),
+        lr_schedule=LRScheduleConfig(
+            type="warmup_linear",
+            init_value=0.0,
+            peak_value=float(learning_rate),
+            end_value=0.0,
+            warmup_steps=int(warmup_steps),
+        ),
     )
     tx = build_tx(training_steps=training_steps, cfg=tx_cfg)
 

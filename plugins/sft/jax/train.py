@@ -53,7 +53,10 @@ def run_sft_train(
     max_steps: int,
     seed: int,
     logging_steps: int,
+    warmup_steps: int = 0,
     log_cb: Callable[[int, float, int, float], None] | None = None,
+    eval_every_steps: int = 0,
+    eval_cb: Callable[[int, Any], None] | None = None,
     checkpoint_every_steps: int = 0,
     checkpoint_cb: Callable[[int, Any], None] | None = None,
 ) -> tuple[Any, SftTrainStats]:
@@ -74,6 +77,7 @@ def run_sft_train(
         learning_rate=float(learning_rate),
         weight_decay=float(weight_decay),
         grad_accum_steps=int(grad_accum_steps),
+        warmup_steps=int(warmup_steps),
     )
 
     data_sharding = NamedSharding(mesh, P(("dp", "fsdp"), None))
@@ -124,6 +128,9 @@ def run_sft_train(
 
         if checkpoint_cb is not None and int(checkpoint_every_steps) > 0 and step % int(checkpoint_every_steps) == 0:
             checkpoint_cb(int(step), bundle.state)
+
+        if eval_cb is not None and int(eval_every_steps) > 0 and step % int(eval_every_steps) == 0:
+            eval_cb(int(step), bundle.state)
 
     return bundle.state, SftTrainStats(
         steps=max_steps,

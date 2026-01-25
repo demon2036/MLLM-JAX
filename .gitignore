@@ -16,7 +16,6 @@ runs/
 # Local scratch (never commit)
 workdir/
 answers/
-memory/
 memo/
 
 # Local secrets (never commit)

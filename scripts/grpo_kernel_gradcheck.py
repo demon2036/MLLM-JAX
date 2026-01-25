@@ -236,25 +236,31 @@ def main(argv: list[str] | None = None) -> int:
     noise = jax.random.normal(key_noise, logps_seed.shape, dtype=jnp.float32) * float(cfg.old_logp_noise_scale)
     old_per_token_logps = jax.lax.stop_gradient(logps_seed + _to_device0(noise))
 
-    per_loss_ref_fwd, per_logp_ref_fwd = grpo_per_token_loss_reference(
-        logits=logits_for_loss,
-        chosen_ids=chosen_ids,
-        old_per_token_logps=old_per_token_logps,
-        advantages=advantages,
-        epsilon_low=cfg.epsilon_low,
-        epsilon_high=cfg.epsilon_high,
-        temperature=cfg.temperature,
+    fwd_ref = jax.jit(
+        lambda l: grpo_per_token_loss_reference(
+            logits=l,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+            epsilon_low=cfg.epsilon_low,
+            epsilon_high=cfg.epsilon_high,
+            temperature=cfg.temperature,
+        )
+    )
+    fwd_kernel = jax.jit(
+        lambda l: grpo_per_token_loss_pallas(
+            logits=l,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+            cfg=cfg.kernel,
+            interpret=False,
+            debug=False,
+        )
     )
 
-    per_loss_kernel_fwd, per_logp_kernel_fwd = grpo_per_token_loss_pallas(
-        logits=logits_for_loss,
-        chosen_ids=chosen_ids,
-        old_per_token_logps=old_per_token_logps,
-        advantages=advantages,
-        cfg=cfg.kernel,
-        interpret=False,
-        debug=False,
-    )
+    per_loss_ref_fwd, per_logp_ref_fwd = fwd_ref(logits_for_loss)
+    per_loss_kernel_fwd, per_logp_kernel_fwd = fwd_kernel(logits_for_loss)
 
     fwd_loss_ref = float(jnp.asarray((per_loss_ref_fwd * mask_loss).sum() / (denom + 1e-8)))
     fwd_loss_kernel = float(jnp.asarray((per_loss_kernel_fwd * mask_loss).sum() / (denom + 1e-8)))

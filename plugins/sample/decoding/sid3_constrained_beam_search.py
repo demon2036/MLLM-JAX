@@ -64,6 +64,12 @@ def constrained_beam_search_sid3(
     second_table = jnp.asarray(trie.second_table, dtype=jnp.int32)
     third_table = jnp.asarray(trie.third_table, dtype=jnp.int32)
     pad_id = int(trie.pad_id)
+    vocab_size = int(trie.vocab_size)
+
+    def _log_softmax(logits: jax.Array) -> jax.Array:
+        if int(logits.shape[-1]) > int(vocab_size):
+            logits = logits[..., : int(vocab_size)]
+        return jax.nn.log_softmax(logits.astype(jnp.float32), axis=-1)
 
     n1 = int(first_ids.shape[0])
     k = int(num_beams)
@@ -100,7 +106,7 @@ def constrained_beam_search_sid3(
     # Grab logits at the last *true* prompt token (not the right-padding).
     idx0 = jnp.clip(true_len - jnp.asarray(1, dtype=jnp.int32), 0, int(prompt_len) - 1).astype(jnp.int32)
     next_logits = logits[jnp.arange(bsz, dtype=jnp.int32), idx0]  # [B, V]
-    log_probs0 = jax.nn.log_softmax(next_logits.astype(jnp.float32), axis=-1)
+    log_probs0 = _log_softmax(next_logits)
     # Step0 needs to support `num_beams > len(first_ids)` (e.g. Industrial has fewer
     # unique <a_*> tokens than beam width). Match Transformers by doing a masked
     # full-vocab top-k when needed.
@@ -143,7 +149,7 @@ def constrained_beam_search_sid3(
         attention_mask=step1_mask,
         cache=cache_k,
     )
-    log_probs1 = jax.nn.log_softmax(logits1[:, -1, :].astype(jnp.float32), axis=-1)  # [B*K, V]
+    log_probs1 = _log_softmax(logits1[:, -1, :])  # [B*K, V]
 
     # Allowed token_2 lists keyed by token_1 row index (top0_idx already indexes second_table).
     tok1_valid_flat = tok1_valid.reshape((bsz * k,))
@@ -189,7 +195,7 @@ def constrained_beam_search_sid3(
         attention_mask=step2_mask,
         cache=cache1_sel_flat,
     )
-    log_probs2 = jax.nn.log_softmax(logits2[:, -1, :].astype(jnp.float32), axis=-1)  # [B*K, V]
+    log_probs2 = _log_softmax(logits2[:, -1, :])  # [B*K, V]
 
     tok1_row_flat = tok1_row_sel.reshape((bsz * k,))
     tok2_col_flat = tok2_col_sel.reshape((bsz * k,))
@@ -236,7 +242,7 @@ def constrained_beam_search_sid3(
     )
 
     scores_flat = top2_scores.reshape((bsz * k,))
-    log_probs = jax.nn.log_softmax(logits3[:, -1, :].astype(jnp.float32), axis=-1)
+    log_probs = _log_softmax(logits3[:, -1, :])
     cache_cur = cache3
     mask_cur = step3_mask
     for i, token_id in enumerate(suffix):
@@ -253,7 +259,7 @@ def constrained_beam_search_sid3(
             cache=cache_cur,
         )
         cache_cur = cache_next
-        log_probs = jax.nn.log_softmax(logits_next[:, -1, :].astype(jnp.float32), axis=-1)
+        log_probs = _log_softmax(logits_next[:, -1, :])
 
     final_scores = scores_flat.reshape((bsz, k))
     sorted_scores, sorted_idx = jax.lax.top_k(final_scores, k=k)

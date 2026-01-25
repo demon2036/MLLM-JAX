@@ -82,7 +82,7 @@ def test_sid_sft_train_eval_smoke(tmp_path: Path):
         attention_bias=True,
     )
     model = LlamaForCausalLM(config)
-    model.save_pretrained(model_dir)
+    model.save_pretrained(model_dir, safe_serialization=True)
 
     # --- run ---
     cfg = SidSftConfig(

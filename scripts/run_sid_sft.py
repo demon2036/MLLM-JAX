@@ -15,6 +15,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from plugins.common.env import load_dotenv_if_present
 from plugins.sft.config import DEFAULT_CONFIG, load_config
 from plugins.sft.runner.sid_sft import (
     SidSftConfig,
@@ -26,28 +27,6 @@ from plugins.sft.runner.sid_sft import (
     SidSftWandbConfig,
     run_sid_sft,
 )
-
-
-def _load_dotenv_if_present() -> None:
-    candidates = [
-        os.path.join(REPO_ROOT, ".env"),
-        "/root/.env",
-    ]
-    for path in candidates:
-        if not os.path.isfile(path):
-            continue
-        with open(path, "r", encoding="utf-8") as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                k = k.strip()
-                v = v.strip().strip('"').strip("'")
-                existing = os.environ.get(k)
-                if existing is None or str(existing).strip() == "":
-                    os.environ[k] = v
-        return
 
 
 def _maybe_git_short_sha() -> str | None:
@@ -183,7 +162,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
 
 
 def main() -> None:
-    _load_dotenv_if_present()
+    load_dotenv_if_present(repo_root=REPO_ROOT)
 
     parser = ArgumentParser(description="Run MiniOneRec SID SFT (plugins/sft).")
     parser.add_argument("--config", type=str, default=None, help="Path to a YAML config file.")

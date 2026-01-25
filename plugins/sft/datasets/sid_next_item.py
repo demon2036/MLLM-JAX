@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from torch.utils.data import Dataset
-
 from plugins.sft.datasets.csv_utils import parse_sid_example, read_csv_rows, sample_rows
 from plugins.sft.datasets.tokenizer_utils import TokenizerAdapter, encode_supervised_example
 
@@ -35,7 +33,7 @@ class SidNextItemSftExample:
     completion: str
 
 
-class SidNextItemSftDataset(Dataset):
+class SidNextItemSftDataset:
     """Next-item prediction in SID space (MiniOneRec SFT core task)."""
 
     def __init__(
@@ -95,4 +93,3 @@ class SidNextItemSftDataset(Dataset):
         prompts = [e.prompt for e in self._examples]
         targets = [e.completion for e in self._examples]
         return prompts, targets
-

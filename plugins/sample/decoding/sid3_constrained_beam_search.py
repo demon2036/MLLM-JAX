@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Sequence
+
+import jax
+import jax.numpy as jnp
+
+from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache
+
+from plugins.sample.constraints.sid_trie import SidTrie
+
+
+@dataclass(frozen=True)
+class BeamSearchOutput:
+    token_ids: jax.Array  # int32 [B, K, 3]
+    scores: jax.Array  # float32 [B, K]
+
+
+def _repeat_for_beams(tree: Any, repeats: int) -> Any:
+    return jax.tree_util.tree_map(lambda x: jnp.repeat(x, repeats, axis=0), tree)
+
+
+def _gather_beams(tree: Any, parent: jax.Array) -> Any:
+    """Gather beam axis=1 using per-sample parent indices."""
+
+    def gather_leaf(x: jax.Array) -> jax.Array:
+        # x: [B, K, ...], parent: [B, K]
+        return jax.vmap(lambda xb, pb: xb[pb])(x, parent)
+
+    return jax.tree_util.tree_map(gather_leaf, tree)
+
+
+def constrained_beam_search_sid3(
+    *,
+    model: Any,
+    params: Any,
+    prompt_input_ids: jax.Array,  # int32 [B, L]
+    trie: SidTrie,
+    num_beams: int,
+    max_cache_length: int,
+    suffix_token_ids: Sequence[int] | None = None,
+) -> BeamSearchOutput:
+    """Constrained beam search for 3-token SIDs.
+
+    Assumes prompts already end with `### Response:\\n` (MiniOneRec format), so we only
+    generate SID tokens (t1,t2,t3) and stop (EOS is implicit for scoring/metrics).
+    """
+    bsz, prompt_len = prompt_input_ids.shape
+
+    first_ids = jnp.asarray(trie.first_ids, dtype=jnp.int32)
+    second_table = jnp.asarray(trie.second_table, dtype=jnp.int32)
+    third_table = jnp.asarray(trie.third_table, dtype=jnp.int32)
+    pad_id = int(trie.pad_id)
+
+    k = int(min(int(num_beams), int(first_ids.shape[0])))
+    if k <= 0:
+        raise ValueError("num_beams must be > 0 and <= number of valid first SID tokens")
+
+    suffix = [int(x) for x in (suffix_token_ids or [])]
+    suffix.append(int(trie.eos_token_id))
+    max_pos = int(prompt_len) + 2 + len(suffix)
+    if int(max_cache_length) <= max_pos:
+        raise ValueError(
+            f"max_cache_length too small: need > {max_pos} (prompt_len={int(prompt_len)}, suffix_len={len(suffix)})"
+        )
+
+    # --- Prefill ---
+    attention_mask = jnp.ones((bsz, prompt_len), dtype=jnp.int32)
+    position_ids = jnp.arange(prompt_len, dtype=jnp.int32)[None, :]
+    # Prefill cache must match prompt length for the model's n>1 attention mask path.
+    cache = init_cache(model.config, int(bsz), max_cache_length=int(prompt_len), dtype=jnp.bfloat16)
+    logits, cache = model.apply(
+        {"params": params},
+        input_ids=prompt_input_ids,
+        position_ids=position_ids,
+        attention_mask=attention_mask,
+        cache=cache,
+    )
+    cache = pad_cache(cache, int(prompt_len), int(max_cache_length), int(prompt_len))
+    next_logits = logits[:, -1, :]  # [B, V]
+    log_probs0 = jax.nn.log_softmax(next_logits.astype(jnp.float32), axis=-1)
+    log_probs0_allowed = jnp.take(log_probs0, first_ids, axis=1)  # [B, N1]
+    top0_scores, top0_idx = jax.lax.top_k(log_probs0_allowed, k=k)  # [B, K]
+    tok1 = jnp.take(first_ids, top0_idx, axis=0)  # [B, K]
+    tok1_row = top0_idx.astype(jnp.int32)  # row index into second/third tables
+
+    # Repeat cache for beams.
+    cache_k = _repeat_for_beams(cache, k)  # [B*K, ...]
+
+    # --- Step 1: score token_2 (after updating cache with token_1) ---
+    tok1_flat = tok1.reshape((bsz * k,))
+    pos1 = jnp.full((bsz * k, 1), int(prompt_len), dtype=jnp.int32)
+    # Mask includes the new slot at `prompt_len` for the token we insert.
+    step1_mask = (jnp.arange(int(max_cache_length), dtype=jnp.int32) <= int(prompt_len)).astype(jnp.int32)
+    step1_mask = jnp.broadcast_to(step1_mask[None, :], (bsz * k, int(max_cache_length)))
+    logits1, cache1 = model.apply(
+        {"params": params},
+        input_ids=tok1_flat[:, None],
+        position_ids=pos1,
+        attention_mask=step1_mask,
+        cache=cache_k,
+    )
+    log_probs1 = jax.nn.log_softmax(logits1[:, -1, :].astype(jnp.float32), axis=-1)  # [B*K, V]
+
+    # Allowed token_2 lists keyed by token_1 row index (top0_idx already indexes second_table).
+    allowed2 = jnp.take(second_table, tok1_row.reshape((bsz * k,)), axis=0)  # [B*K, M2]
+    valid2 = allowed2 != int(pad_id)
+    safe2 = jnp.where(valid2, allowed2, 0).astype(jnp.int32)
+    lp2 = jnp.take_along_axis(log_probs1, safe2, axis=1)
+    lp2 = jnp.where(valid2, lp2, -jnp.inf)
+
+    scores1 = top0_scores.reshape((bsz * k, 1)) + lp2  # [B*K, M2]
+    m2 = int(scores1.shape[1])
+    scores1 = scores1.reshape((bsz, k * m2))
+    top1_scores, top1_idx = jax.lax.top_k(scores1, k=k)  # [B, K]
+    parent1 = (top1_idx // m2).astype(jnp.int32)  # [B, K]
+    off1 = (top1_idx % m2).astype(jnp.int32)  # [B, K]
+
+    # Gather token_1 and token_2 for selected beams.
+    tok1_sel = jnp.take_along_axis(tok1, parent1, axis=1)  # [B, K]
+    tok1_row_sel = jnp.take_along_axis(tok1_row, parent1, axis=1)  # [B, K]
+    tok2_col_sel = off1  # [B, K]
+    allowed2_3d = allowed2.reshape((bsz, k, m2))
+
+    def _select_tok2(allowed_b, parent_b, off_b):
+        chosen = allowed_b[parent_b]  # [K, M2]
+        return jnp.take_along_axis(chosen, off_b[:, None], axis=1)[:, 0]
+
+    tok2_sel = jax.vmap(_select_tok2)(allowed2_3d, parent1, off1)
+
+    # Gather caches after token_1 for selected beams (may duplicate parents).
+    cache1_reshaped = jax.tree_util.tree_map(lambda x: x.reshape((bsz, k) + x.shape[1:]), cache1)
+    cache1_sel = _gather_beams(cache1_reshaped, parent1)
+    cache1_sel_flat = jax.tree_util.tree_map(lambda x: x.reshape((bsz * k,) + x.shape[2:]), cache1_sel)
+
+    # --- Step 2: score token_3 ---
+    tok2_flat = tok2_sel.reshape((bsz * k,))
+    pos2 = jnp.full((bsz * k, 1), int(prompt_len) + 1, dtype=jnp.int32)
+    step2_mask = (jnp.arange(int(max_cache_length), dtype=jnp.int32) <= int(prompt_len) + 1).astype(jnp.int32)
+    step2_mask = jnp.broadcast_to(step2_mask[None, :], (bsz * k, int(max_cache_length)))
+    logits2, _cache2 = model.apply(
+        {"params": params},
+        input_ids=tok2_flat[:, None],
+        position_ids=pos2,
+        attention_mask=step2_mask,
+        cache=cache1_sel_flat,
+    )
+    log_probs2 = jax.nn.log_softmax(logits2[:, -1, :].astype(jnp.float32), axis=-1)  # [B*K, V]
+
+    tok1_row_flat = tok1_row_sel.reshape((bsz * k,))
+    tok2_col_flat = tok2_col_sel.reshape((bsz * k,))
+    allowed3 = third_table[tok1_row_flat, tok2_col_flat]  # [B*K, M3]
+    valid3 = allowed3 != int(pad_id)
+    safe3 = jnp.where(valid3, allowed3, 0).astype(jnp.int32)
+    lp3 = jnp.take_along_axis(log_probs2, safe3, axis=1)
+    lp3 = jnp.where(valid3, lp3, -jnp.inf)
+
+    scores2 = top1_scores.reshape((bsz * k, 1)) + lp3  # [B*K, M3]
+    m3 = int(scores2.shape[1])
+    scores2 = scores2.reshape((bsz, k * m3))
+    top2_scores, top2_idx = jax.lax.top_k(scores2, k=k)  # [B, K]
+    parent2 = (top2_idx // m3).astype(jnp.int32)  # [B, K]
+    off2 = (top2_idx % m3).astype(jnp.int32)  # [B, K]
+
+    tok1_final = jnp.take_along_axis(tok1_sel, parent2, axis=1)
+    tok2_final = jnp.take_along_axis(tok2_sel, parent2, axis=1)
+    allowed3_3d = allowed3.reshape((bsz, k, m3))
+
+    def _select_tok3(allowed_b, parent_b, off_b):
+        chosen = allowed_b[parent_b]  # [K, M3]
+        return jnp.take_along_axis(chosen, off_b[:, None], axis=1)[:, 0]
+
+    tok3_final = jax.vmap(_select_tok3)(allowed3_3d, parent2, off2)
+
+    # --- Score deterministic suffix tokens + EOS (align with HF generate) ---
+    cache2 = _cache2
+    cache2_reshaped = jax.tree_util.tree_map(lambda x: x.reshape((bsz, k) + x.shape[1:]), cache2)
+    cache2_sel = _gather_beams(cache2_reshaped, parent2)
+    cache2_sel_flat = jax.tree_util.tree_map(lambda x: x.reshape((bsz * k,) + x.shape[2:]), cache2_sel)
+
+    tok3_flat = tok3_final.reshape((bsz * k,))
+    pos3 = jnp.full((bsz * k, 1), int(prompt_len) + 2, dtype=jnp.int32)
+    step3_mask = (jnp.arange(int(max_cache_length), dtype=jnp.int32) <= int(prompt_len) + 2).astype(jnp.int32)
+    step3_mask = jnp.broadcast_to(step3_mask[None, :], (bsz * k, int(max_cache_length)))
+    logits3, cache3 = model.apply(
+        {"params": params},
+        input_ids=tok3_flat[:, None],
+        position_ids=pos3,
+        attention_mask=step3_mask,
+        cache=cache2_sel_flat,
+    )
+
+    scores_flat = top2_scores.reshape((bsz * k,))
+    log_probs = jax.nn.log_softmax(logits3[:, -1, :].astype(jnp.float32), axis=-1)
+    cache_cur = cache3
+    for i, token_id in enumerate(suffix):
+        scores_flat = scores_flat + log_probs[:, int(token_id)]
+        if i == len(suffix) - 1:
+            break
+        pos = jnp.full((bsz * k, 1), int(prompt_len) + 3 + i, dtype=jnp.int32)
+        step_mask = (jnp.arange(int(max_cache_length), dtype=jnp.int32) <= int(prompt_len) + 3 + i).astype(jnp.int32)
+        step_mask = jnp.broadcast_to(step_mask[None, :], (bsz * k, int(max_cache_length)))
+        logits_next, cache_next = model.apply(
+            {"params": params},
+            input_ids=jnp.full((bsz * k, 1), int(token_id), dtype=jnp.int32),
+            position_ids=pos,
+            attention_mask=step_mask,
+            cache=cache_cur,
+        )
+        cache_cur = cache_next
+        log_probs = jax.nn.log_softmax(logits_next[:, -1, :].astype(jnp.float32), axis=-1)
+
+    final_scores = scores_flat.reshape((bsz, k))
+    sorted_scores, sorted_idx = jax.lax.top_k(final_scores, k=k)
+
+    tokens = jnp.stack([tok1_final, tok2_final, tok3_final], axis=-1).astype(jnp.int32)
+    idx = jnp.broadcast_to(sorted_idx[..., None], tokens.shape)
+    tokens_sorted = jnp.take_along_axis(tokens, idx, axis=1)
+    return BeamSearchOutput(token_ids=tokens_sorted, scores=sorted_scores)
+
+
+__all__ = ["BeamSearchOutput", "constrained_beam_search_sid3"]
+

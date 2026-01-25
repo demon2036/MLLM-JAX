@@ -13,8 +13,8 @@ from transformers import AutoConfig, AutoTokenizer
 
 from MLLM_JAX.language.llama.llama import LlamaJaxConfig
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
-from MLLM_JAX.sample.sample_state_right_padding2 import Sampler, get_params
 from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
+from plugins.sample.mllm_sampler import Sampler, get_params
 from plugins.training.algorithms import UpdateConfig
 from plugins.training.ppo.module import PPOActorCriticModule
 

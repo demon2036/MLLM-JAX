@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from torch.utils.data import Dataset
-
 from plugins.sft.datasets.tokenizer_utils import TokenizerAdapter, encode_supervised_example
 
 
@@ -46,7 +44,7 @@ def _format_prompt(task: TaskName, *, text: str) -> str:
 ### Response:\n"""
 
 
-class SidItemAlignmentDataset(Dataset):
+class SidItemAlignmentDataset:
     """SID↔title alignment tasks used during SFT (language grounding)."""
 
     def __init__(
@@ -111,4 +109,3 @@ class SidItemAlignmentDataset(Dataset):
         if self._encoded is not None:
             return self._encoded[idx]
         return self._encode(self._examples[idx])
-

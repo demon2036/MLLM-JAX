@@ -15,7 +15,7 @@ from flax.training import train_state
 
 from MLLM_JAX.train_modules import TrainGRPOModule
 from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama
-from MLLM_JAX.sample.sample_state_right_padding2 import get_model, Sampler
+from plugins.sample.mllm_sampler import Sampler, get_model
 # from sample_state_left_padding import get_model, Sampler
 import jax.numpy as jnp
 from math_verify import parse, verify, ExprExtractionConfig

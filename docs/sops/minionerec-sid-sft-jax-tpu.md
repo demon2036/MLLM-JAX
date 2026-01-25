@@ -50,6 +50,9 @@
 
 - TPU busy / `libtpu_lockfile`:
   - Stop the existing job and remove lock: `rm -f /tmp/libtpu_lockfile`
+- Multi-host `jax.distributed.initialize()` failures (e.g. `DEADLINE_EXCEEDED`, `ALREADY_EXISTS`, `...different incarnation...`):
+  - Restart TPU runtime on all workers, then retry:
+    - `scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone "$ZONE" --worker all --command 'set -euo pipefail; systemctl daemon-reload; systemctl restart tpu-runtime.service; systemctl is-active tpu-runtime.service'`
 - Very slow eval on TPU:
   - SID eval now pads prompts to the global max prompt length and JIT-compiles once (vector `prompt_true_len`, no prompt-length bucketing). If eval is still slow:
     - For smoke: reduce `data.sample_test` (already `8` in `plugins/sft/configs/sid_sft_jax_smoke_qwen25_1p5b_instruct_industrial_tpu.yaml`).

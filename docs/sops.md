@@ -52,6 +52,7 @@
 - GRPO runner metrics: `docs/sops/grpo-gsm8k-metrics.md`
 - GRPO length + eval knobs: `docs/sops/grpo-gsm8k-length-and-eval.md`
 - GRPO Pallas kernel gradcheck (Qwen2.5-1.5B): `docs/sops/grpo-pallas-kernel-gradcheck.md`
+- Cross-entropy Pallas kernel gradcheck (Qwen2.5-1.5B): `docs/sops/cross-entropy-pallas-kernel-gradcheck.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
 - GRPO rollout backend abstraction (naive): `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - AReaL RL organization notes (for modularizing training): `docs/sops/areal-rl-organization.md`

@@ -182,9 +182,15 @@ class SidNextItemJaxEvaluator:
                     "Sharded multi-host eval requires all processes to construct the same eval_dataset order."
                 )
 
-        if self._pad_len > self._max_cache_length:
+        # Constrained decode inserts token_1..3 after the padded prompt length, so
+        # we need a few extra cache slots beyond `pad_len`.
+        suffix_len = int(len(self._newline_suffix)) + 1  # newline suffix + EOS
+        max_pos = int(self._pad_len) + 2 + suffix_len
+        if int(self._max_cache_length) <= int(max_pos):
             raise ValueError(
-                f"max_cache_length too small for padded prompts: pad_len={self._pad_len} > max_cache_length={self._max_cache_length}"
+                "max_cache_length too small for padded prompts + constrained decode: "
+                f"need > {max_pos} (pad_len={self._pad_len}, suffix_len={suffix_len}), got {self._max_cache_length}. "
+                "Increase cfg.jax.max_cache_length or reduce cfg.data.max_len."
             )
 
         def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_lens: jax.Array):

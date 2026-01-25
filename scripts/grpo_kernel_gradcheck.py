@@ -236,6 +236,31 @@ def main(argv: list[str] | None = None) -> int:
     noise = jax.random.normal(key_noise, logps_seed.shape, dtype=jnp.float32) * float(cfg.old_logp_noise_scale)
     old_per_token_logps = jax.lax.stop_gradient(logps_seed + _to_device0(noise))
 
+    per_loss_ref_fwd, per_logp_ref_fwd = grpo_per_token_loss_reference(
+        logits=logits_for_loss,
+        chosen_ids=chosen_ids,
+        old_per_token_logps=old_per_token_logps,
+        advantages=advantages,
+        epsilon_low=cfg.epsilon_low,
+        epsilon_high=cfg.epsilon_high,
+        temperature=cfg.temperature,
+    )
+
+    per_loss_kernel_fwd, per_logp_kernel_fwd = grpo_per_token_loss_pallas(
+        logits=logits_for_loss,
+        chosen_ids=chosen_ids,
+        old_per_token_logps=old_per_token_logps,
+        advantages=advantages,
+        cfg=cfg.kernel,
+        interpret=False,
+        debug=False,
+    )
+
+    fwd_loss_ref = float(jnp.asarray((per_loss_ref_fwd * mask_loss).sum() / (denom + 1e-8)))
+    fwd_loss_kernel = float(jnp.asarray((per_loss_kernel_fwd * mask_loss).sum() / (denom + 1e-8)))
+    fwd_logp_max_abs = float(jnp.asarray(jnp.max(jnp.abs(per_logp_ref_fwd - per_logp_kernel_fwd))))
+    fwd_loss_max_abs = float(jnp.asarray(jnp.max(jnp.abs(per_loss_ref_fwd - per_loss_kernel_fwd))))
+
     def _scalar_loss_ref(l):
         per_loss, _ = grpo_per_token_loss_reference(
             logits=l,
@@ -285,6 +310,10 @@ def main(argv: list[str] | None = None) -> int:
     abs_diff_loss = abs(loss_ref_f - loss_kernel_f)
 
     metrics = {
+        "fwd/loss_ref": fwd_loss_ref,
+        "fwd/loss_kernel": fwd_loss_kernel,
+        "fwd/logp_max_abs": fwd_logp_max_abs,
+        "fwd/per_loss_max_abs": fwd_loss_max_abs,
         "loss_ref": loss_ref_f,
         "loss_kernel": loss_kernel_f,
         "abs_diff_loss": abs_diff_loss,

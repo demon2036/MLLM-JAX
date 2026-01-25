@@ -81,144 +81,26 @@ def evaluate_sid_next_item_jax(
     topk: list[int],
     output_predictions_json: str | None,
 ) -> tuple[list[list[str]], RankingMetrics]:
-    is_coordinator = int(jax.process_index()) == 0
-
-    valid_sids = load_valid_sids_from_info(info_file)
-    trie = build_sid_trie_from_index(tokenizer=tokenizer, sid_index_path=sid_index_path, eos_token_id=int(getattr(tokenizer, "eos_token_id")))
-
-    n = int(len(eval_dataset))
-    targets = list(getattr(eval_dataset, "get_targets")())
-    if len(targets) != n:
-        raise ValueError("eval_dataset.get_targets() length mismatch")
-
-    newline_suffix = _newline_suffix_token_ids(tokenizer)
-
-    try:
-        from tqdm import tqdm  # type: ignore
-    except Exception:  # pragma: no cover - optional dep
-        tqdm = None  # type: ignore[assignment]
-
-    # Precompute prompt lengths.
-    #
-    # NOTE: The underlying model cache assumes a shared `end_index` across the
-    # batch, so we still bucket by true prompt length. However, to avoid JIT
-    # recompilation per bucket, we right-pad prompts to a fixed `pad_len`
-    # (same shape for all buckets) and pass the bucket's true prompt length to
-    # the beam search as `prompt_true_len`.
-    prompt_lens = [len(eval_dataset[i]["input_ids"]) for i in range(n)]
-    if not prompt_lens:
-        raise ValueError("Empty eval_dataset")
-    pad_len = int(max(prompt_lens))
-    buckets: dict[int, list[int]] = {}
-    for i, l in enumerate(prompt_lens):
-        buckets.setdefault(int(l), []).append(i)
-
-    predictions: list[list[str]] | None = [None] * n if is_coordinator else None  # type: ignore[list-item]
-    if is_coordinator:
-        print(
-            f"[eval] samples={n} buckets={len(buckets)} batch_size={int(batch_size)} "
-            f"num_beams={int(num_beams)} max_cache_length={int(max_cache_length)} pad_len={int(pad_len)}"
-        )
-
-    def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_len: jax.Array):
-        out = constrained_beam_search_sid3(
-            model=model,
-            params=params_in,
-            prompt_input_ids=prompt_input_ids,
-            trie=trie,
-            num_beams=int(num_beams),
-            max_cache_length=int(max_cache_length),
-            suffix_token_ids=newline_suffix,
-            prompt_true_len=prompt_true_len,
-        )
-        return out.token_ids
-
-    beam_search_jit = jax.jit(_beam_search)
-    pad_token_id = int(getattr(tokenizer, "pad_token_id", 0) or 0)
-
-    compiled_once = False
-    for prompt_len, idxs in sorted(buckets.items()):
-        n_bucket = int(len(idxs))
-        chunks = (n_bucket + int(batch_size) - 1) // int(batch_size)
-        if is_coordinator:
-            print(f"[eval] prompt_len={int(prompt_len)} bucket_samples={n_bucket} chunks={chunks}")
-
-        starts = range(0, len(idxs), int(batch_size))
-        if tqdm is not None and is_coordinator:
-            starts = tqdm(starts, total=chunks, desc=f"eval len={int(prompt_len)}", mininterval=1.0)
-
-        for start in starts:
-            chunk = idxs[start : start + int(batch_size)]
-            real_chunk = int(len(chunk))
-            if real_chunk < int(batch_size):
-                chunk = chunk + [chunk[-1]] * (int(batch_size) - real_chunk)
-
-            prompt_ids = [eval_dataset[i]["input_ids"] for i in chunk]
-            # Right-pad prompts to `pad_len` so shapes stay constant across buckets.
-            prompt_np = np.full((int(batch_size), int(pad_len)), pad_token_id, dtype=np.int32)
-            for row, ids in enumerate(prompt_ids):
-                ids_np = np.asarray(ids, dtype=np.int32)
-                prompt_np[row, : ids_np.shape[0]] = ids_np
-            prompt = jnp.asarray(prompt_np, dtype=jnp.int32)
-            true_len = jnp.asarray(int(prompt_len), dtype=jnp.int32)
-
-            if not compiled_once:
-                t0 = time.perf_counter()
-                token_ids = beam_search_jit(params, prompt, true_len)
-                if is_coordinator:
-                    tok_np = np.asarray(token_ids)  # triggers compilation + blocks
-                else:
-                    token_ids.block_until_ready()
-                dt = time.perf_counter() - t0
-                compiled_once = True
-                if is_coordinator:
-                    print(f"[eval] compiled_dt={dt:.2f}s")
-            else:
-                token_ids = beam_search_jit(params, prompt, true_len)
-                if is_coordinator:
-                    tok_np = np.asarray(token_ids)  # [B, K, 3]
-                else:
-                    token_ids.block_until_ready()
-
-            if is_coordinator:
-                assert predictions is not None
-                for row, sample_idx in enumerate(chunk[:real_chunk]):
-                    preds = [_decode_sid_triplet(tokenizer, tok_np[row, b].tolist()) for b in range(tok_np.shape[1])]
-                    predictions[sample_idx] = preds
-
-    topk_list = sorted({int(k) for k in topk if int(k) > 0 and int(k) <= int(num_beams)})
-    if not topk_list:
-        raise ValueError(f"No valid topk <= num_beams={int(num_beams)}: {list(topk)}")
-
-    if is_coordinator:
-        assert predictions is not None
-        metrics = compute_hr_ndcg(predictions=predictions, targets=targets, topk=topk_list, valid_items=set(valid_sids))
-
-        if output_predictions_json:
-            payload = []
-            for target, preds in zip(targets, predictions, strict=True):
-                payload.append({"output": target, "predict": preds})
-            path = Path(output_predictions_json)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-            metrics_path = str(path.with_suffix(".metrics.json"))
-            Path(metrics_path).write_text(json.dumps(asdict(metrics), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-        metrics_vec = _pack_metrics_vec(metrics=metrics, topk_list=topk_list)
-    else:
-        metrics_vec = np.zeros((2 * len(topk_list) + 1,), dtype=np.float32)
-
-    metrics_vec = _broadcast_vec_from_process0(metrics_vec)
-    metrics_out = _unpack_metrics_vec(vec=metrics_vec, topk_list=topk_list, n_samples=n, n_beams=int(num_beams))
-    return (predictions or []), metrics_out
+    evaluator = SidNextItemJaxEvaluator(
+        model=model,
+        tokenizer=tokenizer,
+        eval_dataset=eval_dataset,
+        sid_index_path=sid_index_path,
+        info_file=info_file,
+        batch_size=int(batch_size),
+        num_beams=int(num_beams),
+        max_cache_length=int(max_cache_length),
+        topk=list(topk),
+        show_progress=False,
+    )
+    return evaluator.evaluate(params=params, output_predictions_json=output_predictions_json)
 
 
 class SidNextItemJaxEvaluator:
     """Reusable evaluator for repeated SID next-item HR/NDCG checks.
 
-    This caches the SID trie, valid-items set, dataset bucketing, and the JIT
-    compiled constrained beam-search so epoch-level eval does not recompile.
+    This caches the SID trie, valid-items set, dataset padding metadata, and the
+    JIT compiled constrained beam-search so epoch-level eval does not recompile.
     """
 
     def __init__(
@@ -267,24 +149,45 @@ class SidNextItemJaxEvaluator:
             raise ValueError("eval_dataset.get_targets() length mismatch")
         self._targets = targets
 
+        self._process_count = int(jax.process_count())
+        self._process_index = int(jax.process_index())
+
         self._pad_token_id = int(getattr(tokenizer, "pad_token_id", 0) or 0)
         prompt_lens = [len(eval_dataset[i]["input_ids"]) for i in range(n)]
+        if any(int(x) <= 0 for x in prompt_lens):
+            raise ValueError("Invalid prompt length (found <= 0)")
         pad_len = int(max(prompt_lens))
         if pad_len <= 0:
             raise ValueError("Invalid prompt length (pad_len <= 0)")
+        self._prompt_lens = [int(x) for x in prompt_lens]
         self._pad_len = pad_len
 
-        buckets: dict[int, list[int]] = {}
-        for i, l in enumerate(prompt_lens):
-            buckets.setdefault(int(l), []).append(i)
-        self._buckets = buckets
+        global_batch = int(self._batch_size) * int(self._process_count)
+        n_padded = ((int(self._n) + int(global_batch) - 1) // int(global_batch)) * int(global_batch)
+        self._local_n = int(n_padded) // int(self._process_count)
+        self._local_start = int(self._process_index) * int(self._local_n)
+
+        if int(self._process_count) > 1:
+            mid = int(self._n) // 2
+            sig = np.asarray(
+                [int(self._n), int(self._pad_len), int(self._prompt_lens[0]), int(self._prompt_lens[mid]), int(self._prompt_lens[-1])],
+                dtype=np.int32,
+            )
+            sig_all = np.asarray(process_allgather(np.asarray(sig)))
+            if sig_all.ndim != 2 or sig_all.shape[1] != sig.shape[0]:
+                raise RuntimeError(f"Unexpected process_allgather signature shape: {sig_all.shape}")
+            if not np.all(sig_all == sig_all[0]):
+                raise RuntimeError(
+                    "Eval dataset appears to differ across processes (lengths/padding mismatch). "
+                    "Sharded multi-host eval requires all processes to construct the same eval_dataset order."
+                )
 
         if self._pad_len > self._max_cache_length:
             raise ValueError(
                 f"max_cache_length too small for padded prompts: pad_len={self._pad_len} > max_cache_length={self._max_cache_length}"
             )
 
-        def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_len: jax.Array):
+        def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_lens: jax.Array):
             out = constrained_beam_search_sid3(
                 model=self._model,
                 params=params_in,
@@ -293,7 +196,7 @@ class SidNextItemJaxEvaluator:
                 num_beams=self._num_beams,
                 max_cache_length=self._max_cache_length,
                 suffix_token_ids=self._newline_suffix,
-                prompt_true_len=prompt_true_len,
+                prompt_true_len=prompt_true_lens,
             )
             return out.token_ids
 
@@ -304,11 +207,12 @@ class SidNextItemJaxEvaluator:
         if self._compiled:
             return
 
-        # Warm-up compile on the largest prompt shape; values do not matter.
+        # Warm-up compile on the padded prompt shape; values do not matter.
         prompt = jnp.full((self._batch_size, self._pad_len), self._pad_token_id, dtype=jnp.int32)
-        true_len = jnp.asarray(int(min(self._buckets.keys())), dtype=jnp.int32)
+        min_len = int(min(self._prompt_lens))
+        true_lens = jnp.full((self._batch_size,), min_len, dtype=jnp.int32)
         t0 = time.perf_counter()
-        token_ids = self._beam_search_jit(params, prompt, true_len)
+        token_ids = self._beam_search_jit(params, prompt, true_lens)
         if self._is_coordinator:
             _ = np.asarray(token_ids)  # block on compilation
         else:
@@ -333,46 +237,48 @@ class SidNextItemJaxEvaluator:
 
         predictions: list[list[str]] | None = [None] * self._n if self._is_coordinator else None  # type: ignore[list-item]
         if self._is_coordinator:
+            global_batch = int(self._batch_size) * int(self._process_count)
+            n_padded = int(self._local_n) * int(self._process_count)
             print(
-                f"[eval] samples={self._n} buckets={len(self._buckets)} batch_size={self._batch_size} "
-                f"num_beams={self._num_beams} max_cache_length={self._max_cache_length} pad_len={self._pad_len}"
+                f"[eval] samples={self._n} process_count={self._process_count} batch_size={self._batch_size} "
+                f"global_batch={global_batch} padded_samples={n_padded} num_beams={self._num_beams} "
+                f"max_cache_length={self._max_cache_length} pad_len={self._pad_len}"
             )
 
-        for prompt_len, idxs in sorted(self._buckets.items()):
-            n_bucket = int(len(idxs))
-            chunks = (n_bucket + int(self._batch_size) - 1) // int(self._batch_size)
+        starts = range(0, int(self._local_n), int(self._batch_size))
+        if self._show_progress and tqdm is not None and self._is_coordinator:
+            starts = tqdm(starts, total=int(self._local_n) // int(self._batch_size), desc="eval", mininterval=1.0)
+
+        for start in starts:
+            base = int(self._local_start) + int(start)
+            batch_indices = []
+            true_lens = np.zeros((int(self._batch_size),), dtype=np.int32)
+            for row in range(int(self._batch_size)):
+                global_i = int(base) + int(row)
+                dataset_i = int(global_i) if int(global_i) < int(self._n) else int(self._n) - 1
+                batch_indices.append(int(dataset_i))
+                true_lens[row] = int(self._prompt_lens[dataset_i])
+
+            prompt_np = np.full((int(self._batch_size), int(self._pad_len)), self._pad_token_id, dtype=np.int32)
+            for row, dataset_i in enumerate(batch_indices):
+                ids_np = np.asarray(self._eval_dataset[int(dataset_i)]["input_ids"], dtype=np.int32)
+                prompt_np[row, : ids_np.shape[0]] = ids_np
+
+            prompt = jnp.asarray(prompt_np, dtype=jnp.int32)
+            true_lens_arr = jnp.asarray(true_lens, dtype=jnp.int32)
+
+            token_ids = self._beam_search_jit(params, prompt, true_lens_arr)
+            tok_np = np.asarray(process_allgather(np.asarray(token_ids)))  # [P, B, K, 3]
+
             if self._is_coordinator:
-                print(f"[eval] prompt_len={int(prompt_len)} bucket_samples={n_bucket} chunks={chunks}")
-
-            starts = range(0, len(idxs), int(self._batch_size))
-            if self._show_progress and tqdm is not None:
-                starts = tqdm(starts, total=chunks, desc=f"eval len={int(prompt_len)}", mininterval=1.0)
-
-            for start in starts:
-                chunk = idxs[start : start + int(self._batch_size)]
-                real_chunk = int(len(chunk))
-                if real_chunk < int(self._batch_size):
-                    chunk = chunk + [chunk[-1]] * (int(self._batch_size) - real_chunk)
-
-                prompt_ids = [self._eval_dataset[i]["input_ids"] for i in chunk]
-                prompt_np = np.full((int(self._batch_size), int(self._pad_len)), self._pad_token_id, dtype=np.int32)
-                for row, ids in enumerate(prompt_ids):
-                    ids_np = np.asarray(ids, dtype=np.int32)
-                    prompt_np[row, : ids_np.shape[0]] = ids_np
-
-                prompt = jnp.asarray(prompt_np, dtype=jnp.int32)
-                true_len = jnp.asarray(int(prompt_len), dtype=jnp.int32)
-
-                token_ids = self._beam_search_jit(params, prompt, true_len)
-                if self._is_coordinator:
-                    tok_np = np.asarray(token_ids)  # [B, K, 3]
-                else:
-                    token_ids.block_until_ready()
-
-                if self._is_coordinator:
-                    assert predictions is not None
-                    for row, sample_idx in enumerate(chunk[:real_chunk]):
-                        preds = [_decode_sid_triplet(self._tokenizer, tok_np[row, b].tolist()) for b in range(tok_np.shape[1])]
+                assert predictions is not None
+                for p in range(int(self._process_count)):
+                    proc_base = int(p) * int(self._local_n) + int(start)
+                    for row in range(int(self._batch_size)):
+                        sample_idx = int(proc_base) + int(row)
+                        if sample_idx >= int(self._n):
+                            continue
+                        preds = [_decode_sid_triplet(self._tokenizer, tok_np[p, row, b].tolist()) for b in range(tok_np.shape[2])]
                         predictions[sample_idx] = preds
 
         topk_list = sorted({int(k) for k in self._topk if int(k) > 0 and int(k) <= int(self._num_beams)})
@@ -381,6 +287,8 @@ class SidNextItemJaxEvaluator:
 
         if self._is_coordinator:
             assert predictions is not None
+            if any(p is None for p in predictions):
+                raise RuntimeError("Eval produced incomplete predictions (some samples were not filled).")
             metrics = compute_hr_ndcg(
                 predictions=predictions,
                 targets=self._targets,

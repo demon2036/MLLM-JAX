@@ -51,7 +51,9 @@
 - TPU busy / `libtpu_lockfile`:
   - Stop the existing job and remove lock: `rm -f /tmp/libtpu_lockfile`
 - Very slow eval on TPU:
-  - JAX eval buckets by `prompt_len`; many unique prompt lengths can trigger many JIT compiles. Reduce `data.sample_test` in the smoke config (already set to `8` in `plugins/sft/configs/sid_sft_jax_smoke_qwen25_1p5b_instruct_industrial_tpu.yaml`).
+  - SID eval now pads prompts to the global max prompt length and JIT-compiles once (vector `prompt_true_len`, no prompt-length bucketing). If eval is still slow:
+    - For smoke: reduce `data.sample_test` (already `8` in `plugins/sft/configs/sid_sft_jax_smoke_qwen25_1p5b_instruct_industrial_tpu.yaml`).
+    - Reduce `data.max_len` / `jax.max_cache_length` / `eval.num_beams` / `eval.batch_size` to cut compile + decode cost.
 - `ValueError ... global size ... should be divisible by ...` when placing params:
   - Ensure you are on a recent `minionerec` that prints `[sft] pad_vocab_size ...` (this repo pads vocab to be divisible by `fsdp*tp` and resizes embedding/lm_head).
 - Constrained decoding not working (CC > 0 in `calc.py`):

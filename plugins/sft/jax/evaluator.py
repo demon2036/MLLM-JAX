@@ -9,6 +9,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.experimental.multihost_utils import process_allgather
 
 from plugins.sample.decoding.sid3_constrained_beam_search import constrained_beam_search_sid3
 from plugins.sample.constraints.sid_trie import build_sid_trie_from_index
@@ -34,6 +35,38 @@ def _newline_suffix_token_ids(tokenizer: Any) -> list[int]:
     return suffix
 
 
+def _broadcast_vec_from_process0(vec: np.ndarray) -> np.ndarray:
+    """Broadcast a small 1D vector from process 0 to all JAX processes."""
+    if int(jax.process_count()) <= 1:
+        return np.asarray(vec)
+    gathered = np.asarray(process_allgather(np.asarray(vec)))
+    return np.asarray(gathered[0])
+
+
+def _pack_metrics_vec(*, metrics: RankingMetrics, topk_list: list[int]) -> np.ndarray:
+    hr_vals = [float(metrics.hr[int(k)]) for k in topk_list]
+    ndcg_vals = [float(metrics.ndcg[int(k)]) for k in topk_list]
+    invalid = float(int(metrics.invalid_prediction_count))
+    return np.asarray([*hr_vals, *ndcg_vals, invalid], dtype=np.float32)
+
+
+def _unpack_metrics_vec(*, vec: np.ndarray, topk_list: list[int], n_samples: int, n_beams: int) -> RankingMetrics:
+    k = int(len(topk_list))
+    if vec.shape != (2 * k + 1,):
+        raise ValueError(f"Invalid metrics vec shape {vec.shape}, expected {(2 * k + 1,)}")
+    hr = {int(topk_list[i]): float(vec[i]) for i in range(k)}
+    ndcg = {int(topk_list[i]): float(vec[i + k]) for i in range(k)}
+    invalid = int(round(float(vec[2 * k])))
+    return RankingMetrics(
+        hr=hr,
+        ndcg=ndcg,
+        topk=list(topk_list),
+        n_samples=int(n_samples),
+        n_beams=int(n_beams),
+        invalid_prediction_count=invalid,
+    )
+
+
 def evaluate_sid_next_item_jax(
     *,
     model: Any,
@@ -48,6 +81,8 @@ def evaluate_sid_next_item_jax(
     topk: list[int],
     output_predictions_json: str | None,
 ) -> tuple[list[list[str]], RankingMetrics]:
+    is_coordinator = int(jax.process_index()) == 0
+
     valid_sids = load_valid_sids_from_info(info_file)
     trie = build_sid_trie_from_index(tokenizer=tokenizer, sid_index_path=sid_index_path, eos_token_id=int(getattr(tokenizer, "eos_token_id")))
 
@@ -78,11 +113,12 @@ def evaluate_sid_next_item_jax(
     for i, l in enumerate(prompt_lens):
         buckets.setdefault(int(l), []).append(i)
 
-    predictions: list[list[str]] = [None] * n  # type: ignore[list-item]
-    print(
-        f"[eval] samples={n} buckets={len(buckets)} batch_size={int(batch_size)} "
-        f"num_beams={int(num_beams)} max_cache_length={int(max_cache_length)} pad_len={int(pad_len)}"
-    )
+    predictions: list[list[str]] | None = [None] * n if is_coordinator else None  # type: ignore[list-item]
+    if is_coordinator:
+        print(
+            f"[eval] samples={n} buckets={len(buckets)} batch_size={int(batch_size)} "
+            f"num_beams={int(num_beams)} max_cache_length={int(max_cache_length)} pad_len={int(pad_len)}"
+        )
 
     def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_len: jax.Array):
         out = constrained_beam_search_sid3(
@@ -104,10 +140,11 @@ def evaluate_sid_next_item_jax(
     for prompt_len, idxs in sorted(buckets.items()):
         n_bucket = int(len(idxs))
         chunks = (n_bucket + int(batch_size) - 1) // int(batch_size)
-        print(f"[eval] prompt_len={int(prompt_len)} bucket_samples={n_bucket} chunks={chunks}")
+        if is_coordinator:
+            print(f"[eval] prompt_len={int(prompt_len)} bucket_samples={n_bucket} chunks={chunks}")
 
         starts = range(0, len(idxs), int(batch_size))
-        if tqdm is not None:
+        if tqdm is not None and is_coordinator:
             starts = tqdm(starts, total=chunks, desc=f"eval len={int(prompt_len)}", mininterval=1.0)
 
         for start in starts:
@@ -128,32 +165,53 @@ def evaluate_sid_next_item_jax(
             if not compiled_once:
                 t0 = time.perf_counter()
                 token_ids = beam_search_jit(params, prompt, true_len)
-                tok_np = np.asarray(token_ids)  # triggers compilation + blocks
+                if is_coordinator:
+                    tok_np = np.asarray(token_ids)  # triggers compilation + blocks
+                else:
+                    token_ids.block_until_ready()
                 dt = time.perf_counter() - t0
                 compiled_once = True
-                print(f"[eval] compiled_dt={dt:.2f}s")
+                if is_coordinator:
+                    print(f"[eval] compiled_dt={dt:.2f}s")
             else:
                 token_ids = beam_search_jit(params, prompt, true_len)
-                tok_np = np.asarray(token_ids)  # [B, K, 3]
+                if is_coordinator:
+                    tok_np = np.asarray(token_ids)  # [B, K, 3]
+                else:
+                    token_ids.block_until_ready()
 
-            for row, sample_idx in enumerate(chunk[:real_chunk]):
-                preds = [_decode_sid_triplet(tokenizer, tok_np[row, b].tolist()) for b in range(tok_np.shape[1])]
-                predictions[sample_idx] = preds
+            if is_coordinator:
+                assert predictions is not None
+                for row, sample_idx in enumerate(chunk[:real_chunk]):
+                    preds = [_decode_sid_triplet(tokenizer, tok_np[row, b].tolist()) for b in range(tok_np.shape[1])]
+                    predictions[sample_idx] = preds
 
-    metrics = compute_hr_ndcg(predictions=predictions, targets=targets, topk=topk, valid_items=set(valid_sids))
+    topk_list = sorted({int(k) for k in topk if int(k) > 0 and int(k) <= int(num_beams)})
+    if not topk_list:
+        raise ValueError(f"No valid topk <= num_beams={int(num_beams)}: {list(topk)}")
 
-    if output_predictions_json:
-        payload = []
-        for target, preds in zip(targets, predictions, strict=True):
-            payload.append({"output": target, "predict": preds})
-        path = Path(output_predictions_json)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if is_coordinator:
+        assert predictions is not None
+        metrics = compute_hr_ndcg(predictions=predictions, targets=targets, topk=topk_list, valid_items=set(valid_sids))
 
-        metrics_path = str(path.with_suffix(".metrics.json"))
-        Path(metrics_path).write_text(json.dumps(asdict(metrics), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        if output_predictions_json:
+            payload = []
+            for target, preds in zip(targets, predictions, strict=True):
+                payload.append({"output": target, "predict": preds})
+            path = Path(output_predictions_json)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    return predictions, metrics
+            metrics_path = str(path.with_suffix(".metrics.json"))
+            Path(metrics_path).write_text(json.dumps(asdict(metrics), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+        metrics_vec = _pack_metrics_vec(metrics=metrics, topk_list=topk_list)
+    else:
+        metrics_vec = np.zeros((2 * len(topk_list) + 1,), dtype=np.float32)
+
+    metrics_vec = _broadcast_vec_from_process0(metrics_vec)
+    metrics_out = _unpack_metrics_vec(vec=metrics_vec, topk_list=topk_list, n_samples=n, n_beams=int(num_beams))
+    return (predictions or []), metrics_out
 
 
 class SidNextItemJaxEvaluator:
@@ -189,6 +247,7 @@ class SidNextItemJaxEvaluator:
         self._max_cache_length = int(max_cache_length)
         self._topk = [int(k) for k in topk]
         self._show_progress = bool(show_progress)
+        self._is_coordinator = int(jax.process_index()) == 0
 
         self._valid_items = set(load_valid_sids_from_info(info_file))
         self._trie = build_sid_trie_from_index(
@@ -250,9 +309,13 @@ class SidNextItemJaxEvaluator:
         true_len = jnp.asarray(int(min(self._buckets.keys())), dtype=jnp.int32)
         t0 = time.perf_counter()
         token_ids = self._beam_search_jit(params, prompt, true_len)
-        _ = np.asarray(token_ids)  # block on compilation
+        if self._is_coordinator:
+            _ = np.asarray(token_ids)  # block on compilation
+        else:
+            token_ids.block_until_ready()
         dt = time.perf_counter() - t0
-        print(f"[eval] compiled_dt={dt:.2f}s")
+        if self._is_coordinator:
+            print(f"[eval] compiled_dt={dt:.2f}s")
         self._compiled = True
 
     def evaluate(
@@ -268,16 +331,18 @@ class SidNextItemJaxEvaluator:
         except Exception:  # pragma: no cover - optional dep
             tqdm = None  # type: ignore[assignment]
 
-        predictions: list[list[str]] = [None] * self._n  # type: ignore[list-item]
-        print(
-            f"[eval] samples={self._n} buckets={len(self._buckets)} batch_size={self._batch_size} "
-            f"num_beams={self._num_beams} max_cache_length={self._max_cache_length} pad_len={self._pad_len}"
-        )
+        predictions: list[list[str]] | None = [None] * self._n if self._is_coordinator else None  # type: ignore[list-item]
+        if self._is_coordinator:
+            print(
+                f"[eval] samples={self._n} buckets={len(self._buckets)} batch_size={self._batch_size} "
+                f"num_beams={self._num_beams} max_cache_length={self._max_cache_length} pad_len={self._pad_len}"
+            )
 
         for prompt_len, idxs in sorted(self._buckets.items()):
             n_bucket = int(len(idxs))
             chunks = (n_bucket + int(self._batch_size) - 1) // int(self._batch_size)
-            print(f"[eval] prompt_len={int(prompt_len)} bucket_samples={n_bucket} chunks={chunks}")
+            if self._is_coordinator:
+                print(f"[eval] prompt_len={int(prompt_len)} bucket_samples={n_bucket} chunks={chunks}")
 
             starts = range(0, len(idxs), int(self._batch_size))
             if self._show_progress and tqdm is not None:
@@ -299,20 +364,38 @@ class SidNextItemJaxEvaluator:
                 true_len = jnp.asarray(int(prompt_len), dtype=jnp.int32)
 
                 token_ids = self._beam_search_jit(params, prompt, true_len)
-                tok_np = np.asarray(token_ids)  # [B, K, 3]
+                if self._is_coordinator:
+                    tok_np = np.asarray(token_ids)  # [B, K, 3]
+                else:
+                    token_ids.block_until_ready()
 
-                for row, sample_idx in enumerate(chunk[:real_chunk]):
-                    preds = [_decode_sid_triplet(self._tokenizer, tok_np[row, b].tolist()) for b in range(tok_np.shape[1])]
-                    predictions[sample_idx] = preds
+                if self._is_coordinator:
+                    assert predictions is not None
+                    for row, sample_idx in enumerate(chunk[:real_chunk]):
+                        preds = [_decode_sid_triplet(self._tokenizer, tok_np[row, b].tolist()) for b in range(tok_np.shape[1])]
+                        predictions[sample_idx] = preds
 
-        metrics = compute_hr_ndcg(
-            predictions=predictions,
-            targets=self._targets,
-            topk=self._topk,
-            valid_items=self._valid_items,
-        )
+        topk_list = sorted({int(k) for k in self._topk if int(k) > 0 and int(k) <= int(self._num_beams)})
+        if not topk_list:
+            raise ValueError(f"No valid topk <= num_beams={int(self._num_beams)}: {list(self._topk)}")
 
-        if output_predictions_json:
+        if self._is_coordinator:
+            assert predictions is not None
+            metrics = compute_hr_ndcg(
+                predictions=predictions,
+                targets=self._targets,
+                topk=topk_list,
+                valid_items=self._valid_items,
+            )
+            metrics_vec = _pack_metrics_vec(metrics=metrics, topk_list=topk_list)
+        else:
+            metrics_vec = np.zeros((2 * len(topk_list) + 1,), dtype=np.float32)
+
+        metrics_vec = _broadcast_vec_from_process0(metrics_vec)
+        metrics = _unpack_metrics_vec(vec=metrics_vec, topk_list=topk_list, n_samples=int(self._n), n_beams=int(self._num_beams))
+
+        if output_predictions_json and self._is_coordinator:
+            assert predictions is not None
             payload = []
             for target, preds in zip(self._targets, predictions, strict=True):
                 payload.append({"output": target, "predict": preds})
@@ -323,7 +406,7 @@ class SidNextItemJaxEvaluator:
             metrics_path = str(path.with_suffix(".metrics.json"))
             Path(metrics_path).write_text(json.dumps(asdict(metrics), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-        return predictions, metrics
+        return (predictions or []), metrics
 
 
 __all__ = ["SidNextItemJaxEvaluator", "evaluate_sid_next_item_jax"]

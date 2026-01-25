@@ -385,56 +385,49 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
         # For `train_eval`, run constrained-decoding eval periodically so W&B
         # shows metrics during training (at least once per epoch).
         if run_mode_norm == "train_eval" and cfg.eval.enabled:
-            if int(jax.process_count()) != 1:
-                print("[eval] periodic eval requires single-process JAX; skipping epoch eval.")
-            else:
-                eval_dataset = _build_eval_dataset(cfg, tokenizer)
-                evaluator = SidNextItemJaxEvaluator(
-                    model=model,
-                    tokenizer=tokenizer,
-                    eval_dataset=eval_dataset,
-                    sid_index_path=cfg.data.sid_index_path,
-                    info_file=cfg.data.info_file,
-                    batch_size=cfg.eval.batch_size,
-                    num_beams=cfg.eval.num_beams,
-                    max_cache_length=cfg.jax.max_cache_length,
-                    topk=list(cfg.eval.topk),
-                    show_progress=False,
-                )
-                eval_every_steps = int(cfg.train.eval_steps)
-                if eval_every_steps < 0:
-                    eval_every_steps = 0
-                elif eval_every_steps == 0:
-                    eval_every_steps = int(steps_per_epoch)
+            eval_dataset = _build_eval_dataset(cfg, tokenizer)
+            evaluator = SidNextItemJaxEvaluator(
+                model=model,
+                tokenizer=tokenizer,
+                eval_dataset=eval_dataset,
+                sid_index_path=cfg.data.sid_index_path,
+                info_file=cfg.data.info_file,
+                batch_size=cfg.eval.batch_size,
+                num_beams=cfg.eval.num_beams,
+                max_cache_length=cfg.jax.max_cache_length,
+                topk=list(cfg.eval.topk),
+                show_progress=False,
+            )
+            eval_every_steps = int(cfg.train.eval_steps)
+            if eval_every_steps < 0:
+                eval_every_steps = 0
+            elif eval_every_steps == 0:
+                eval_every_steps = int(steps_per_epoch)
 
         def eval_cb(step: int, st: Any) -> None:
             nonlocal eval_metrics
             if evaluator is None:
                 return
-            if int(jax.process_index()) != 0:
-                return
-
-            epoch = float(step) / max(1.0, float(steps_per_epoch))
-            print(f"[eval] step={int(step)}/{int(max_steps)} epoch={epoch:.2f}")
+            is_coordinator = int(jax.process_index()) == 0
 
             output_predictions_json = None
-            if int(step) == int(max_steps) and bool(cfg.eval.save_predictions_json):
-                output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json")
+            epoch = float(step) / max(1.0, float(steps_per_epoch))
+            if is_coordinator:
+                print(f"[eval] step={int(step)}/{int(max_steps)} epoch={epoch:.2f}")
+                if int(step) == int(max_steps) and bool(cfg.eval.save_predictions_json):
+                    output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json")
 
-            _preds, metrics = evaluator.evaluate(
-                params=st.params,
-                output_predictions_json=output_predictions_json,
-            )
-            eval_metrics = metrics
-
-            if wandb is not None:
-                log = {"eval/epoch": epoch}
-                for k, v in metrics.hr.items():
-                    log[f"eval/hr@{k}"] = v
-                for k, v in metrics.ndcg.items():
-                    log[f"eval/ndcg@{k}"] = v
-                log["eval/invalid_prediction_count"] = metrics.invalid_prediction_count
-                wandb.log(log, step=int(step))
+            _preds, metrics = evaluator.evaluate(params=st.params, output_predictions_json=output_predictions_json)
+            if is_coordinator:
+                eval_metrics = metrics
+                if wandb is not None:
+                    log = {"eval/epoch": epoch}
+                    for k, v in metrics.hr.items():
+                        log[f"eval/hr@{k}"] = v
+                    for k, v in metrics.ndcg.items():
+                        log[f"eval/ndcg@{k}"] = v
+                    log["eval/invalid_prediction_count"] = metrics.invalid_prediction_count
+                    wandb.log(log, step=int(step))
 
         state, train_stats = run_sft_train(
             mesh=mesh,
@@ -492,7 +485,11 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
         if not cfg.eval.constrained:
             raise NotImplementedError("JAX evaluator currently supports only constrained=true (SID trie).")
         eval_dataset = _build_eval_dataset(cfg, tokenizer)
-        output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json") if cfg.eval.save_predictions_json else None
+        output_predictions_json = (
+            os.path.join(cfg.output_dir, "eval_predictions.json")
+            if (cfg.eval.save_predictions_json and int(jax.process_index()) == 0)
+            else None
+        )
         _preds, eval_metrics = evaluate_sid_next_item_jax(
             model=model,
             params=eval_params,
@@ -520,7 +517,11 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
         if not cfg.eval.constrained:
             raise NotImplementedError("JAX evaluator currently supports only constrained=true (SID trie).")
         eval_dataset = _build_eval_dataset(cfg, tokenizer)
-        output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json") if cfg.eval.save_predictions_json else None
+        output_predictions_json = (
+            os.path.join(cfg.output_dir, "eval_predictions.json")
+            if (cfg.eval.save_predictions_json and int(jax.process_index()) == 0)
+            else None
+        )
         _preds, eval_metrics = evaluate_sid_next_item_jax(
             model=model,
             params=eval_params,

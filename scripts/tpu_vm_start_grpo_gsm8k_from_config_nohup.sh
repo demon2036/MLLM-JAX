@@ -85,6 +85,10 @@ rm -f /tmp/libtpu_lockfile || true
 
 export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-1}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
+# Rollout speedups (opt-in in Python runner; default ON for this launcher).
+# Override by exporting `...=0` before running this script.
+export ROLLOUT_FAST_GENERATE="${ROLLOUT_FAST_GENERATE:-1}"
+export ROLLOUT_FAST_QWEN2_DECODE_ATTENTION="${ROLLOUT_FAST_QWEN2_DECODE_ATTENTION:-1}"
 
 RUNNER="set -euo pipefail; \
   rm -f /tmp/libtpu_lockfile || true; \

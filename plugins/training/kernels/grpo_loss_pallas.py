@@ -110,17 +110,17 @@ def _grpo_pallas_fwd(
     from jax.experimental import pallas as pl
     from jax.experimental.pallas import tpu as pltpu
 
-    time_block = 8
+    time_pad_block = 8
 
     logits, original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
-    logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
-    chosen_ids, _ = _pad_time(chosen_ids, time_block=time_block, pad_value=0)
-    old_per_token_logps, _ = _pad_time(old_per_token_logps, time_block=time_block, pad_value=0.0)
+    logits, original_time = _pad_time(logits, time_block=time_pad_block, pad_value=0.0)
+    chosen_ids, _ = _pad_time(chosen_ids, time_block=time_pad_block, pad_value=0)
+    old_per_token_logps, _ = _pad_time(old_per_token_logps, time_block=time_pad_block, pad_value=0.0)
 
     batch, time, vocab = (int(logits.shape[0]), int(logits.shape[1]), int(logits.shape[2]))
+    time_block = int(time)
     block_size = int(cfg.block_size)
     blocks = _ceil_div(vocab, block_size)
-    time_tiles = _ceil_div(time, time_block)
 
     out_loss = jax.ShapeDtypeStruct((batch, time), jnp.float32)
     out_logp = jax.ShapeDtypeStruct((batch, time), jnp.float32)
@@ -142,7 +142,7 @@ def _grpo_pallas_fwd(
         sum_ref,
         chosen_ref,
     ):
-        pid_k = pl.program_id(2)
+        pid_k = pl.program_id(1)
 
         @pl.when(pid_k == 0)
         def init():
@@ -191,24 +191,24 @@ def _grpo_pallas_fwd(
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
-                pl.BlockSpec((1, time_block, block_size), lambda b, tb, k: (b, tb * time_block, k * block_size)),
-                pl.BlockSpec((1, time_block), lambda b, tb, k: (b, tb * time_block)),
-                pl.BlockSpec((1, time_block), lambda b, tb, k: (b, tb * time_block)),
-                pl.BlockSpec((1,), lambda b, tb, k: (b,)),
+                pl.BlockSpec((1, time_block, block_size), lambda b, k: (b, 0, k * block_size)),
+                pl.BlockSpec((1, time_block), lambda b, k: (b, 0)),
+                pl.BlockSpec((1, time_block), lambda b, k: (b, 0)),
+                pl.BlockSpec((1,), lambda b, k: (b,)),
             ],
             out_specs=[
-                pl.BlockSpec((1, time_block), lambda b, tb, k: (b, tb * time_block)),
-                pl.BlockSpec((1, time_block), lambda b, tb, k: (b, tb * time_block)),
-                pl.BlockSpec((1, time_block), lambda b, tb, k: (b, tb * time_block)),
+                pl.BlockSpec((1, time_block), lambda b, k: (b, 0)),
+                pl.BlockSpec((1, time_block), lambda b, k: (b, 0)),
+                pl.BlockSpec((1, time_block), lambda b, k: (b, 0)),
             ],
-            grid=(batch, time_tiles, blocks),
+            grid=(batch, blocks),
             scratch_shapes=[
                 pltpu.VMEM((time_block,), jnp.float32),
                 pltpu.VMEM((time_block,), jnp.float32),
                 pltpu.VMEM((time_block,), jnp.float32),
             ],
         ),
-        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "arbitrary")),
+        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "arbitrary")),
         interpret=bool(interpret),
         debug=bool(debug),
     )
@@ -241,22 +241,22 @@ def _grpo_pallas_bwd(
     from jax.experimental import pallas as pl
     from jax.experimental.pallas import tpu as pltpu
 
-    time_block = 8
+    time_pad_block = 8
 
     original_time = int(dloss.shape[1])
 
     logits, _ = _pad_vocab(logits, block_size=cfg.block_size)
-    logits, _ = _pad_time(logits, time_block=time_block, pad_value=0.0)
-    chosen_ids, _ = _pad_time(chosen_ids, time_block=time_block, pad_value=0)
-    old_per_token_logps, _ = _pad_time(old_per_token_logps, time_block=time_block, pad_value=0.0)
-    per_token_logps, _ = _pad_time(per_token_logps, time_block=time_block, pad_value=0.0)
-    lse, _ = _pad_time(lse, time_block=time_block, pad_value=0.0)
-    dloss, _ = _pad_time(dloss, time_block=time_block, pad_value=0.0)
+    logits, _ = _pad_time(logits, time_block=time_pad_block, pad_value=0.0)
+    chosen_ids, _ = _pad_time(chosen_ids, time_block=time_pad_block, pad_value=0)
+    old_per_token_logps, _ = _pad_time(old_per_token_logps, time_block=time_pad_block, pad_value=0.0)
+    per_token_logps, _ = _pad_time(per_token_logps, time_block=time_pad_block, pad_value=0.0)
+    lse, _ = _pad_time(lse, time_block=time_pad_block, pad_value=0.0)
+    dloss, _ = _pad_time(dloss, time_block=time_pad_block, pad_value=0.0)
 
     batch, time, vocab = (int(logits.shape[0]), int(logits.shape[1]), int(logits.shape[2]))
+    time_block = int(time)
     block_size = int(cfg.block_size)
     blocks = _ceil_div(vocab, block_size)
-    time_tiles = _ceil_div(time, time_block)
 
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
@@ -274,7 +274,7 @@ def _grpo_pallas_bwd(
         dloss_ref,
         dlogits_ref,
     ):
-        pid_k = pl.program_id(2)
+        pid_k = pl.program_id(1)
 
         logits_tile = logits_ref[0, :, :].astype(jnp.float32)
 
@@ -310,18 +310,18 @@ def _grpo_pallas_bwd(
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
-                pl.BlockSpec((1, time_block, block_size), lambda b, tb, k: (b, tb * time_block, k * block_size)),
-                pl.BlockSpec((1, time_block), lambda b, tb, k: (b, tb * time_block)),
-                pl.BlockSpec((1, time_block), lambda b, tb, k: (b, tb * time_block)),
-                pl.BlockSpec((1,), lambda b, tb, k: (b,)),
-                pl.BlockSpec((1, time_block), lambda b, tb, k: (b, tb * time_block)),
-                pl.BlockSpec((1, time_block), lambda b, tb, k: (b, tb * time_block)),
-                pl.BlockSpec((1, time_block), lambda b, tb, k: (b, tb * time_block)),
+                pl.BlockSpec((1, time_block, block_size), lambda b, k: (b, 0, k * block_size)),
+                pl.BlockSpec((1, time_block), lambda b, k: (b, 0)),
+                pl.BlockSpec((1, time_block), lambda b, k: (b, 0)),
+                pl.BlockSpec((1,), lambda b, k: (b,)),
+                pl.BlockSpec((1, time_block), lambda b, k: (b, 0)),
+                pl.BlockSpec((1, time_block), lambda b, k: (b, 0)),
+                pl.BlockSpec((1, time_block), lambda b, k: (b, 0)),
             ],
-            out_specs=pl.BlockSpec((1, time_block, block_size), lambda b, tb, k: (b, tb * time_block, k * block_size)),
-            grid=(batch, time_tiles, blocks),
+            out_specs=pl.BlockSpec((1, time_block, block_size), lambda b, k: (b, 0, k * block_size)),
+            grid=(batch, blocks),
         ),
-        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "parallel")),
+        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel")),
         interpret=bool(interpret),
         debug=bool(debug),
     )

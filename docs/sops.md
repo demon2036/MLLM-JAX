@@ -4,6 +4,7 @@
 
 - Repo setup: `docs/sops/repo-setup.md`
 - Clone reference repos into `workdir/`: `docs/sops/clone-reference-repos-into-workdir.md`
+- Architecture survey (AReaL/VERL/TuNIX/MaxText/Slime): `docs/sops/architecture-survey-areal-verl-tunix-maxtext-slime.md`
 - Clone AkaliKong/MiniOneRec into repo workdir: `docs/sops/clone-akalikong-minionerec-workdir.md`
 - MiniOneRec SID SFT + eval (plugins/sft): `docs/sops/minionerec-sid-sft-and-eval.md`
 - Inspect SFT + GRPO GSM8K data stack: `docs/sops/inspect-sft-grpo-data-stack.md`
@@ -60,6 +61,7 @@
 - 4-phase RL interface implementation (GRPO runner modules): `docs/sops/rl-four-phase-interface-implementation.md`
 - RL phase-folder layout (remove `grpo/`): `docs/sops/rl-phase-folder-layout.md`
 - RL pluggable optimizer (`train.optimizer`): `docs/sops/rl-pluggable-optimizer.md`
+- Refactor GRPO state + reward plumbing (keep RL 4-phase): `docs/sops/refactor-grpo-state-and-reward-rl4.md`
 
 ## Browse by area (component-based)
 

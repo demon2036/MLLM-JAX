@@ -6,6 +6,7 @@ import sys
 import time
 from argparse import ArgumentParser
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -306,6 +307,15 @@ def main(argv: list[str] | None = None) -> int:
             wandb.log(metrics)
         except Exception as e:
             print(f"wandb.log failed: {e}")
+
+    if not isfinite(loss_ref_f) or not isfinite(loss_kernel_f):
+        raise SystemExit(f"non-finite loss: loss_ref={loss_ref_f} loss_kernel={loss_kernel_f}")
+    if not isfinite(abs_diff_loss):
+        raise SystemExit(f"non-finite loss diff: abs_diff_loss={abs_diff_loss}")
+    if not isfinite(max_abs) or not isfinite(max_rel) or not isfinite(mean_abs):
+        raise SystemExit(
+            f"non-finite dlogits diff: max_abs={max_abs} max_rel={max_rel} mean_abs={mean_abs}"
+        )
 
     if abs_diff_loss > float(cfg.tolerances.loss_atol):
         raise SystemExit(f"loss mismatch: abs_diff_loss={abs_diff_loss} > loss_atol={cfg.tolerances.loss_atol}")

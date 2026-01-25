@@ -51,9 +51,11 @@
 - GRPO runner metrics: `docs/sops/grpo-gsm8k-metrics.md`
 - GRPO length + eval knobs: `docs/sops/grpo-gsm8k-length-and-eval.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
+- SFT+RL interface-first unification plan (SOTA): `docs/sops/sft-rl-interface-first-unification-plan.md`
 - GRPO rollout backend abstraction (naive): `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - AReaL RL organization notes (for modularizing training): `docs/sops/areal-rl-organization.md`
 - AReaL logging system notes (StatsLogger/StatsTracker/PerfTracer): `docs/sops/areal-logging-system.md`
+- Borrow AReaL logging patterns (proposal): `docs/sops/logging-modularization-borrow-areal.md`
 - 4-phase RL interface research (Tunix/AReaL/VERL/MaxText): `docs/sops/rl-four-phase-interface-research.md`
 - 4-phase RL interface implementation (GRPO runner modules): `docs/sops/rl-four-phase-interface-implementation.md`
 - RL phase-folder layout (remove `grpo/`): `docs/sops/rl-phase-folder-layout.md`
@@ -103,6 +105,7 @@
 ### Training
 
 - `docs/sops/training-modularization-plan.md`
+- `docs/sops/sft-rl-interface-first-unification-plan.md`
 - `docs/sops/minionerec-sid-sft-and-eval.md`
 - `docs/sops/minionerec-sid-sft-jax-tpu.md`
 - `docs/sops/inspect-loader-sampler-sft-grpo.md`
@@ -111,6 +114,7 @@
 - `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - `docs/sops/areal-rl-organization.md`
 - `docs/sops/areal-logging-system.md`
+- `docs/sops/logging-modularization-borrow-areal.md`
 - `docs/sops/rl-four-phase-interface-research.md`
 - `docs/sops/rl-four-phase-interface-implementation.md`
 - `docs/sops/rl-phase-folder-layout.md`

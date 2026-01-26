@@ -173,9 +173,11 @@ def _grpo_pallas_fwd(
     if temperature <= 0:
         raise ValueError("temperature must be > 0")
 
-    # TPU Pallas lowering has special constraints for rank-1 BlockSpecs. Avoid
-    # the rank-1 `(B,)` case by lifting advantages to `(B, 1)` and loading a
-    # `(1, 1)` block per batch element.
+    # TPU Pallas lowering has constraints on small block shapes. In particular,
+    # for rank-2 arrays the *second last* block dimension must be a multiple of
+    # 8 or match the full array dim. Under `shard_map`, the per-device batch can
+    # be small (e.g. 4), so we load the full `(B, 1)` slice and index by
+    # `program_id(0)` inside the kernel.
     advantages2 = advantages[:, None]
 
     def kernel(
@@ -190,6 +192,7 @@ def _grpo_pallas_fwd(
         sum_ref,
         chosen_ref,
     ):
+        pid_b = pl.program_id(0)
         pid_k = pl.program_id(2)
 
         @pl.when(pid_k == 0)
@@ -233,7 +236,7 @@ def _grpo_pallas_fwd(
             old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
             ratio = jnp.exp(logp - old_logp)
             clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
-            advantage = advantages_ref[0, 0].astype(jnp.float32)
+            advantage = advantages_ref[pid_b, 0].astype(jnp.float32)
             loss1 = ratio * advantage
             loss2 = clipped_ratio * advantage
             per_token_loss = -jnp.minimum(loss1, loss2)
@@ -248,7 +251,7 @@ def _grpo_pallas_fwd(
                 pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, 1), lambda b, t, k: (b, 0)),
+                pl.BlockSpec((batch, 1), lambda b, t, k: (0, 0)),
             ],
             out_specs=[
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
@@ -446,7 +449,8 @@ def _grpo_pallas_bwd(
     lse3 = lse[..., None]
     dloss3 = dloss[..., None]
 
-    # Avoid rank-1 BlockSpec constraints by lifting advantages to (B, 1).
+    # TPU Pallas lowering has constraints on small block shapes; see the
+    # forward kernel for details.
     advantages2 = advantages[:, None]
 
     def kernel(
@@ -459,6 +463,7 @@ def _grpo_pallas_bwd(
         dloss_ref,
         dlogits_ref,
     ):
+        pid_b = pl.program_id(0)
         pid_k = pl.program_id(2)
 
         logits_tile = logits_ref[0, :, :].astype(jnp.float32)
@@ -477,7 +482,7 @@ def _grpo_pallas_bwd(
         ratio = jnp.exp(logp - old_logp)
         clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
 
-        advantage = advantages_ref[0, 0].astype(jnp.float32)
+        advantage = advantages_ref[pid_b, 0].astype(jnp.float32)
         loss1 = ratio * advantage
         loss2 = clipped_ratio * advantage
         unclipped = loss2 >= loss1
@@ -498,7 +503,7 @@ def _grpo_pallas_bwd(
                 pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, 1), lambda b, t, k: (b, 0)),
+                pl.BlockSpec((batch, 1), lambda b, t, k: (0, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),

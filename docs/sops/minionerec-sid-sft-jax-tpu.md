@@ -63,6 +63,10 @@
   - Reduce `eval.batch_size` (start with `1`) and reduce `jax.max_cache_length` (Industrial test prompts fit within `256`, so `512` is safe).
 - Missing `workdir/MiniOneRec` data:
   - Re-run the `git clone https://github.com/AkaliKong/MiniOneRec workdir/MiniOneRec` step
+- W&B `API key cannot start or end with whitespace` (common when syncing `.env` from Windows with CRLF / trailing spaces):
+  - Fix on TPU: `sed -i "s/\\r$//" /root/.env; sed -i "s/[[:space:]]*$//" /root/.env`
+- Windows `gcloud` (PuTTY/plink) host-key prompt blocks automation:
+  - Use `--ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:<HOSTKEY>` (fingerprint printed by prompt) on `gcloud ... tpu-vm ssh`, and `--scp-flag=...` on `gcloud ... tpu-vm scp`.
 
 ## Extra: Eval official MiniOneRec HF checkpoints (v6e-8, full test)
 
@@ -81,6 +85,15 @@
   - `scripts/ssh_tpu_vm_root.sh --name minionerec-sid-sft-v6e-8-official-eval-260124163806 --zone us-east5-b --env-file /root/.env --command 'set -euo pipefail; export PYTHONUNBUFFERED=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; ./scripts/run_sid_sft.sh --config plugins/sft/configs/sid_sft_jax_eval_official_minionerec_office_ckpt.yaml --run-mode eval'`
   - Cross-check via upstream `calc.py`:
     - `scripts/ssh_tpu_vm_root.sh --name minionerec-sid-sft-v6e-8-official-eval-260124163806 --zone us-east5-b --command 'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; python workdir/MiniOneRec/calc.py --path runs/sid_sft_jax_eval_official_minionerec_office_ckpt/eval_predictions.json --item_path workdir/MiniOneRec/data/Amazon/info/Office_Products_5_2016-10-2018-11.txt'`
+
+- Verified results (2026-01-26, v6e-8 spot, `europe-west4-a`, commit `2eb3786`):
+  - Industrial: https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/2sictgwy
+    - HR@K (K=[1,3,5,10,20,50]): `[0.08537, 0.11339, 0.13280, 0.15861, 0.19171, 0.24465]`
+    - NDCG@K: `[0.08537, 0.10129, 0.10933, 0.11749, 0.12584, 0.13631]`
+  - Office: https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/fqe2nv2p
+    - HR@K (K=[1,3,5,10,20,50]): `[0.09412, 0.12474, 0.13872, 0.15865, 0.18475, 0.23695]`
+    - NDCG@K: `[0.09412, 0.11212, 0.11801, 0.12442, 0.13096, 0.14118]`
+  - `workdir/MiniOneRec/calc.py` matches `eval_predictions.metrics.json` (invalid=0 for both).
 
 ## Extra: Measure SFT train step time (v6e-8)
 

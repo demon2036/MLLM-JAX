@@ -52,6 +52,10 @@ def _selective_log_softmax_reference(logits, chosen_ids, *, temperature: float) 
     import jax
     import jax.numpy as jnp
 
+    # Match the kernel's numerics: do the log-softmax in float32 even when
+    # model logits are bf16/f16 (otherwise JAX returns bf16/f16 logps and
+    # reference comparisons drift on large vocabs).
+    logits = logits.astype(jnp.float32)
     per_token_logps = jnp.take_along_axis(
         jax.nn.log_softmax(logits, axis=-1),
         chosen_ids[..., None],

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from typing import Any
+
+import jax
+import jax.numpy as jnp
 
 
 @dataclass(frozen=True)
@@ -57,8 +61,6 @@ def _pad_time(x: Any, *, time_block: int, pad_value: Any):
 
 def entropy_per_token_reference(logits: Any, *, temperature: float = 1.0) -> Any:
     """Reference per-token entropy (stable logsumexp formulation)."""
-    import jax.numpy as jnp
-
     temperature = float(temperature)
     if temperature <= 0:
         raise ValueError("temperature must be > 0")
@@ -284,11 +286,11 @@ def _entropy_pallas_fwd_stats(
     return per_token_max, per_token_sum, per_token_sumx
 
 
-def entropy_per_token_pallas(
-    *,
+@functools.partial(jax.custom_jvp, nondiff_argnames=("cfg", "interpret", "debug"))
+def _entropy_per_token_pallas_jvp_safe(
     logits: Any,
     cfg: EntropyKernelConfig | None = None,
-    interpret: bool = False,
+    interpret: Any = False,
     debug: bool = False,
 ) -> Any:
     if cfg is None:
@@ -301,21 +303,44 @@ def entropy_per_token_pallas(
     return _entropy_pallas_fwd(logits=logits, cfg=cfg, interpret=interpret, debug=debug)
 
 
-def entropy_per_token_pallas_sharded(
+@_entropy_per_token_pallas_jvp_safe.defjvp
+def _entropy_per_token_pallas_jvp_safe_jvp(
+    cfg: EntropyKernelConfig | None = None,
+    interpret: Any = False,
+    debug: bool = False,
+    primals=None,
+    tangents=None,
+):
+    if primals is None or tangents is None:
+        raise TypeError("custom_jvp rule must be called with primals and tangents")
+    (logits,) = primals
+    out = _entropy_per_token_pallas_jvp_safe(logits, cfg=cfg, interpret=interpret, debug=debug)
+    return out, jnp.zeros_like(out)
+
+
+def entropy_per_token_pallas(
     *,
     logits: Any,
+    cfg: EntropyKernelConfig | None = None,
+    interpret: Any = False,
+    debug: bool = False,
+) -> Any:
+    return _entropy_per_token_pallas_jvp_safe(logits, cfg=cfg, interpret=interpret, debug=debug)
+
+
+def entropy_per_token_pallas_sharded_impl(
+    logits: Any,
+    *,
     mesh: Any,
     cfg: EntropyKernelConfig | None = None,
     batch_axes: tuple[str, ...] = ("dp", "fsdp"),
     vocab_axis: str | None = None,
-    interpret: bool = False,
+    interpret: Any = False,
     debug: bool = False,
     check_vma: bool = False,
 ) -> Any:
     import functools
 
-    import jax
-    import jax.numpy as jnp
     from jax.sharding import PartitionSpec as PS
 
     if cfg is None:
@@ -357,10 +382,86 @@ def entropy_per_token_pallas_sharded(
     return _sharded_entropy(logits)
 
 
+@functools.partial(
+    jax.custom_jvp,
+    nondiff_argnames=("mesh", "cfg", "batch_axes", "vocab_axis", "interpret", "debug", "check_vma"),
+)
+def entropy_per_token_pallas_sharded_jvp_safe(
+    logits: Any,
+    mesh: Any,
+    cfg: EntropyKernelConfig | None = None,
+    batch_axes: tuple[str, ...] = ("dp", "fsdp"),
+    vocab_axis: str | None = None,
+    interpret: Any = False,
+    debug: bool = False,
+    check_vma: bool = False,
+) -> Any:
+    return entropy_per_token_pallas_sharded_impl(
+        logits,
+        mesh=mesh,
+        cfg=cfg,
+        batch_axes=batch_axes,
+        vocab_axis=vocab_axis,
+        interpret=interpret,
+        debug=debug,
+        check_vma=check_vma,
+    )
+
+
+@entropy_per_token_pallas_sharded_jvp_safe.defjvp
+def _entropy_per_token_pallas_sharded_jvp_safe_jvp(
+    mesh: Any,
+    cfg: EntropyKernelConfig | None = None,
+    batch_axes: tuple[str, ...] = ("dp", "fsdp"),
+    vocab_axis: str | None = None,
+    interpret: Any = False,
+    debug: bool = False,
+    check_vma: bool = False,
+    primals=None,
+    tangents=None,
+):
+    if primals is None or tangents is None:
+        raise TypeError("custom_jvp rule must be called with primals and tangents")
+    (logits,) = primals
+    out = entropy_per_token_pallas_sharded_jvp_safe(
+        logits,
+        mesh=mesh,
+        cfg=cfg,
+        batch_axes=batch_axes,
+        vocab_axis=vocab_axis,
+        interpret=interpret,
+        debug=debug,
+        check_vma=check_vma,
+    )
+    return out, jnp.zeros_like(out)
+
+
+def entropy_per_token_pallas_sharded(
+    *,
+    logits: Any,
+    mesh: Any,
+    cfg: EntropyKernelConfig | None = None,
+    batch_axes: tuple[str, ...] = ("dp", "fsdp"),
+    vocab_axis: str | None = None,
+    interpret: Any = False,
+    debug: bool = False,
+    check_vma: bool = False,
+) -> Any:
+    return entropy_per_token_pallas_sharded_jvp_safe(
+        logits,
+        mesh=mesh,
+        cfg=cfg,
+        batch_axes=batch_axes,
+        vocab_axis=vocab_axis,
+        interpret=interpret,
+        debug=debug,
+        check_vma=check_vma,
+    )
+
+
 __all__ = [
     "EntropyKernelConfig",
     "entropy_per_token_reference",
     "entropy_per_token_pallas",
     "entropy_per_token_pallas_sharded",
 ]
-

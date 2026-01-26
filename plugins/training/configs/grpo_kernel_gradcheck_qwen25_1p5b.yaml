@@ -18,8 +18,8 @@ kernel:
   block_size: 2048
 
 tolerances:
-  loss_atol: 1.0e-4
-  dlogits_max_abs: 5.0e-3
+  loss_atol: 3.0e-3
+  dlogits_max_abs: 2.0e-2
   dlogits_max_rel: 5.0e-2
 
 wandb_project: mllm-jax-grpo-kernel

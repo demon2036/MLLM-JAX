@@ -310,8 +310,16 @@ def main(argv: list[str] | None = None) -> int:
     diff = jnp.abs(d_ref_f32 - d_kernel_f32)
 
     max_abs = float(jnp.asarray(jnp.max(diff)))
-    max_rel = float(jnp.asarray(jnp.max(diff / (jnp.abs(d_ref_f32) + 1e-8))))
     mean_abs = float(jnp.asarray(jnp.mean(diff)))
+
+    # Relative error is ill-defined when the reference gradient is ~0 (common
+    # for padded vocab dims). Gate the max-relative metric to avoid a single
+    # near-zero entry dominating the check.
+    rel_denom = jnp.abs(d_ref_f32)
+    rel = diff / (rel_denom + 1e-8)
+    rel_mask = rel_denom > 1e-6
+    max_rel_unmasked = float(jnp.asarray(jnp.max(rel)))
+    max_rel = float(jnp.asarray(jnp.max(jnp.where(rel_mask, rel, 0.0))))
 
     abs_diff_loss = abs(loss_ref_f - loss_kernel_f)
 
@@ -325,6 +333,7 @@ def main(argv: list[str] | None = None) -> int:
         "abs_diff_loss": abs_diff_loss,
         "dlogits_max_abs": max_abs,
         "dlogits_max_rel": max_rel,
+        "dlogits_max_rel_unmasked": max_rel_unmasked,
         "dlogits_mean_abs": mean_abs,
         "time/load_s": round(t_load, 3),
         "time/forward_s": round(t_fwd, 3),

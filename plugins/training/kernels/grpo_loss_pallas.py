@@ -27,6 +27,16 @@ class GRPOKernelConfig:
     epsilon_low: float = 0.2
     epsilon_high: float = 0.2
     temperature: float = 1.0
+    # Backward implementation selector.
+    #
+    # Why this exists:
+    # - A Mosaic `pallas_call` backward produces a custom-call `dlogits` which
+    #   can force materialization and block XLA fusion on TPU.
+    # - A pure-JAX backward expresses `dlogits` in standard HLO ops which can
+    #   sometimes fuse into downstream matmuls, improving peak memory.
+    #
+    # Allowed values: "pallas", "jax".
+    bwd_impl: str = "pallas"
 
 
 @dataclass(frozen=True)
@@ -538,6 +548,66 @@ def _grpo_pallas_bwd(
     )
     return dlogits[:, :original_time, : int(original_vocab)]
 
+
+def _grpo_jax_bwd(
+    *,
+    dloss: Any,
+    logits: Any,
+    chosen_ids: Any,
+    old_per_token_logps: Any,
+    advantages: Any,
+    per_token_logps: Any,
+    lse: Any,
+    cfg: GRPOKernelConfig,
+    use_self_old: bool,
+) -> Any:
+    import jax
+    import jax.numpy as jnp
+
+    eps_low = float(cfg.epsilon_low)
+    eps_high = float(cfg.epsilon_high)
+    temperature = float(cfg.temperature)
+    use_self_old = bool(use_self_old)
+    if temperature <= 0:
+        raise ValueError("temperature must be > 0")
+
+    logits_f32 = logits.astype(jnp.float32)
+    lse_f32 = lse.astype(jnp.float32)
+    logp_f32 = per_token_logps.astype(jnp.float32)
+    dloss_f32 = dloss.astype(jnp.float32)
+
+    if use_self_old:
+        old_logp_f32 = jax.lax.stop_gradient(logp_f32)
+    else:
+        old_logp_f32 = old_per_token_logps.astype(jnp.float32)
+
+    ratio = jnp.exp(logp_f32 - old_logp_f32)
+    clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
+
+    advantages_f32 = advantages.astype(jnp.float32)
+    per_token_loss1 = ratio * advantages_f32[..., None]
+    per_token_loss2 = clipped_ratio * advantages_f32[..., None]
+    unclipped = per_token_loss2 >= per_token_loss1
+
+    dlogp = (-per_token_loss1) * unclipped.astype(jnp.float32)
+    dlogp = dlogp * dloss_f32
+    scale = dlogp / float(temperature)
+
+    probs = jnp.exp(logits_f32 - lse_f32[..., None])
+
+    dlogits = (-probs) * scale[..., None]
+
+    vocab = int(logits.shape[-1])
+    chosen_ids_i32 = chosen_ids.astype(jnp.int32)
+    valid = (chosen_ids_i32 >= 0) & (chosen_ids_i32 < vocab)
+    safe_ids = jnp.where(valid, chosen_ids_i32, 0)
+    dlogits = dlogits + jax.nn.one_hot(safe_ids, vocab, dtype=jnp.float32) * (
+        scale * valid.astype(jnp.float32)
+    )[..., None]
+
+    return dlogits.astype(logits.dtype)
+
+
 def build_grpo_per_token_loss_pallas(
     cfg: GRPOKernelConfig,
     *,
@@ -548,12 +618,17 @@ def build_grpo_per_token_loss_pallas(
     import jax
     import jax.numpy as jnp
 
+    bwd_impl = str(getattr(cfg, "bwd_impl", "pallas") or "pallas").strip().lower()
+    if bwd_impl not in {"pallas", "jax"}:
+        raise ValueError("cfg.bwd_impl must be one of: pallas, jax")
+
     cfg = GRPOKernelConfig(
         block_size=int(cfg.block_size),
         time_block=int(cfg.time_block),
         epsilon_low=float(cfg.epsilon_low),
         epsilon_high=float(cfg.epsilon_high),
         temperature=float(cfg.temperature),
+        bwd_impl=bwd_impl,
     )
 
     @jax.custom_vjp
@@ -588,20 +663,33 @@ def build_grpo_per_token_loss_pallas(
     def bwd(res, g):
         logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse, original_vocab = res
         dloss, _dlogp = g
-        dlogits = _grpo_pallas_bwd(
-            dloss=dloss.astype(jnp.float32),
-            logits=logits,
-            chosen_ids=chosen_ids,
-            old_per_token_logps=old_per_token_logps,
-            advantages=advantages,
-            per_token_logps=per_token_logps,
-            lse=lse,
-            cfg=cfg,
-            interpret=interpret,
-            debug=debug,
-            original_vocab=int(original_vocab),
-            use_self_old=bool(use_self_old),
-        )
+        if cfg.bwd_impl == "jax":
+            dlogits = _grpo_jax_bwd(
+                dloss=dloss,
+                logits=logits,
+                chosen_ids=chosen_ids,
+                old_per_token_logps=old_per_token_logps,
+                advantages=advantages,
+                per_token_logps=per_token_logps,
+                lse=lse,
+                cfg=cfg,
+                use_self_old=bool(use_self_old),
+            )
+        else:
+            dlogits = _grpo_pallas_bwd(
+                dloss=dloss.astype(jnp.float32),
+                logits=logits,
+                chosen_ids=chosen_ids,
+                old_per_token_logps=old_per_token_logps,
+                advantages=advantages,
+                per_token_logps=per_token_logps,
+                lse=lse,
+                cfg=cfg,
+                interpret=interpret,
+                debug=debug,
+                original_vocab=int(original_vocab),
+                use_self_old=bool(use_self_old),
+            )
         return (dlogits, None, None, None)
 
     _kernel.defvjp(fwd, bwd)
@@ -640,12 +728,17 @@ def build_grpo_per_token_loss_pallas_sharded(
     batch_axes = tuple(str(ax) for ax in sharding.batch_axes if str(ax))
     vocab_axis = sharding.vocab_axis
 
+    bwd_impl = str(getattr(cfg, "bwd_impl", "pallas") or "pallas").strip().lower()
+    if bwd_impl not in {"pallas", "jax"}:
+        raise ValueError("cfg.bwd_impl must be one of: pallas, jax")
+
     cfg = GRPOKernelConfig(
         block_size=int(cfg.block_size),
         time_block=int(cfg.time_block),
         epsilon_low=float(cfg.epsilon_low),
         epsilon_high=float(cfg.epsilon_high),
         temperature=float(cfg.temperature),
+        bwd_impl=bwd_impl,
     )
 
     logits_spec = PS(batch_axes, None, vocab_axis) if vocab_axis is not None else PS(batch_axes, None, None)
@@ -723,6 +816,18 @@ def build_grpo_per_token_loss_pallas_sharded(
             vocab_start = tp_index * vocab_per_shard
             chosen_ids_local = chosen_ids.astype(jnp.int32) - jnp.asarray(vocab_start, dtype=jnp.int32)
             original_vocab = vocab_per_shard
+        if cfg.bwd_impl == "jax":
+            return _grpo_jax_bwd(
+                dloss=dloss,
+                logits=logits,
+                chosen_ids=chosen_ids_local,
+                old_per_token_logps=old_per_token_logps,
+                advantages=advantages,
+                per_token_logps=per_token_logps,
+                lse=lse,
+                cfg=cfg,
+                use_self_old=bool(use_self_old),
+            )
         return _grpo_pallas_bwd(
             dloss=dloss,
             logits=logits,
@@ -752,15 +857,28 @@ def build_grpo_per_token_loss_pallas_sharded(
     def bwd(res, g):
         logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse = res
         dloss, _dlogp = g
-        dlogits = _sharded_bwd(
-            dloss.astype(jnp.float32),
-            logits,
-            chosen_ids,
-            old_per_token_logps,
-            advantages,
-            per_token_logps,
-            lse,
-        )
+        if cfg.bwd_impl == "jax" and vocab_axis is None:
+            dlogits = _grpo_jax_bwd(
+                dloss=dloss,
+                logits=logits,
+                chosen_ids=chosen_ids,
+                old_per_token_logps=old_per_token_logps,
+                advantages=advantages,
+                per_token_logps=per_token_logps,
+                lse=lse,
+                cfg=cfg,
+                use_self_old=bool(use_self_old),
+            )
+        else:
+            dlogits = _sharded_bwd(
+                dloss.astype(jnp.float32),
+                logits,
+                chosen_ids,
+                old_per_token_logps,
+                advantages,
+                per_token_logps,
+                lse,
+            )
         return (dlogits, None, None, None)
 
     _kernel.defvjp(fwd, bwd)

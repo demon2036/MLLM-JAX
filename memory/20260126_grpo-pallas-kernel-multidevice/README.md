@@ -38,6 +38,27 @@
   - streaming logsumexp over vocab tiles
   - unclipped-vs-clipped branch for gradients
   - optional KL term (beta)
+- MaxText SplashAttention multi-device pattern to mirror:
+  - keep the heavy Pallas kernel single-device and wrap with `jax.shard_map`
+  - use a kernel object’s `manual_sharding_spec(...)` to derive `shard_map` partition specs
+  - keep `check_vma=False` by default for perf (`MaxText/layers/attention_op.py`)
+- Unsloth selective log-softmax pattern to mirror:
+  - stream over vocab tiles (`BLOCK_N`) and keep `(m_i, l_i)` accumulators (Flash-style)
+  - avoid materializing full `log_softmax` for per-token logp
+  - (GPU-only) use `tl.load(LOGITS + ids)` for chosen logit (TPU Pallas may need onehot trick)
+
+### Concrete reference pointers (cloned under this repo’s `workdir/`)
+
+- JAX SplashAttention kernel:
+  - `workdir/jax/jax/experimental/pallas/ops/tpu/splash_attention/splash_attention_kernel.py`
+  - key ops inside kernel use `lax.dot_general(..., preferred_element_type=float32)`
+- MaxText shard_map calling pattern:
+  - `workdir/maxtext/src/MaxText/layers/attention_op.py` (`wrap_flash_attention` uses `jax.shard_map`)
+  - `workdir/maxtext/src/MaxText/kernels/splash_attention_kernel.py` (`SplashAttentionKernel.manual_sharding_spec`)
+- Liger GRPO loss kernels:
+  - `workdir/liger-kernel/src/liger_kernel/ops/grpo_loss.py`
+- Unsloth RL selective log-softmax:
+  - `workdir/unsloth/unsloth/models/rl.py` (injects replacement code; actual kernels in `unsloth_zoo`)
 
 ### GRPO training call chain (repo)
 
@@ -48,6 +69,19 @@
 - Implication: to A/B compare kernel vs baseline, we must add a **config-driven switch** in the state/module wiring:
   - baseline: `TrainGRPOModule` (existing behavior)
   - kernel: `plugins.training.grpo.TrainGRPOModulePallas` (multi-device shard_map wrapper around Pallas kernel)
+
+## Suspected bottlenecks (to validate on TPU)
+
+1) **Backward `pallas_call` barrier forces `dlogits` materialization**
+- The current GRPO kernel defines a custom VJP whose backward path is another `pl.pallas_call(...)` that returns `dlogits`.
+- On TPU, this makes the gradient w.r.t logits a “custom call output” which XLA cannot fuse into the downstream matmuls (e.g. LM head / upstream layers).
+- Hypothesis: this increases peak HBM and is the reason the current kernel needs `micro_batch_size_per_device=2` on `v6e-8`, while baseline can run with larger micro-batches.
+
+2) **Entropy metric path materializes `softmax(logits)`**
+- Both baseline and `TrainGRPOModulePallas` compute:
+  - `probs = softmax(logits / temperature)` → `token_entropy = -sum(probs * log(probs))`
+- This is `[B,T,V]` work and can dominate memory/time in the loss module, especially when `V` is large.
+- Hypothesis: replacing this with a streaming entropy/logsumexp computation (no `probs` tensor) is required for a clear win.
 
 ### Commands / runs (to fill as executed)
 

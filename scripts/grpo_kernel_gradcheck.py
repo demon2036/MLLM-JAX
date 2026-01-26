@@ -84,6 +84,8 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOKernelGradch
     if not isinstance(kernel_raw, dict):
         raise TypeError("kernel must be a dict")
     kernel_block_size = int(kernel_raw.get("block_size") or 2048)
+    kernel_time_block = int(kernel_raw.get("time_block") or 8)
+    kernel_bwd_impl = str(kernel_raw.get("bwd_impl") or "pallas").strip().lower()
 
     tol_raw = cfg.get("tolerances") or {}
     if not isinstance(tol_raw, dict):
@@ -111,9 +113,11 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOKernelGradch
         old_logp_noise_scale=old_logp_noise_scale,
         kernel=GRPOKernelConfig(
             block_size=kernel_block_size,
+            time_block=kernel_time_block,
             epsilon_low=epsilon_low,
             epsilon_high=epsilon_high,
             temperature=temperature,
+            bwd_impl=kernel_bwd_impl,
         ),
         tolerances=tolerances,
         wandb_project=wandb_project,

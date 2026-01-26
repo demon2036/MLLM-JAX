@@ -27,6 +27,7 @@ train:
     kernel:
       block_size: 2048
       time_block: 8
+      bwd_impl: jax
     sharding:
       batch_axes: [dp, fsdp]
       vocab_axis: null

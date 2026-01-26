@@ -6,6 +6,11 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
+from plugins.training.kernels.entropy_pallas import (
+    EntropyKernelConfig,
+    entropy_per_token_pallas,
+    entropy_per_token_pallas_sharded,
+)
 from plugins.training.kernels.grpo_loss_pallas import (
     GRPOKernelConfig,
     GRPOKernelShardingSpec,
@@ -72,6 +77,7 @@ class TrainGRPOModulePallas(nn.Module):
             epsilon_low=float(self.epsilon_low),
             epsilon_high=float(self.epsilon_high),
             temperature=float(self.temperature),
+            bwd_impl=str(getattr(self.kernel_cfg, "bwd_impl", "pallas") or "pallas"),
         )
 
         if self.mesh is None:
@@ -106,8 +112,29 @@ class TrainGRPOModulePallas(nn.Module):
         total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
         loss = (per_token_loss * mask_loss).sum() / total_valid_token_count
 
-        probs = jax.nn.softmax(logits_for_loss / float(self.temperature), axis=-1)
-        token_entropy = -jnp.sum(probs * jax.lax.log(probs + 1e-9), axis=-1)
+        entropy_cfg = EntropyKernelConfig(
+            block_size=int(self.kernel_cfg.block_size),
+            time_block=int(self.kernel_cfg.time_block),
+            temperature=float(self.temperature),
+        )
+        if self.mesh is None:
+            token_entropy = entropy_per_token_pallas(
+                logits=logits_for_loss,
+                cfg=entropy_cfg,
+                interpret=bool(self.kernel_interpret),
+                debug=bool(self.kernel_debug),
+            )
+        else:
+            token_entropy = entropy_per_token_pallas_sharded(
+                logits=logits_for_loss,
+                mesh=self.mesh,
+                cfg=entropy_cfg,
+                batch_axes=tuple(self.kernel_sharding.batch_axes),
+                vocab_axis=self.kernel_sharding.vocab_axis,
+                interpret=bool(self.kernel_interpret),
+                debug=bool(self.kernel_debug),
+            )
+        token_entropy = jax.lax.stop_gradient(token_entropy)
 
         masked_token_entropy = token_entropy * mask_loss
         sum_entropy_per_sample = masked_token_entropy.sum(axis=-1)

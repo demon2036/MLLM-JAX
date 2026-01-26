@@ -275,6 +275,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
 
         block_size = int(kernel_params.get("block_size") or grpo_kernel_loss_cfg.kernel.block_size)
         time_block = int(kernel_params.get("time_block") or grpo_kernel_loss_cfg.kernel.time_block)
+        bwd_impl = str(kernel_params.get("bwd_impl") or grpo_kernel_loss_cfg.kernel.bwd_impl or "pallas").strip().lower()
 
         sharding_params = grpo_kernel_raw.get("sharding") or {}
         if not isinstance(sharding_params, dict):
@@ -293,7 +294,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
 
         grpo_kernel_loss_cfg = GRPOKernelLossConfig(
             enabled=enabled,
-            kernel=GRPOKernelConfig(block_size=block_size, time_block=time_block),
+            kernel=GRPOKernelConfig(block_size=block_size, time_block=time_block, bwd_impl=bwd_impl),
             sharding=GRPOKernelShardingSpec(batch_axes=batch_axes, vocab_axis=vocab_axis),
         )
 

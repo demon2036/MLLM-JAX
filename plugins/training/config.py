@@ -53,6 +53,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "kernel": {
                 "block_size": 2048,
                 "time_block": 8,
+                # Backward implementation ("jax" is typically more fusible on TPU).
+                "bwd_impl": "jax",
             },
             # shard_map wrapper knobs (only relevant for multi-device).
             "sharding": {

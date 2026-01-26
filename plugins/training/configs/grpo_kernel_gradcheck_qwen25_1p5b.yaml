@@ -16,6 +16,8 @@ old_logp_noise_scale: 0.3
 
 kernel:
   block_size: 2048
+  time_block: 8
+  bwd_impl: jax
 
 tolerances:
   loss_atol: 3.0e-3

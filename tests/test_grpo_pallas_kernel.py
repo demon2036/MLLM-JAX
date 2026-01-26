@@ -15,7 +15,8 @@ from plugins.training.kernels.grpo_loss_pallas import (
 
 
 @pytest.mark.parametrize("vocab", [15, 24])
-def test_grpo_pallas_kernel_matches_reference_forward_and_backward(vocab: int):
+@pytest.mark.parametrize("bwd_impl", ["pallas", "jax"])
+def test_grpo_pallas_kernel_matches_reference_forward_and_backward(vocab: int, bwd_impl: str):
     key = jax.random.PRNGKey(0)
 
     batch = 2
@@ -46,7 +47,7 @@ def test_grpo_pallas_kernel_matches_reference_forward_and_backward(vocab: int):
         temperature=1.0,
     )
 
-    cfg = GRPOKernelConfig(block_size=8, epsilon_low=0.2, epsilon_high=0.2, temperature=1.0)
+    cfg = GRPOKernelConfig(block_size=8, epsilon_low=0.2, epsilon_high=0.2, temperature=1.0, bwd_impl=bwd_impl)
     interpret = pltpu.InterpretParams(out_of_bounds_reads="raise", random_seed=0)
     per_loss_k, per_logp_k = grpo_per_token_loss_pallas(
         logits=logits,
@@ -125,7 +126,7 @@ def test_grpo_pallas_kernel_shard_map_single_device_matches_reference():
         temperature=1.0,
     )
 
-    cfg = GRPOKernelConfig(block_size=8, time_block=8, epsilon_low=0.2, epsilon_high=0.2, temperature=1.0)
+    cfg = GRPOKernelConfig(block_size=8, time_block=8, epsilon_low=0.2, epsilon_high=0.2, temperature=1.0, bwd_impl="jax")
     interpret = pltpu.InterpretParams(out_of_bounds_reads="raise", random_seed=0)
 
     logits = jax.device_put(logits, NamedSharding(mesh, P(("dp", "fsdp"), None, None)))
@@ -198,7 +199,7 @@ def test_grpo_pallas_train_module_sharded_matches_baseline_single_device():
 
     device = jax.devices()[0]
     mesh = Mesh(np.asarray([device], dtype=object).reshape((1, 1, 1)), ("dp", "fsdp", "tp"))
-    cfg = GRPOKernelConfig(block_size=8, time_block=8)
+    cfg = GRPOKernelConfig(block_size=8, time_block=8, bwd_impl="jax")
     pallas = TrainGRPOModulePallas(
         model=model,
         pad_token_id=0,
@@ -211,3 +212,5 @@ def test_grpo_pallas_train_module_sharded_matches_baseline_single_device():
 
     assert jnp.max(jnp.abs(metrics_baseline["loss"] - metrics_pallas["loss"])) < 1e-5
     assert jnp.max(jnp.abs(metrics_baseline["per_token_logps"] - metrics_pallas["per_token_logps"])) < 1e-5
+    assert jnp.max(jnp.abs(metrics_baseline["entropy"] - metrics_pallas["entropy"])) < 1e-5
+    assert jnp.max(jnp.abs(metrics_baseline["entropy_loss"] - metrics_pallas["entropy_loss"])) < 1e-5

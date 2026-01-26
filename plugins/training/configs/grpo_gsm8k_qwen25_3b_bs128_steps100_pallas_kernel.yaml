@@ -32,6 +32,7 @@ train:
     kernel:
       block_size: 2048
       time_block: 8
+      bwd_impl: jax
     sharding:
       batch_axes: [dp, fsdp]
       vocab_axis: null
@@ -54,4 +55,3 @@ reward_weights: [1.0, 0.5, 0.5]
 eval_every_steps: 10
 eval_batches_per_process: 1
 eval_split: test
-

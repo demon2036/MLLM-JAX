@@ -196,7 +196,8 @@ def _grpo_pallas_fwd(
             out_logp_ref[...] = jnp.zeros_like(out_logp_ref)
             out_lse_ref[...] = jnp.zeros_like(out_lse_ref)
 
-        logits_tile = logits_ref[0, :, :].astype(jnp.float32)
+        logits_tile_raw = logits_ref[0, :, :]
+        logits_tile = logits_tile_raw.astype(jnp.float32)
 
         idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
         block_start = pid_k * block_size
@@ -219,10 +220,14 @@ def _grpo_pallas_fwd(
 
         @pl.when(pid_k == blocks - 1)
         def out():
-            lse = max_ref[:] + jnp.log(sum_ref[:])
+            lse_f32 = max_ref[:] + jnp.log(sum_ref[:])
+            lse_q = lse_f32.astype(logits_tile_raw.dtype)
+            lse = lse_q.astype(jnp.float32)
             out_lse_ref[0, :, 0] = lse.astype(out_lse_ref.dtype)
 
-            logp = (chosen_ref[:] - lse) / temperature
+            chosen_q = chosen_ref[:].astype(logits_tile_raw.dtype)
+            logp_unscaled_q = (chosen_q - lse_q).astype(logits_tile_raw.dtype)
+            logp = logp_unscaled_q.astype(jnp.float32) / temperature
             out_logp_ref[0, :, 0] = logp.astype(out_logp_ref.dtype)
 
             old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)

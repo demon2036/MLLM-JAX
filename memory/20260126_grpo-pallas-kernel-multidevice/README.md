@@ -11,6 +11,11 @@
   - GRPO kernel gradcheck (W&B online, exit 0)
   - GRPO/GSM8K training 100 steps A/B (baseline vs kernel), W&B online
 
+Update (2026-01-26):
+- The user-provided TPU VM name was not found in the current GCP project; the
+  end-to-end validation below is executed on a fresh single-host `v6e-8` TPU VM:
+  - TPU: `mllm-jax-v6e-8-grpo-kernel-260127045556` (zone `europe-west4-a`)
+
 ## Completion criteria
 
 - TPU kernel gradcheck exits `0` with diffs within tolerances; W&B run URL recorded.
@@ -87,9 +92,35 @@
 
 - Local:
   - `python -m pytest -q`
-- TPU:
-  - `<git-sync command>`
-  - `<env sync command>`
-  - `<gradcheck command>`
-  - `<baseline train command>`
-  - `<kernel train command>`
+- TPU (repo: `/root/MLLM-JAX`, conda env: `mllm-jax`, W&B: `wandb_mode=online`):
+  - Gradcheck (exit `0`):
+    - `python -u scripts/grpo_kernel_gradcheck.py --config plugins/training/configs/grpo_kernel_gradcheck_qwen25_1p5b.yaml`
+    - W&B: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-kernel/runs/y836ygee`
+  - Baseline GRPO/GSM8K 100-step (exit `0`):
+    - `python -u scripts/run_grpo_gsm8k_training.py --config plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
+    - W&B: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/aovd31pm`
+    - `wandb-summary.json` highlights:
+      - `time/train/step_avg_last10_s=11.578276114599998`
+      - `time/train/update_s=3.932779269999628` (last step)
+      - `time/train/rollout_generate_s=8.76871432400003` (last step)
+      - `eval/reward/total/mean=1.796875` (final eval snapshot)
+  - Kernel GRPO/GSM8K 100-step (attempt 1, exit `1`):
+    - `python -u scripts/run_grpo_gsm8k_training.py --config plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100_pallas_kernel.yaml`
+    - W&B: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/9lcvmn1d`
+    - Error: `AssertionError` from `jax._src.pallas.pallas_call._pallas_call_jvp_rule` triggered by `entropy_pallas`.
+  - Fix + restart:
+    - Commit: `5e8ff7e` (`fix: make entropy pallas jvp-safe`)
+    - Re-run kernel GRPO/GSM8K 100-step (attempt 2, exit `0`):
+      - W&B: `https://wandb.ai/johntitordemon2036/mllm-jax-grpo-gsm8k/runs/ucesd0oc`
+      - `wandb-summary.json` highlights:
+        - `time/train/step_avg_last10_s=13.63050850999998`
+        - `time/train/update_s=4.2935676090000925` (last step)
+        - `throughput/train/valid_tokens_per_s_update=8186.432170375367` (last step)
+        - `train-other/total_valid_token_count=35149` (last step; longer completions)
+        - `eval/reward/total/mean=1.828125` (final eval snapshot)
+
+  - Peak-memory probe (single-device synthetic logits, `jax.devices()[0].memory_stats()`):
+    - Baseline (JAX ops: `log_softmax` + `softmax` entropy), B=8 T=1024 V=16384:
+      - `peak_bytes_in_use=1883052032` (≈1.75 GiB)
+    - Kernel (Pallas loss + Pallas entropy, `bwd_impl=jax`), B=8 T=1024 V=16384:
+      - `peak_bytes_in_use=2956557824` (≈2.75 GiB)

@@ -9,7 +9,7 @@ flax
 optax
 chex
 torch
-transformers
+transformers<5
 datasets
 tqdm
 wandb

@@ -54,6 +54,7 @@
 - GRPO runner metrics: `docs/sops/grpo-gsm8k-metrics.md`
 - GRPO length + eval knobs: `docs/sops/grpo-gsm8k-length-and-eval.md`
 - GRPO Pallas kernel gradcheck (Qwen2.5-1.5B): `docs/sops/grpo-pallas-kernel-gradcheck.md`
+- GRPO Pallas kernel bench (speed + memory): `docs/sops/grpo-pallas-kernel-bench.md`
 - Cross-entropy Pallas kernel gradcheck (Qwen2.5-1.5B): `docs/sops/cross-entropy-pallas-kernel-gradcheck.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
 - GRPO rollout backend abstraction (naive): `docs/sops/grpo-rollout-backend-abstraction-naive.md`
@@ -126,6 +127,7 @@
 - `docs/sops/grpo-gsm8k-metrics.md`
 - `docs/sops/rl-ppo-reinforce-equivalence-ppo-epochs-1.md`
 - `docs/sops/grpo-gsm8k-length-and-eval.md`
+- `docs/sops/grpo-pallas-kernel-bench.md`
 - `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 

@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from plugins.sample.decoding.sid3_constrained_beam_search import constrained_beam_search_sid3
+from plugins.sample.decoding.sid3_constrained_beam_search import constrained_beam_search_sid3_prefill
 from plugins.sample.constraints.sid_trie import build_sid_trie_from_index
 from plugins.sft.metrics import RankingMetrics, compute_hr_ndcg
 from plugins.sft.sid_utils import load_valid_sids_from_info
@@ -32,6 +32,17 @@ def _newline_suffix_token_ids(tokenizer: Any) -> list[int]:
         lcp += 1
     suffix = [int(x) for x in with_nl[lcp:]]
     return suffix
+
+
+_DEFAULT_PREFILL_BUCKETS = (128, 256, 512, 1024, 2048, 4096, 8192)
+
+
+def _find_prefill_length(desired_length: int) -> int:
+    desired_length = int(desired_length)
+    for num in _DEFAULT_PREFILL_BUCKETS:
+        if int(num) >= desired_length:
+            return int(num)
+    raise ValueError(f"No prefill bucket found for desired_length={desired_length}")
 
 
 def evaluate_sid_next_item_jax(
@@ -63,29 +74,32 @@ def evaluate_sid_next_item_jax(
     except Exception:  # pragma: no cover - optional dep
         tqdm = None  # type: ignore[assignment]
 
-    # Precompute prompt lengths.
-    #
-    # NOTE: The underlying model cache assumes a shared `end_index` across the
-    # batch, so we still bucket by true prompt length. However, to avoid JIT
-    # recompilation per bucket, we right-pad prompts to a fixed `pad_len`
-    # (same shape for all buckets) and pass the bucket's true prompt length to
-    # the beam search as `prompt_true_len`.
+    # Bucket prompts by sampler-style prefill lengths (128/256/512/...) so we:
+    # - keep a shared cache `end_index` within each batch (required by the model),
+    # - still support per-sample true prompt lengths via `prompt_true_len`.
     prompt_lens = [len(eval_dataset[i]["input_ids"]) for i in range(n)]
     if not prompt_lens:
         raise ValueError("Empty eval_dataset")
-    pad_len = int(max(prompt_lens))
+    suffix_len = int(len(newline_suffix) + 1)  # +EOS appended by beam search
+
     buckets: dict[int, list[int]] = {}
-    for i, l in enumerate(prompt_lens):
-        buckets.setdefault(int(l), []).append(i)
+    for i, prompt_len in enumerate(prompt_lens):
+        prefill_len = _find_prefill_length(int(prompt_len))
+        max_pos = int(prefill_len) + 2 + int(suffix_len)
+        if int(max_cache_length) <= max_pos:
+            raise ValueError(
+                f"max_cache_length too small: need > {max_pos} (prefill_len={int(prefill_len)}, suffix_len={suffix_len})"
+            )
+        buckets.setdefault(int(prefill_len), []).append(i)
 
     predictions: list[list[str]] = [None] * n  # type: ignore[list-item]
     print(
-        f"[eval] samples={n} buckets={len(buckets)} batch_size={int(batch_size)} "
-        f"num_beams={int(num_beams)} max_cache_length={int(max_cache_length)} pad_len={int(pad_len)}"
+        f"[eval] samples={n} prefill_buckets={len(buckets)} batch_size={int(batch_size)} "
+        f"num_beams={int(num_beams)} max_cache_length={int(max_cache_length)}"
     )
 
     def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_len: jax.Array):
-        out = constrained_beam_search_sid3(
+        out = constrained_beam_search_sid3_prefill(
             model=model,
             params=params_in,
             prompt_input_ids=prompt_input_ids,
@@ -100,15 +114,15 @@ def evaluate_sid_next_item_jax(
     beam_search_jit = jax.jit(_beam_search)
     pad_token_id = int(getattr(tokenizer, "pad_token_id", 0) or 0)
 
-    compiled_once = False
-    for prompt_len, idxs in sorted(buckets.items()):
+    compiled_prefills: set[int] = set()
+    for prefill_len, idxs in sorted(buckets.items()):
         n_bucket = int(len(idxs))
         chunks = (n_bucket + int(batch_size) - 1) // int(batch_size)
-        print(f"[eval] prompt_len={int(prompt_len)} bucket_samples={n_bucket} chunks={chunks}")
+        print(f"[eval] prefill_len={int(prefill_len)} bucket_samples={n_bucket} chunks={chunks}")
 
         starts = range(0, len(idxs), int(batch_size))
         if tqdm is not None:
-            starts = tqdm(starts, total=chunks, desc=f"eval len={int(prompt_len)}", mininterval=1.0)
+            starts = tqdm(starts, total=chunks, desc=f"eval prefill={int(prefill_len)}", mininterval=1.0)
 
         for start in starts:
             chunk = idxs[start : start + int(batch_size)]
@@ -117,21 +131,21 @@ def evaluate_sid_next_item_jax(
                 chunk = chunk + [chunk[-1]] * (int(batch_size) - real_chunk)
 
             prompt_ids = [eval_dataset[i]["input_ids"] for i in chunk]
-            # Right-pad prompts to `pad_len` so shapes stay constant across buckets.
-            prompt_np = np.full((int(batch_size), int(pad_len)), pad_token_id, dtype=np.int32)
+            # Right-pad prompts to the bucket's `prefill_len`.
+            prompt_np = np.full((int(batch_size), int(prefill_len)), pad_token_id, dtype=np.int32)
             for row, ids in enumerate(prompt_ids):
                 ids_np = np.asarray(ids, dtype=np.int32)
                 prompt_np[row, : ids_np.shape[0]] = ids_np
             prompt = jnp.asarray(prompt_np, dtype=jnp.int32)
-            true_len = jnp.asarray(int(prompt_len), dtype=jnp.int32)
+            true_len = jnp.asarray(np.asarray([len(x) for x in prompt_ids], dtype=np.int32), dtype=jnp.int32)
 
-            if not compiled_once:
+            if int(prefill_len) not in compiled_prefills:
                 t0 = time.perf_counter()
                 token_ids = beam_search_jit(params, prompt, true_len)
                 tok_np = np.asarray(token_ids)  # triggers compilation + blocks
                 dt = time.perf_counter() - t0
-                compiled_once = True
-                print(f"[eval] compiled_dt={dt:.2f}s")
+                compiled_prefills.add(int(prefill_len))
+                print(f"[eval] prefill_len={int(prefill_len)} compiled_dt={dt:.2f}s")
             else:
                 token_ids = beam_search_jit(params, prompt, true_len)
                 tok_np = np.asarray(token_ids)  # [B, K, 3]
@@ -210,23 +224,21 @@ class SidNextItemJaxEvaluator:
 
         self._pad_token_id = int(getattr(tokenizer, "pad_token_id", 0) or 0)
         prompt_lens = [len(eval_dataset[i]["input_ids"]) for i in range(n)]
-        pad_len = int(max(prompt_lens))
-        if pad_len <= 0:
-            raise ValueError("Invalid prompt length (pad_len <= 0)")
-        self._pad_len = pad_len
+        suffix_len = int(len(self._newline_suffix) + 1)  # +EOS appended by beam search
 
         buckets: dict[int, list[int]] = {}
-        for i, l in enumerate(prompt_lens):
-            buckets.setdefault(int(l), []).append(i)
+        for i, prompt_len in enumerate(prompt_lens):
+            prefill_len = _find_prefill_length(int(prompt_len))
+            max_pos = int(prefill_len) + 2 + int(suffix_len)
+            if self._max_cache_length <= max_pos:
+                raise ValueError(
+                    f"max_cache_length too small: need > {max_pos} (prefill_len={int(prefill_len)}, suffix_len={suffix_len})"
+                )
+            buckets.setdefault(int(prefill_len), []).append(i)
         self._buckets = buckets
 
-        if self._pad_len > self._max_cache_length:
-            raise ValueError(
-                f"max_cache_length too small for padded prompts: pad_len={self._pad_len} > max_cache_length={self._max_cache_length}"
-            )
-
         def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_len: jax.Array):
-            out = constrained_beam_search_sid3(
+            out = constrained_beam_search_sid3_prefill(
                 model=self._model,
                 params=params_in,
                 prompt_input_ids=prompt_input_ids,
@@ -245,14 +257,15 @@ class SidNextItemJaxEvaluator:
         if self._compiled:
             return
 
-        # Warm-up compile on the largest prompt shape; values do not matter.
-        prompt = jnp.full((self._batch_size, self._pad_len), self._pad_token_id, dtype=jnp.int32)
-        true_len = jnp.asarray(int(min(self._buckets.keys())), dtype=jnp.int32)
-        t0 = time.perf_counter()
-        token_ids = self._beam_search_jit(params, prompt, true_len)
-        _ = np.asarray(token_ids)  # block on compilation
-        dt = time.perf_counter() - t0
-        print(f"[eval] compiled_dt={dt:.2f}s")
+        # Warm-up compile once per prefill bucket shape; values do not matter.
+        for prefill_len in sorted(self._buckets.keys()):
+            prompt = jnp.full((self._batch_size, int(prefill_len)), self._pad_token_id, dtype=jnp.int32)
+            true_len = jnp.full((self._batch_size,), int(prefill_len), dtype=jnp.int32)
+            t0 = time.perf_counter()
+            token_ids = self._beam_search_jit(params, prompt, true_len)
+            _ = np.asarray(token_ids)  # block on compilation
+            dt = time.perf_counter() - t0
+            print(f"[eval] prefill_len={int(prefill_len)} compiled_dt={dt:.2f}s")
         self._compiled = True
 
     def evaluate(
@@ -270,18 +283,18 @@ class SidNextItemJaxEvaluator:
 
         predictions: list[list[str]] = [None] * self._n  # type: ignore[list-item]
         print(
-            f"[eval] samples={self._n} buckets={len(self._buckets)} batch_size={self._batch_size} "
-            f"num_beams={self._num_beams} max_cache_length={self._max_cache_length} pad_len={self._pad_len}"
+            f"[eval] samples={self._n} prefill_buckets={len(self._buckets)} batch_size={self._batch_size} "
+            f"num_beams={self._num_beams} max_cache_length={self._max_cache_length}"
         )
 
-        for prompt_len, idxs in sorted(self._buckets.items()):
+        for prefill_len, idxs in sorted(self._buckets.items()):
             n_bucket = int(len(idxs))
             chunks = (n_bucket + int(self._batch_size) - 1) // int(self._batch_size)
-            print(f"[eval] prompt_len={int(prompt_len)} bucket_samples={n_bucket} chunks={chunks}")
+            print(f"[eval] prefill_len={int(prefill_len)} bucket_samples={n_bucket} chunks={chunks}")
 
             starts = range(0, len(idxs), int(self._batch_size))
             if self._show_progress and tqdm is not None:
-                starts = tqdm(starts, total=chunks, desc=f"eval len={int(prompt_len)}", mininterval=1.0)
+                starts = tqdm(starts, total=chunks, desc=f"eval prefill={int(prefill_len)}", mininterval=1.0)
 
             for start in starts:
                 chunk = idxs[start : start + int(self._batch_size)]
@@ -290,13 +303,13 @@ class SidNextItemJaxEvaluator:
                     chunk = chunk + [chunk[-1]] * (int(self._batch_size) - real_chunk)
 
                 prompt_ids = [self._eval_dataset[i]["input_ids"] for i in chunk]
-                prompt_np = np.full((int(self._batch_size), int(self._pad_len)), self._pad_token_id, dtype=np.int32)
+                prompt_np = np.full((int(self._batch_size), int(prefill_len)), self._pad_token_id, dtype=np.int32)
                 for row, ids in enumerate(prompt_ids):
                     ids_np = np.asarray(ids, dtype=np.int32)
                     prompt_np[row, : ids_np.shape[0]] = ids_np
 
                 prompt = jnp.asarray(prompt_np, dtype=jnp.int32)
-                true_len = jnp.asarray(int(prompt_len), dtype=jnp.int32)
+                true_len = jnp.asarray(np.asarray([len(x) for x in prompt_ids], dtype=np.int32), dtype=jnp.int32)
 
                 token_ids = self._beam_search_jit(params, prompt, true_len)
                 tok_np = np.asarray(token_ids)  # [B, K, 3]

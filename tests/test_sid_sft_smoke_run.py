@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
 
-import torch
+import pytest
+
+pytest.importorskip("jax")
+torch = pytest.importorskip("torch")
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace

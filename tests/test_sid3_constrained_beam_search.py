@@ -1,5 +1,8 @@
 import numpy as np
 
+import pytest
+
+pytest.importorskip("jax")
 import jax.numpy as jnp
 
 import plugins.sample.decoding.sid3_constrained_beam_search as beam_mod
@@ -20,8 +23,8 @@ class DummyModel:
         logits = np.full((batch, seq_len, vocab), -20.0, dtype=np.float32)
         if seq_len > 1:
             # Prefill: pick tok1=2 slightly over tok1=1.
-            logits[:, -1, 1] = -1.0
-            logits[:, -1, 2] = 0.0
+            logits[:, :, 1] = -1.0
+            logits[:, :, 2] = 0.0
             return jnp.asarray(logits), cache
 
         for i, tok in enumerate(input_np[:, -1]):
@@ -92,4 +95,95 @@ def test_constrained_beam_search_sid3_picks_best_sequence(monkeypatch):
     assert token_ids.shape == (1, 2, 3)
     assert token_ids[0, 0].tolist() == [1, 4, 9]
     assert token_ids[0, 1].tolist() == [2, 6, 13]
+
+
+def test_constrained_beam_search_sid3_rejects_vector_true_len():
+    trie = SidTrie(
+        pad_id=-1,
+        eos_token_id=0,
+        vocab_size=32,
+        first_ids=np.asarray([1, 2], dtype=np.int32),
+        second_keys=np.asarray([1, 2], dtype=np.int32),
+        second_table=np.asarray([[3, 4], [5, 6]], dtype=np.int32),
+        third_table=np.asarray(
+            [
+                [[7, 8], [9, 10]],
+                [[11, 12], [13, 14]],
+            ],
+            dtype=np.int32,
+        ),
+    )
+
+    prompt_input_ids = jnp.asarray([[101, 102]], dtype=jnp.int32)
+
+    try:
+        beam_mod.constrained_beam_search_sid3(
+            model=DummyModel(vocab_size=int(trie.vocab_size)),
+            params=None,
+            prompt_input_ids=prompt_input_ids,
+            trie=trie,
+            num_beams=2,
+            max_cache_length=16,
+            suffix_token_ids=None,
+            prompt_true_len=jnp.asarray([2], dtype=jnp.int32),
+        )
+    except ValueError as e:
+        assert "prompt_true_len" in str(e)
+        assert "prefill" in str(e)
+    else:  # pragma: no cover
+        raise AssertionError("Expected ValueError for vector prompt_true_len")
+
+
+def test_constrained_beam_search_sid3_prefill_handles_mixed_lengths(monkeypatch):
+    def dummy_init_cache(_config, batch_size: int, *, max_cache_length: int, dtype):
+        del _config, max_cache_length, dtype
+        return jnp.zeros((int(batch_size), 1), dtype=jnp.int32)
+
+    def dummy_pad_cache_right(cache, prefill_length: int, max_cache_length: int):
+        del prefill_length, max_cache_length
+        return cache
+
+    monkeypatch.setattr(beam_mod, "init_cache", dummy_init_cache)
+    monkeypatch.setattr(beam_mod, "pad_cache_right", dummy_pad_cache_right)
+
+    trie = SidTrie(
+        pad_id=-1,
+        eos_token_id=0,
+        vocab_size=32,
+        first_ids=np.asarray([1, 2], dtype=np.int32),
+        second_keys=np.asarray([1, 2], dtype=np.int32),
+        second_table=np.asarray([[3, 4], [5, 6]], dtype=np.int32),
+        third_table=np.asarray(
+            [
+                [[7, 8], [9, 10]],
+                [[11, 12], [13, 14]],
+            ],
+            dtype=np.int32,
+        ),
+    )
+
+    prompt_input_ids = jnp.asarray(
+        [
+            [101, 102, 0, 0],
+            [201, 202, 203, 0],
+        ],
+        dtype=jnp.int32,
+    )
+    out = beam_mod.constrained_beam_search_sid3_prefill(
+        model=DummyModel(vocab_size=int(trie.vocab_size)),
+        params=None,
+        prompt_input_ids=prompt_input_ids,
+        trie=trie,
+        num_beams=2,
+        max_cache_length=16,
+        suffix_token_ids=None,
+        prompt_true_len=jnp.asarray([2, 3], dtype=jnp.int32),
+    )
+
+    token_ids = np.asarray(out.token_ids)
+    assert token_ids.shape == (2, 2, 3)
+    assert token_ids[0, 0].tolist() == [1, 4, 9]
+    assert token_ids[0, 1].tolist() == [2, 6, 13]
+    assert token_ids[1, 0].tolist() == [1, 4, 9]
+    assert token_ids[1, 1].tolist() == [2, 6, 13]
 

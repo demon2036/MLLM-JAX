@@ -17,7 +17,6 @@ if REPO_ROOT not in sys.path:
 from plugins.common.env import load_dotenv_if_present
 from plugins.training.config import load_config
 from plugins.training.algorithms import AlgoConfig, EstimatorConfig, UpdateConfig
-from plugins.training.runner import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig, run_grpo_gsm8k
 
 
 def _maybe_git_short_sha() -> str | None:
@@ -99,6 +98,8 @@ def _get_int_from_aliases(
 
 
 def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
+    from plugins.training.runner import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig
+
     model_path = str(cfg.get("model_path") or "Qwen/Qwen2.5-3B-Instruct")
     steps = int(cfg.get("steps") or 100)
 
@@ -482,13 +483,23 @@ def main() -> None:
 
     config_path = str(args.config or "")
     cfg_dict = load_config(config_path if config_path else None, args.set)
-    cfg = _cfg_from_dict(cfg_dict, config_path=config_path or "<default>")
+    if args.print_config:
+        rollout = cfg_dict.get("rollout")
+        if not isinstance(rollout, dict):
+            rollout = {}
+            cfg_dict["rollout"] = rollout
+        batch_size = int(rollout.get("batch_size") or 0)
+        n = int(rollout.get("n") or 0)
+        rollout["sequences_global_per_step"] = batch_size * n
+        print(yaml.safe_dump(cfg_dict, sort_keys=False))
+        return
 
+    cfg = _cfg_from_dict(cfg_dict, config_path=config_path or "<default>")
     cfg_out = asdict(cfg)
     cfg_out["rollout"]["sequences_global_per_step"] = int(cfg.rollout.batch_size) * int(cfg.rollout.n)
     print(yaml.safe_dump(cfg_out, sort_keys=False))
-    if args.print_config:
-        return
+
+    from plugins.training.runner import run_grpo_gsm8k
     run_grpo_gsm8k(cfg)
 
 

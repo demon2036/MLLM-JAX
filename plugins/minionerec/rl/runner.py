@@ -137,7 +137,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
     from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 
-    from plugins.sft.jax.beam_search import constrained_beam_search_sid3
+    from plugins.sft.jax.beam_search import constrained_beam_search_sid3_prefill
     from plugins.training.mesh import create_mesh
     from plugins.training.update.train_step import training_step
 
@@ -291,7 +291,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             raise ValueError("rollout.global_length too small for prompt_pad_len + completion")
 
         def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_lens: jax.Array):
-            out = constrained_beam_search_sid3(
+            out = constrained_beam_search_sid3_prefill(
                 model=model,
                 params=params_in,
                 prompt_input_ids=prompt_input_ids,

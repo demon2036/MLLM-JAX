@@ -62,6 +62,7 @@ class TrainGRPOModulePallas(nn.Module):
             advantages=inputs["advantages"],
             cfg=GRPOKernelConfig(
                 block_size=int(self.kernel_cfg.block_size),
+                time_block=int(self.kernel_cfg.time_block),
                 epsilon_low=float(self.epsilon_low),
                 epsilon_high=float(self.epsilon_high),
                 temperature=float(self.temperature),

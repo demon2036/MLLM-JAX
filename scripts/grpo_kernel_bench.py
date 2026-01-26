@@ -48,6 +48,7 @@ class GRPOKernelBenchWandbConfig:
     epsilon_high: float
     temperature: float
     block_size: int
+    time_block: int
 
 
 def main():
@@ -65,6 +66,7 @@ def main():
     p.add_argument("--epsilon_high", type=float, default=0.2)
     p.add_argument("--temperature", type=float, default=1.0)
     p.add_argument("--block_size", type=int, default=2048)
+    p.add_argument("--time_block", type=int, default=8)
     p.add_argument("--wandb_project", type=str, default="mllm-jax-grpo-kernel")
     p.add_argument("--wandb_mode", type=str, default="online")
     p.add_argument("--wandb_name", type=str, default=None)
@@ -99,6 +101,7 @@ def main():
         epsilon_high=float(args.epsilon_high),
         temperature=float(args.temperature),
         block_size=int(args.block_size),
+        time_block=int(args.time_block),
     )
 
     wandb_name = args.wandb_name
@@ -142,6 +145,7 @@ def main():
 
     kernel_cfg = GRPOKernelConfig(
         block_size=int(args.block_size),
+        time_block=int(args.time_block),
         epsilon_low=float(args.epsilon_low),
         epsilon_high=float(args.epsilon_high),
         temperature=float(args.temperature),
@@ -202,7 +206,7 @@ def main():
         "shape": {"batch": int(args.batch), "time": int(args.time), "vocab": int(args.vocab)},
         "dtype": str(dtype),
         "loss": float(jnp.asarray(loss)),
-        "kernel": {"block_size": int(kernel_cfg.block_size)},
+        "kernel": {"block_size": int(kernel_cfg.block_size), "time_block": int(kernel_cfg.time_block)},
         "grpo": {
             "epsilon_low": float(args.epsilon_low),
             "epsilon_high": float(args.epsilon_high),

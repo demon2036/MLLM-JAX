@@ -59,7 +59,9 @@ class GRPOKernelGradcheckConfig:
     temperature: float = 1.0
     old_logp_noise_scale: float = 0.3
 
-    kernel: GRPOKernelConfig = GRPOKernelConfig(block_size=2048, epsilon_low=0.2, epsilon_high=0.3, temperature=1.0)
+    kernel: GRPOKernelConfig = GRPOKernelConfig(
+        block_size=2048, time_block=8, epsilon_low=0.2, epsilon_high=0.3, temperature=1.0
+    )
     tolerances: GradcheckTolerances = GradcheckTolerances()
 
     wandb_project: str = "mllm-jax-grpo-kernel"
@@ -84,6 +86,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOKernelGradch
     if not isinstance(kernel_raw, dict):
         raise TypeError("kernel must be a dict")
     kernel_block_size = int(kernel_raw.get("block_size") or 2048)
+    kernel_time_block = int(kernel_raw.get("time_block") or 8)
 
     tol_raw = cfg.get("tolerances") or {}
     if not isinstance(tol_raw, dict):
@@ -111,6 +114,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOKernelGradch
         old_logp_noise_scale=old_logp_noise_scale,
         kernel=GRPOKernelConfig(
             block_size=kernel_block_size,
+            time_block=kernel_time_block,
             epsilon_low=epsilon_low,
             epsilon_high=epsilon_high,
             temperature=temperature,

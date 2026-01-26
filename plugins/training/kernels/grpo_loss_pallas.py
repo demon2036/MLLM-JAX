@@ -7,6 +7,7 @@ from typing import Any
 @dataclass(frozen=True)
 class GRPOKernelConfig:
     block_size: int = 2048
+    time_block: int = 8
     epsilon_low: float = 0.2
     epsilon_high: float = 0.2
     temperature: float = 1.0
@@ -118,7 +119,11 @@ def _grpo_pallas_fwd(
     from jax.experimental import pallas as pl
     from jax.experimental.pallas import tpu as pltpu
 
-    time_block = 8
+    time_block = int(cfg.time_block)
+    if time_block <= 0:
+        raise ValueError("time_block must be > 0")
+    if time_block % 8 != 0:
+        raise ValueError("time_block must be divisible by 8")
 
     logits, original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
     logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
@@ -260,7 +265,11 @@ def _grpo_pallas_bwd(
     from jax.experimental import pallas as pl
     from jax.experimental.pallas import tpu as pltpu
 
-    time_block = 8
+    time_block = int(cfg.time_block)
+    if time_block <= 0:
+        raise ValueError("time_block must be > 0")
+    if time_block % 8 != 0:
+        raise ValueError("time_block must be divisible by 8")
     original_time = int(dloss.shape[1])
 
     logits, _ = _pad_vocab(logits, block_size=cfg.block_size)
@@ -374,6 +383,7 @@ def build_grpo_per_token_loss_pallas(
 
     cfg = GRPOKernelConfig(
         block_size=int(cfg.block_size),
+        time_block=int(cfg.time_block),
         epsilon_low=float(cfg.epsilon_low),
         epsilon_high=float(cfg.epsilon_high),
         temperature=float(cfg.temperature),

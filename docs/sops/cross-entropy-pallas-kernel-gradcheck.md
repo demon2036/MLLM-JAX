@@ -6,14 +6,27 @@
   - TPU VM: `mllm-jax-v6e-8-spot-260124132428` (`v6e-8`, spot), zone `us-east1-d`
   - Python: `3.12.3` (venv at `/root/venvs/mllm-jax`)
   - JAX/jaxlib/libtpu: `0.9.0` / `0.9.0` / `0.0.34`
-  - Repo: `https://github.com/demon2036/MLLM-JAX.git` @ `cef0a7e`
-  - W&B run: `https://wandb.ai/johntitordemon2036/mllm-jax-ce-kernel/runs/1815sclb`
+  - Repo: `https://github.com/demon2036/MLLM-JAX.git` @ `cef0a7e` (len=64), `4e0e898` (len=2048)
+  - W&B run (len=64): `https://wandb.ai/johntitordemon2036/mllm-jax-ce-kernel/runs/1815sclb`
+  - W&B run (len=2048): `https://wandb.ai/johntitordemon2036/mllm-jax-ce-kernel/runs/tr12ugeg`
 
 ## Goal
 
 - Validate `plugins/training/kernels/tiled_cross_entropy_pallas.py` matches the reference CE computation:
   - Forward: per-token `loss`/`logp` and scalar loss match
   - Backward: `dlogits` matches
+
+## Key gotchas
+
+- **Pallas `pl.BlockSpec` `index_map` semantics**: for `pl.BlockSpec((..., BLOCK), index_map)` with `int` sizes
+  (=> `Blocked`), `index_map` must return **block indices** `(b, t, k)`; Pallas applies the block-size scaling
+  internally. Returning element offsets (e.g. `t * time_block`, `k * block_size`) double-multiplies and breaks
+  correctness (often via OOB reads).
+- **`seq_len` vs kernel time**: `scripts/cross_entropy_kernel_gradcheck.py` uses LM-style shifting
+  (`logits[:, :-1, :]` vs `labels=input_ids[:, 1:]`), so the kernel time dim is `T = seq_len - 1`.
+- **Performance tuning**: `time_block` is the kernel's `L_blk` (time tile). `time_block=8` is correctness-safe but can be
+  too small for good TPU throughput; see `memory/20260126_ce-kernel-len2048/README.md` for a v6e-8 sweep showing
+  steady-state improves significantly at `time_block>=32` (same `block_size=2048`).
 
 ## Steps (commands actually used)
 
@@ -37,6 +50,7 @@
 ### 4) Run the gradcheck script (W&B online)
 
 - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v6e-8-spot-260124132428 --zone us-east1-d --env-file /root/.env --command 'set -euo pipefail; cd /root/MLLM-JAX; /root/venvs/mllm-jax/bin/python -u scripts/cross_entropy_kernel_gradcheck.py --config plugins/training/configs/cross_entropy_kernel_gradcheck_qwen25_1p5b.yaml'`
+- (Windows OpenSSH fallback, actual run) `ssh -i D:\Users\johntitor.wu\.ssh\google_compute_engine -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL root@34.23.119.201 "set -euo pipefail; cd /root/MLLM-JAX; set -a; if [ -f /root/.env ]; then . /root/.env; fi; set +a; /root/venvs/mllm-jax/bin/python -u scripts/cross_entropy_kernel_gradcheck.py --config plugins/training/configs/cross_entropy_kernel_gradcheck_qwen25_1p5b_len2048.yaml"`
 
 ## Expected Result
 
@@ -54,6 +68,7 @@
 ## References
 
 - `memory/20260125_tiled-ce-pallas-kernel/README.md`
+- `memory/20260126_ce-kernel-len2048/README.md`
 - `scripts/cross_entropy_kernel_gradcheck.py`
 - `plugins/training/kernels/tiled_cross_entropy_pallas.py`
 

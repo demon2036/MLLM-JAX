@@ -140,6 +140,7 @@ def _grpo_pallas_fwd(
     cfg: GRPOKernelConfig,
     interpret: bool,
     debug: bool,
+    use_self_old: bool,
 ) -> tuple[Any, Any, Any, int]:
     import functools
 
@@ -170,6 +171,7 @@ def _grpo_pallas_fwd(
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
     temperature = float(cfg.temperature)
+    use_self_old = bool(use_self_old)
     if temperature <= 0:
         raise ValueError("temperature must be > 0")
 
@@ -210,9 +212,8 @@ def _grpo_pallas_fwd(
         block_start = pid_k * block_size
         offset = idx - block_start
         in_range = (offset >= 0) & (offset < block_size)
-        lane_ids = jnp.arange(block_size, dtype=jnp.int32)[None, :]
-        onehot = lane_ids == offset[:, None]
-        chosen_val = jnp.sum(jnp.where(onehot, logits_tile, 0.0), axis=-1)
+        safe_offset = jnp.clip(offset, 0, block_size - 1)
+        chosen_val = jnp.take_along_axis(logits_tile, safe_offset[:, None], axis=-1)[:, 0]
         chosen_ref[:] = jnp.where(in_range, chosen_val, chosen_ref[:])
 
         prev_max = max_ref[:]
@@ -233,8 +234,11 @@ def _grpo_pallas_fwd(
             logp = (chosen_ref[:] - lse) / temperature
             out_logp_ref[0, :, 0] = logp.astype(out_logp_ref.dtype)
 
-            old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
-            ratio = jnp.exp(logp - old_logp)
+            if use_self_old:
+                ratio = jnp.ones_like(logp)
+            else:
+                old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
+                ratio = jnp.exp(logp - old_logp)
             clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
             advantage = advantages_ref[pid_b, 0].astype(jnp.float32)
             loss1 = ratio * advantage
@@ -344,9 +348,8 @@ def _grpo_pallas_fwd_stats(
         block_start = pid_k * block_size
         offset = idx - block_start
         in_range = (offset >= 0) & (offset < block_size)
-        lane_ids = jnp.arange(block_size, dtype=jnp.int32)[None, :]
-        onehot = lane_ids == offset[:, None]
-        chosen_val = jnp.sum(jnp.where(onehot, logits_tile, 0.0), axis=-1)
+        safe_offset = jnp.clip(offset, 0, block_size - 1)
+        chosen_val = jnp.take_along_axis(logits_tile, safe_offset[:, None], axis=-1)[:, 0]
         chosen_ref[:] = jnp.where(in_range, chosen_val, chosen_ref[:])
 
         prev_max = max_ref[:]
@@ -411,6 +414,7 @@ def _grpo_pallas_bwd(
     interpret: bool,
     debug: bool,
     original_vocab: int,
+    use_self_old: bool,
 ) -> Any:
     import functools
 
@@ -438,6 +442,7 @@ def _grpo_pallas_bwd(
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
     temperature = float(cfg.temperature)
+    use_self_old = bool(use_self_old)
     if temperature <= 0:
         raise ValueError("temperature must be > 0")
 
@@ -478,9 +483,13 @@ def _grpo_pallas_bwd(
         probs = jnp.exp(logits_tile - lse_val[:, None])
 
         logp = logps_ref[0, :, 0].astype(jnp.float32)
-        old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
-        ratio = jnp.exp(logp - old_logp)
-        clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
+        if use_self_old:
+            ratio = jnp.ones_like(logp)
+            clipped_ratio = ratio
+        else:
+            old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
+            ratio = jnp.exp(logp - old_logp)
+            clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
 
         advantage = advantages_ref[pid_b, 0].astype(jnp.float32)
         loss1 = ratio * advantage
@@ -532,6 +541,7 @@ def build_grpo_per_token_loss_pallas(
     *,
     interpret: bool = False,
     debug: bool = False,
+    use_self_old: bool = False,
 ):
     import jax
     import jax.numpy as jnp
@@ -554,6 +564,7 @@ def build_grpo_per_token_loss_pallas(
             cfg=cfg,
             interpret=interpret,
             debug=debug,
+            use_self_old=bool(use_self_old),
         )
         return per_token_loss, per_token_logps
 
@@ -566,6 +577,7 @@ def build_grpo_per_token_loss_pallas(
             cfg=cfg,
             interpret=interpret,
             debug=debug,
+            use_self_old=bool(use_self_old),
         )
         outs = (per_token_loss, per_token_logps)
         res = (logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse, original_vocab)
@@ -586,6 +598,7 @@ def build_grpo_per_token_loss_pallas(
             interpret=interpret,
             debug=debug,
             original_vocab=int(original_vocab),
+            use_self_old=bool(use_self_old),
         )
         return (dlogits, None, None, None)
 
@@ -601,6 +614,7 @@ def build_grpo_per_token_loss_pallas_sharded(
     interpret: bool = False,
     debug: bool = False,
     check_vma: bool = False,
+    use_self_old: bool = False,
 ):
     """Build a multi-device GRPO loss using `jax.shard_map`.
 
@@ -653,6 +667,7 @@ def build_grpo_per_token_loss_pallas_sharded(
                 cfg=cfg,
                 interpret=interpret,
                 debug=debug,
+                use_self_old=bool(use_self_old),
             )
             return per_token_loss, per_token_logps, lse
 
@@ -676,6 +691,9 @@ def build_grpo_per_token_loss_pallas_sharded(
 
         temperature = float(cfg.temperature)
         per_token_logps = (chosen_logit - lse) / temperature
+
+        if use_self_old:
+            old_per_token_logps = jax.lax.stop_gradient(per_token_logps)
 
         ratio = jnp.exp(per_token_logps - old_per_token_logps.astype(jnp.float32))
         clipped_ratio = jnp.clip(ratio, 1.0 - float(cfg.epsilon_low), 1.0 + float(cfg.epsilon_high))
@@ -715,6 +733,7 @@ def build_grpo_per_token_loss_pallas_sharded(
             interpret=interpret,
             debug=debug,
             original_vocab=original_vocab,
+            use_self_old=bool(use_self_old),
         )
 
     @jax.custom_vjp
@@ -759,10 +778,11 @@ def grpo_per_token_loss_pallas(
     cfg: GRPOKernelConfig | None = None,
     interpret: bool = False,
     debug: bool = False,
+    use_self_old: bool = False,
 ) -> tuple[Any, Any]:
     if cfg is None:
         cfg = GRPOKernelConfig()
-    fn = build_grpo_per_token_loss_pallas(cfg, interpret=interpret, debug=debug)
+    fn = build_grpo_per_token_loss_pallas(cfg, interpret=interpret, debug=debug, use_self_old=bool(use_self_old))
     return fn(logits, chosen_ids, old_per_token_logps, advantages)
 
 
@@ -792,6 +812,7 @@ def grpo_per_token_loss_pallas_sharded(
     interpret: bool = False,
     debug: bool = False,
     check_vma: bool = False,
+    use_self_old: bool = False,
 ) -> tuple[Any, Any]:
     """Multi-device GRPO per-token loss/logp via `jax.shard_map`."""
     if cfg is None:
@@ -803,6 +824,7 @@ def grpo_per_token_loss_pallas_sharded(
         interpret=interpret,
         debug=debug,
         check_vma=check_vma,
+        use_self_old=bool(use_self_old),
     )
     return fn(logits, chosen_ids, old_per_token_logps, advantages)
 

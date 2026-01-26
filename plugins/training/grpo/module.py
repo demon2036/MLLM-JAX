@@ -51,17 +51,20 @@ class TrainGRPOModulePallas(nn.Module):
         chosen_ids = input_ids[:, 1:]
         mask_loss = labels[:, 1:]
 
+        # We compute the GRPO loss on the usual `[B, T-1]` positions (aligned
+        # with `input_ids[:, 1:]`), but we feed the kernel a `[B, T]` logits
+        # tensor so `T` can be chosen to align with kernel tiling (e.g. `T % 8 == 0`)
+        # without requiring a full-logits padding copy inside the kernel.
         logits_for_loss = logits[..., :-1, :]
+        logits_for_kernel = logits
+        chosen_ids_for_kernel = jnp.pad(chosen_ids, ((0, 0), (0, 1)), constant_values=0)
 
-        if "old_per_token_logps" in inputs:
-            old_per_token_logps = inputs["old_per_token_logps"]
+        use_self_old = "old_per_token_logps" not in inputs
+        if use_self_old:
+            old_per_token_logps = jnp.zeros_like(mask_loss, dtype=jnp.float32)
         else:
-            old_per_token_logps = jnp.take_along_axis(
-                jax.nn.log_softmax(logits_for_loss, axis=-1),
-                chosen_ids[..., None],
-                axis=-1,
-            )[..., 0] / float(self.temperature)
-            old_per_token_logps = jax.lax.stop_gradient(old_per_token_logps)
+            old_per_token_logps = inputs["old_per_token_logps"].astype(jnp.float32)
+        old_per_token_logps_for_kernel = jnp.pad(old_per_token_logps, ((0, 0), (0, 1)), constant_values=0.0)
 
         kernel_cfg = GRPOKernelConfig(
             block_size=int(self.kernel_cfg.block_size),
@@ -73,19 +76,20 @@ class TrainGRPOModulePallas(nn.Module):
 
         if self.mesh is None:
             per_token_loss, per_token_logps = grpo_per_token_loss_pallas(
-                logits=logits_for_loss,
-                chosen_ids=chosen_ids,
-                old_per_token_logps=old_per_token_logps,
+                logits=logits_for_kernel,
+                chosen_ids=chosen_ids_for_kernel,
+                old_per_token_logps=old_per_token_logps_for_kernel,
                 advantages=inputs["advantages"],
                 cfg=kernel_cfg,
                 interpret=bool(self.kernel_interpret),
                 debug=bool(self.kernel_debug),
+                use_self_old=bool(use_self_old),
             )
         else:
             per_token_loss, per_token_logps = grpo_per_token_loss_pallas_sharded(
-                logits=logits_for_loss,
-                chosen_ids=chosen_ids,
-                old_per_token_logps=old_per_token_logps,
+                logits=logits_for_kernel,
+                chosen_ids=chosen_ids_for_kernel,
+                old_per_token_logps=old_per_token_logps_for_kernel,
                 advantages=inputs["advantages"],
                 mesh=self.mesh,
                 cfg=kernel_cfg,
@@ -93,7 +97,11 @@ class TrainGRPOModulePallas(nn.Module):
                 interpret=bool(self.kernel_interpret),
                 debug=bool(self.kernel_debug),
                 check_vma=bool(self.kernel_check_vma),
+                use_self_old=bool(use_self_old),
             )
+
+        per_token_loss = per_token_loss[:, : mask_loss.shape[1]]
+        per_token_logps = per_token_logps[:, : mask_loss.shape[1]]
 
         total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
         loss = (per_token_loss * mask_loss).sum() / total_valid_token_count

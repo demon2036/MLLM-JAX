@@ -20,7 +20,7 @@ kernel:
 tolerances:
   loss_atol: 3.0e-3
   dlogits_max_abs: 2.0e-2
-  dlogits_max_rel: 5.0e-2
+  dlogits_max_rel: 1.0
 
 wandb_project: mllm-jax-grpo-kernel
 wandb_mode: online

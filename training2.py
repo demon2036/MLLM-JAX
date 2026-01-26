@@ -54,17 +54,44 @@ def get_state(
     beta: float = 0.04,
     create_sampler: bool = True,
     tx: Any | None = None,
+    grpo_kernel: Any | None = None,
 ):
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
     model_ref = get_model(mesh, model_path=model_path, only_model=True) if beta != 0 else None
 
-    train_module = flax.linen.remat(TrainGRPOModule,policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)(model=model,
-                                   pad_token_id=tokenizer.pad_token_id,
-                                   ref_model=model_ref,
-                                   num_pre_Q=num_pre_q,
-                                   beta=beta,
-                                   max_lengths=max_lengths,
-                                   )
+    use_pallas_kernel = bool(getattr(grpo_kernel, "enabled", False)) if grpo_kernel is not None else False
+    if use_pallas_kernel:
+        from plugins.training.grpo.module import TrainGRPOModulePallas
+
+        kernel_cfg = getattr(grpo_kernel, "kernel", None)
+        kernel_sharding = getattr(grpo_kernel, "sharding", None)
+        train_module_cls = TrainGRPOModulePallas
+        train_module = flax.linen.remat(
+            train_module_cls,
+            policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims,
+        )(
+            model=model,
+            pad_token_id=tokenizer.pad_token_id,
+            ref_model=model_ref,
+            num_pre_Q=num_pre_q,
+            beta=beta,
+            max_lengths=max_lengths,
+            mesh=mesh,
+            kernel_cfg=kernel_cfg if kernel_cfg is not None else TrainGRPOModulePallas.kernel_cfg,
+            kernel_sharding=kernel_sharding if kernel_sharding is not None else TrainGRPOModulePallas.kernel_sharding,
+        )
+    else:
+        train_module = flax.linen.remat(
+            TrainGRPOModule,
+            policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims,
+        )(
+            model=model,
+            pad_token_id=tokenizer.pad_token_id,
+            ref_model=model_ref,
+            num_pre_Q=num_pre_q,
+            beta=beta,
+            max_lengths=max_lengths,
+        )
 
     # train_module = TrainGRPOModule(
     #     model=model,

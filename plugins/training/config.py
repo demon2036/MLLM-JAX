@@ -46,6 +46,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "warmup_steps": None,
             },
         },
+        # Optional: enable the GRPO Pallas loss kernel (logits-level).
+        "grpo_kernel": {
+            "enabled": False,
+            # Kernel tiling knobs.
+            "kernel": {
+                "block_size": 2048,
+                "time_block": 8,
+            },
+            # shard_map wrapper knobs (only relevant for multi-device).
+            "sharding": {
+                "batch_axes": ["dp", "fsdp"],
+                # Set to "tp" only if the vocab/logits dimension is sharded across tp.
+                "vocab_axis": None,
+            },
+        },
     },
     # Algorithm (advantage estimator + update wiring).
     #

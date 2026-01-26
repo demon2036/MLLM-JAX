@@ -17,7 +17,14 @@ if REPO_ROOT not in sys.path:
 from plugins.common.env import load_dotenv_if_present
 from plugins.training.config import load_config
 from plugins.training.algorithms import AlgoConfig, EstimatorConfig, UpdateConfig
-from plugins.training.runner import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig, run_grpo_gsm8k
+from plugins.training.kernels.grpo_loss_pallas import GRPOKernelConfig, GRPOKernelShardingSpec
+from plugins.training.runner import (
+    GRPOGsm8kConfig,
+    GRPOKernelLossConfig,
+    GRPORolloutConfig,
+    GRPOTrainConfig,
+    run_grpo_gsm8k,
+)
 
 
 def _maybe_git_short_sha() -> str | None:
@@ -252,6 +259,44 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     else:
         raise ValueError(f"train.optimizer must be a dict or string, got {type(optimizer_raw).__name__}")
 
+    grpo_kernel_loss_cfg = GRPOKernelLossConfig()
+    grpo_kernel_raw = _get_by_path(cfg, "train.grpo_kernel")
+    if grpo_kernel_raw is not None:
+        if not isinstance(grpo_kernel_raw, dict):
+            raise TypeError("train.grpo_kernel must be a dict")
+
+        enabled = bool(grpo_kernel_raw.get("enabled") or False)
+
+        kernel_params = grpo_kernel_raw.get("kernel")
+        if kernel_params is None:
+            kernel_params = grpo_kernel_raw
+        if not isinstance(kernel_params, dict):
+            raise TypeError("train.grpo_kernel.kernel must be a dict")
+
+        block_size = int(kernel_params.get("block_size") or grpo_kernel_loss_cfg.kernel.block_size)
+        time_block = int(kernel_params.get("time_block") or grpo_kernel_loss_cfg.kernel.time_block)
+
+        sharding_params = grpo_kernel_raw.get("sharding") or {}
+        if not isinstance(sharding_params, dict):
+            raise TypeError("train.grpo_kernel.sharding must be a dict")
+
+        batch_axes_raw = sharding_params.get("batch_axes")
+        if batch_axes_raw is None:
+            batch_axes = grpo_kernel_loss_cfg.sharding.batch_axes
+        elif isinstance(batch_axes_raw, str):
+            batch_axes = tuple(ax.strip() for ax in batch_axes_raw.split(",") if ax.strip())
+        else:
+            batch_axes = tuple(str(ax) for ax in batch_axes_raw)
+
+        vocab_axis_raw = sharding_params.get("vocab_axis", grpo_kernel_loss_cfg.sharding.vocab_axis)
+        vocab_axis = None if vocab_axis_raw in (None, "", "none", "null") else str(vocab_axis_raw)
+
+        grpo_kernel_loss_cfg = GRPOKernelLossConfig(
+            enabled=enabled,
+            kernel=GRPOKernelConfig(block_size=block_size, time_block=time_block),
+            sharding=GRPOKernelShardingSpec(batch_axes=batch_axes, vocab_axis=vocab_axis),
+        )
+
     wandb_project = str(cfg.get("wandb_project") or "mllm-jax-grpo-gsm8k")
 
     wandb_mode_raw = cfg.get("wandb_mode")
@@ -410,6 +455,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             grad_accum_steps=grad_accum_steps,
             beta=beta,
             optimizer=optimizer_cfg,
+            grpo_kernel=grpo_kernel_loss_cfg,
         ),
         mesh_shape=mesh_shape,
         wandb_project=wandb_project,

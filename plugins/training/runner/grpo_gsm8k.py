@@ -19,6 +19,8 @@ from plugins.training.update.optimizer import OptimizerConfig
 from plugins.training.algorithms import AlgoConfig, create_algorithm
 from plugins.training.ppo import get_ppo_state, ppo_training_step
 
+from plugins.training.kernels.grpo_loss_pallas import GRPOKernelConfig, GRPOKernelShardingSpec
+
 @dataclass(frozen=True)
 class GRPORolloutConfig:
     # Prompt batch size per training step (global, across all processes).
@@ -35,6 +37,15 @@ class GRPORolloutConfig:
 
 
 @dataclass(frozen=True)
+class GRPOKernelLossConfig:
+    """Config for enabling the GRPO Pallas loss kernel in training."""
+
+    enabled: bool = False
+    kernel: GRPOKernelConfig = field(default_factory=GRPOKernelConfig)
+    sharding: GRPOKernelShardingSpec = field(default_factory=GRPOKernelShardingSpec)
+
+
+@dataclass(frozen=True)
 class GRPOTrainConfig:
     # Optional: sequences per process per micro-step.
     micro_batch_size: int | None = None
@@ -45,6 +56,7 @@ class GRPOTrainConfig:
     grad_accum_steps: int = 1
     beta: float = 0.0
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    grpo_kernel: GRPOKernelLossConfig = field(default_factory=GRPOKernelLossConfig)
 
 
 @dataclass(frozen=True)
@@ -447,6 +459,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             beta=cfg.train.beta,
             create_sampler=True,
             tx=tx,
+            grpo_kernel=cfg.train.grpo_kernel,
         )
         train_fn = jax.jit(training_step, donate_argnums=(0,))
     if os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1":

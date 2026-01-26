@@ -6,10 +6,42 @@ from typing import Any
 
 @dataclass(frozen=True)
 class GRPOKernelConfig:
+    """Configuration for the logits-level GRPO Pallas kernel.
+
+    This kernel computes (per token):
+      - selective log-prob for the chosen token id
+      - GRPO clipped objective term (no KL term in this repo by default)
+
+    Notes:
+    - This is a *logits-level* kernel: it does not fuse the LM head matmul.
+    - The kernel streams over vocab tiles (`block_size`) and avoids materializing
+      `log_softmax(logits)` (shape `[B,T,V]`), which reduces peak memory.
+    - `time_block` controls how many time steps are processed per program.
+    - Mosaic Pallas kernels are not SPMD auto-partitionable; multi-device usage
+      must wrap the call via `jax.experimental.shard_map` (implemented in this
+      repo as a separate wrapper).
+    """
+
     block_size: int = 2048
+    time_block: int = 8
     epsilon_low: float = 0.2
     epsilon_high: float = 0.2
     temperature: float = 1.0
+
+
+@dataclass(frozen=True)
+class GRPOKernelShardingSpec:
+    """Logical axis names for shard_map wrapping.
+
+    Contract:
+    - Batch is typically sharded across ("dp","fsdp") and replicated over "tp".
+    - If the vocab axis is sharded (e.g. tensor-parallel LM head), set
+      `vocab_axis="tp"` and use the sharded wrapper (see this module's
+      `grpo_per_token_loss_*` APIs).
+    """
+
+    batch_axes: tuple[str, ...] = ("dp", "fsdp")
+    vocab_axis: str | None = None
 
 
 def _ceil_div(a: int, b: int) -> int:
@@ -77,6 +109,8 @@ def grpo_per_token_loss_reference(
       - chosen_ids: [B, T] token ids for each position
       - old_per_token_logps: [B, T]
       - advantages: [B]
+      - temperature semantics in this repo: `log_softmax(logits) / temperature`
+        (note: this is NOT the same as `log_softmax(logits / temperature)`).
 
     Returns:
       - per_token_loss: [B, T] float32
@@ -114,7 +148,7 @@ def _grpo_pallas_fwd(
     from jax.experimental import pallas as pl
     from jax.experimental.pallas import tpu as pltpu
 
-    time_block = 8
+    time_block = int(cfg.time_block)
 
     logits, original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
     logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
@@ -136,6 +170,8 @@ def _grpo_pallas_fwd(
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
     temperature = float(cfg.temperature)
+    if temperature <= 0:
+        raise ValueError("temperature must be > 0")
 
     def kernel(
         logits_ref,
@@ -233,6 +269,127 @@ def _grpo_pallas_fwd(
     return per_token_loss, per_token_logps, lse, original_vocab
 
 
+def _grpo_pallas_fwd_stats(
+    *,
+    logits: Any,
+    chosen_ids: Any,
+    cfg: GRPOKernelConfig,
+    interpret: bool,
+    debug: bool,
+) -> tuple[Any, Any, Any]:
+    """Forward pass that returns local softmax stats for vocab-sharded reduce.
+
+    Returns (all float32):
+      - per_token_max: [B, T]
+      - per_token_sumexp: [B, T] where sumexp is computed in the stabilized
+        space (i.e. Σ exp(logits - max)).
+      - per_token_chosen_logit: [B, T] (0.0 when chosen_id is not in-shard)
+    """
+    import functools
+
+    import jax
+    import jax.numpy as jnp
+    from jax.experimental import pallas as pl
+    from jax.experimental.pallas import tpu as pltpu
+
+    time_block = int(cfg.time_block)
+
+    logits, _original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
+    logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
+    chosen_ids, _ = _pad_time(chosen_ids, time_block=time_block, pad_value=-1)
+
+    batch, time, vocab = (int(logits.shape[0]), int(logits.shape[1]), int(logits.shape[2]))
+    time_blocks = int(time // time_block)
+    block_size = int(cfg.block_size)
+    blocks = _ceil_div(vocab, block_size)
+
+    chosen_ids3 = chosen_ids[..., None]
+
+    out_max = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
+    out_sum = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
+    out_chosen = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
+
+    def kernel(
+        logits_ref,
+        chosen_ids_ref,
+        out_max_ref,
+        out_sum_ref,
+        out_chosen_ref,
+        max_ref,
+        sum_ref,
+        chosen_ref,
+    ):
+        pid_k = pl.program_id(2)
+
+        @pl.when(pid_k == 0)
+        def init():
+            max_ref[:] = jnp.full((time_block,), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
+            sum_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
+            chosen_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
+            out_max_ref[...] = jnp.zeros_like(out_max_ref)
+            out_sum_ref[...] = jnp.zeros_like(out_sum_ref)
+            out_chosen_ref[...] = jnp.zeros_like(out_chosen_ref)
+
+        logits_tile = logits_ref[0, :, :].astype(jnp.float32)
+
+        idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
+        block_start = pid_k * block_size
+        offset = idx - block_start
+        in_range = (offset >= 0) & (offset < block_size)
+        lane_ids = jnp.arange(block_size, dtype=jnp.int32)[None, :]
+        onehot = lane_ids == offset[:, None]
+        chosen_val = jnp.sum(jnp.where(onehot, logits_tile, 0.0), axis=-1)
+        chosen_ref[:] = jnp.where(in_range, chosen_val, chosen_ref[:])
+
+        prev_max = max_ref[:]
+        prev_sum = sum_ref[:]
+        tile_max = jnp.max(logits_tile, axis=-1)
+        new_max = jnp.maximum(prev_max, tile_max)
+        prev_sum = prev_sum * jnp.exp(prev_max - new_max)
+        tile_sum = jnp.sum(jnp.exp(logits_tile - new_max[:, None]), axis=-1)
+        new_sum = prev_sum + tile_sum
+        max_ref[:] = new_max
+        sum_ref[:] = new_sum
+
+        @pl.when(pid_k == blocks - 1)
+        def out():
+            out_max_ref[0, :, 0] = max_ref[:].astype(out_max_ref.dtype)
+            out_sum_ref[0, :, 0] = sum_ref[:].astype(out_sum_ref.dtype)
+            out_chosen_ref[0, :, 0] = chosen_ref[:].astype(out_chosen_ref.dtype)
+
+    call = pl.pallas_call(
+        functools.partial(kernel),
+        out_shape=(out_max, out_sum, out_chosen),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[
+                pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+            ],
+            out_specs=[
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+            ],
+            grid=(batch, time_blocks, blocks),
+            scratch_shapes=[
+                pltpu.VMEM((time_block,), jnp.float32),
+                pltpu.VMEM((time_block,), jnp.float32),
+                pltpu.VMEM((time_block,), jnp.float32),
+            ],
+        ),
+        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "arbitrary")),
+        interpret=interpret,
+        debug=bool(debug),
+    )
+
+    max3, sum3, chosen3 = call(logits, chosen_ids3)
+    per_token_max = max3[:, :original_time, 0]
+    per_token_sum = sum3[:, :original_time, 0]
+    per_token_chosen = chosen3[:, :original_time, 0]
+    return per_token_max, per_token_sum, per_token_chosen
+
+
 def _grpo_pallas_bwd(
     *,
     dloss: Any,
@@ -254,7 +411,7 @@ def _grpo_pallas_bwd(
     from jax.experimental import pallas as pl
     from jax.experimental.pallas import tpu as pltpu
 
-    time_block = 8
+    time_block = int(cfg.time_block)
     original_time = int(dloss.shape[1])
 
     logits, _ = _pad_vocab(logits, block_size=cfg.block_size)
@@ -273,6 +430,8 @@ def _grpo_pallas_bwd(
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
     temperature = float(cfg.temperature)
+    if temperature <= 0:
+        raise ValueError("temperature must be > 0")
 
     out_dlogits = jax.ShapeDtypeStruct((batch, time, vocab), logits.dtype)
 
@@ -366,6 +525,7 @@ def build_grpo_per_token_loss_pallas(
 
     cfg = GRPOKernelConfig(
         block_size=int(cfg.block_size),
+        time_block=int(cfg.time_block),
         epsilon_low=float(cfg.epsilon_low),
         epsilon_high=float(cfg.epsilon_high),
         temperature=float(cfg.temperature),
@@ -420,6 +580,159 @@ def build_grpo_per_token_loss_pallas(
     return _kernel
 
 
+def build_grpo_per_token_loss_pallas_sharded(
+    cfg: GRPOKernelConfig,
+    *,
+    mesh: Any,
+    sharding: GRPOKernelShardingSpec | None = None,
+    interpret: bool = False,
+    debug: bool = False,
+    check_vma: bool = False,
+):
+    """Build a multi-device GRPO loss using `jax.shard_map`.
+
+    Why this exists:
+    - TPU Mosaic (Pallas) kernels are not SPMD auto-partitionable.
+    - Wrapping the kernel with `jax.shard_map` makes the multi-device mapping
+      explicit, similar to how SplashAttention is invoked in MaxText.
+
+    Current scope:
+    - Supports sharding the *batch* axis across `sharding.batch_axes`.
+    - Assumes the vocab axis is replicated (`sharding.vocab_axis is None`).
+      Vocab sharding is added as a separate step in this repo.
+    """
+    import functools
+
+    import jax
+    import jax.numpy as jnp
+    from jax.sharding import PartitionSpec as PS
+
+    sharding = sharding or GRPOKernelShardingSpec()
+    batch_axes = tuple(str(ax) for ax in sharding.batch_axes if str(ax))
+    vocab_axis = sharding.vocab_axis
+
+    cfg = GRPOKernelConfig(
+        block_size=int(cfg.block_size),
+        time_block=int(cfg.time_block),
+        epsilon_low=float(cfg.epsilon_low),
+        epsilon_high=float(cfg.epsilon_high),
+        temperature=float(cfg.temperature),
+    )
+
+    logits_spec = PS(batch_axes, None, vocab_axis) if vocab_axis is not None else PS(batch_axes, None, None)
+    bt_spec = PS(batch_axes, None)
+    b_spec = PS(batch_axes)
+
+    @functools.partial(
+        jax.shard_map,
+        mesh=mesh,
+        in_specs=(logits_spec, bt_spec, bt_spec, b_spec),
+        out_specs=(bt_spec, bt_spec, bt_spec),
+        check_vma=bool(check_vma),
+    )
+    def _sharded_fwd(logits, chosen_ids, old_per_token_logps, advantages):
+        if vocab_axis is None:
+            per_token_loss, per_token_logps, lse, _original_vocab = _grpo_pallas_fwd(
+                logits=logits,
+                chosen_ids=chosen_ids,
+                old_per_token_logps=old_per_token_logps,
+                advantages=advantages,
+                cfg=cfg,
+                interpret=interpret,
+                debug=debug,
+            )
+            return per_token_loss, per_token_logps, lse
+
+        tp_index = jax.lax.axis_index(vocab_axis)
+        vocab_per_shard = int(logits.shape[-1])
+        vocab_start = tp_index * vocab_per_shard
+        chosen_ids_local = chosen_ids.astype(jnp.int32) - jnp.asarray(vocab_start, dtype=jnp.int32)
+
+        max_local, sum_local, chosen_local = _grpo_pallas_fwd_stats(
+            logits=logits,
+            chosen_ids=chosen_ids_local,
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+        )
+
+        max_global = jax.lax.pmax(max_local, axis_name=vocab_axis)
+        sum_global = jax.lax.psum(sum_local * jnp.exp(max_local - max_global), axis_name=vocab_axis)
+        lse = max_global + jnp.log(sum_global)
+        chosen_logit = jax.lax.psum(chosen_local, axis_name=vocab_axis)
+
+        temperature = float(cfg.temperature)
+        per_token_logps = (chosen_logit - lse) / temperature
+
+        ratio = jnp.exp(per_token_logps - old_per_token_logps.astype(jnp.float32))
+        clipped_ratio = jnp.clip(ratio, 1.0 - float(cfg.epsilon_low), 1.0 + float(cfg.epsilon_high))
+
+        advantages = advantages.astype(jnp.float32)
+        per_token_loss1 = ratio * advantages[..., None]
+        per_token_loss2 = clipped_ratio * advantages[..., None]
+        per_token_loss = -jnp.minimum(per_token_loss1, per_token_loss2)
+        return per_token_loss.astype(jnp.float32), per_token_logps.astype(jnp.float32), lse.astype(jnp.float32)
+
+    @functools.partial(
+        jax.shard_map,
+        mesh=mesh,
+        in_specs=(bt_spec, logits_spec, bt_spec, bt_spec, b_spec, bt_spec, bt_spec),
+        out_specs=logits_spec,
+        check_vma=bool(check_vma),
+    )
+    def _sharded_bwd(dloss, logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse):
+        if vocab_axis is None:
+            chosen_ids_local = chosen_ids
+            original_vocab = int(logits.shape[-1])
+        else:
+            tp_index = jax.lax.axis_index(vocab_axis)
+            vocab_per_shard = int(logits.shape[-1])
+            vocab_start = tp_index * vocab_per_shard
+            chosen_ids_local = chosen_ids.astype(jnp.int32) - jnp.asarray(vocab_start, dtype=jnp.int32)
+            original_vocab = vocab_per_shard
+        return _grpo_pallas_bwd(
+            dloss=dloss,
+            logits=logits,
+            chosen_ids=chosen_ids_local,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+            per_token_logps=per_token_logps,
+            lse=lse,
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+            original_vocab=original_vocab,
+        )
+
+    @jax.custom_vjp
+    def _kernel(logits, chosen_ids, old_per_token_logps, advantages):
+        per_token_loss, per_token_logps, _lse = _sharded_fwd(logits, chosen_ids, old_per_token_logps, advantages)
+        return per_token_loss, per_token_logps
+
+    def fwd(logits, chosen_ids, old_per_token_logps, advantages):
+        per_token_loss, per_token_logps, lse = _sharded_fwd(logits, chosen_ids, old_per_token_logps, advantages)
+        outs = (per_token_loss, per_token_logps)
+        res = (logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse)
+        return outs, res
+
+    def bwd(res, g):
+        logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse = res
+        dloss, _dlogp = g
+        dlogits = _sharded_bwd(
+            dloss.astype(jnp.float32),
+            logits,
+            chosen_ids,
+            old_per_token_logps,
+            advantages,
+            per_token_logps,
+            lse,
+        )
+        return (dlogits, None, None, None)
+
+    _kernel.defvjp(fwd, bwd)
+    return _kernel
+
+
 def grpo_per_token_loss_pallas_default_cfg() -> GRPOKernelConfig:
     return GRPOKernelConfig()
 
@@ -454,10 +767,40 @@ def grpo_per_token_loss_pallas_configured(
     return _fn
 
 
+def grpo_per_token_loss_pallas_sharded(
+    *,
+    logits: Any,
+    chosen_ids: Any,
+    old_per_token_logps: Any,
+    advantages: Any,
+    mesh: Any,
+    cfg: GRPOKernelConfig | None = None,
+    sharding: GRPOKernelShardingSpec | None = None,
+    interpret: bool = False,
+    debug: bool = False,
+    check_vma: bool = False,
+) -> tuple[Any, Any]:
+    """Multi-device GRPO per-token loss/logp via `jax.shard_map`."""
+    if cfg is None:
+        cfg = GRPOKernelConfig()
+    fn = build_grpo_per_token_loss_pallas_sharded(
+        cfg,
+        mesh=mesh,
+        sharding=sharding,
+        interpret=interpret,
+        debug=debug,
+        check_vma=check_vma,
+    )
+    return fn(logits, chosen_ids, old_per_token_logps, advantages)
+
+
 __all__ = [
     "GRPOKernelConfig",
+    "GRPOKernelShardingSpec",
     "grpo_per_token_loss_reference",
     "grpo_per_token_loss_pallas",
     "grpo_per_token_loss_pallas_default_cfg",
     "grpo_per_token_loss_pallas_configured",
+    "build_grpo_per_token_loss_pallas_sharded",
+    "grpo_per_token_loss_pallas_sharded",
 ]

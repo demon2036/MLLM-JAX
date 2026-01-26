@@ -6,7 +6,12 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from plugins.training.kernels.grpo_loss_pallas import GRPOKernelConfig, grpo_per_token_loss_pallas
+from plugins.training.kernels.grpo_loss_pallas import (
+    GRPOKernelConfig,
+    GRPOKernelShardingSpec,
+    grpo_per_token_loss_pallas,
+    grpo_per_token_loss_pallas_sharded,
+)
 
 
 class TrainGRPOModulePallas(nn.Module):
@@ -15,6 +20,7 @@ class TrainGRPOModulePallas(nn.Module):
     model: Any
     pad_token_id: float
     num_pre_Q: int
+    mesh: Any | None = None
     ref_model: Any = None
     beta: float = 0.0
     temperature: float = 1.0
@@ -23,8 +29,10 @@ class TrainGRPOModulePallas(nn.Module):
     epsilon_high: float = 0.3
     entropy_threshold: float = 0.3
     kernel_cfg: GRPOKernelConfig = GRPOKernelConfig()
+    kernel_sharding: GRPOKernelShardingSpec = GRPOKernelShardingSpec()
     kernel_interpret: bool = False
     kernel_debug: bool = False
+    kernel_check_vma: bool = False
 
     def __call__(self, inputs):
         input_ids = inputs["input_ids"]
@@ -55,20 +63,37 @@ class TrainGRPOModulePallas(nn.Module):
             )[..., 0] / float(self.temperature)
             old_per_token_logps = jax.lax.stop_gradient(old_per_token_logps)
 
-        per_token_loss, per_token_logps = grpo_per_token_loss_pallas(
-            logits=logits_for_loss,
-            chosen_ids=chosen_ids,
-            old_per_token_logps=old_per_token_logps,
-            advantages=inputs["advantages"],
-            cfg=GRPOKernelConfig(
-                block_size=int(self.kernel_cfg.block_size),
-                epsilon_low=float(self.epsilon_low),
-                epsilon_high=float(self.epsilon_high),
-                temperature=float(self.temperature),
-            ),
-            interpret=bool(self.kernel_interpret),
-            debug=bool(self.kernel_debug),
+        kernel_cfg = GRPOKernelConfig(
+            block_size=int(self.kernel_cfg.block_size),
+            time_block=int(self.kernel_cfg.time_block),
+            epsilon_low=float(self.epsilon_low),
+            epsilon_high=float(self.epsilon_high),
+            temperature=float(self.temperature),
         )
+
+        if self.mesh is None:
+            per_token_loss, per_token_logps = grpo_per_token_loss_pallas(
+                logits=logits_for_loss,
+                chosen_ids=chosen_ids,
+                old_per_token_logps=old_per_token_logps,
+                advantages=inputs["advantages"],
+                cfg=kernel_cfg,
+                interpret=bool(self.kernel_interpret),
+                debug=bool(self.kernel_debug),
+            )
+        else:
+            per_token_loss, per_token_logps = grpo_per_token_loss_pallas_sharded(
+                logits=logits_for_loss,
+                chosen_ids=chosen_ids,
+                old_per_token_logps=old_per_token_logps,
+                advantages=inputs["advantages"],
+                mesh=self.mesh,
+                cfg=kernel_cfg,
+                sharding=self.kernel_sharding,
+                interpret=bool(self.kernel_interpret),
+                debug=bool(self.kernel_debug),
+                check_vma=bool(self.kernel_check_vma),
+            )
 
         total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
         loss = (per_token_loss * mask_loss).sum() / total_valid_token_count

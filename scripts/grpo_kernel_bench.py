@@ -180,18 +180,18 @@ def main():
 
     t0 = time.perf_counter()
     loss, grad = loss_and_grad(logits)
-    loss.block_until_ready()
+    jax.block_until_ready((loss, grad))
     first_call_s = time.perf_counter() - t0
 
     for _ in range(int(args.warmup)):
         loss, grad = loss_and_grad(logits)
-        loss.block_until_ready()
+        jax.block_until_ready((loss, grad))
 
     times_s = []
     for _ in range(int(args.iters)):
         t0 = time.perf_counter()
         loss, grad = loss_and_grad(logits)
-        loss.block_until_ready()
+        jax.block_until_ready((loss, grad))
         times_s.append(time.perf_counter() - t0)
 
     mem_after_run = _jsonable_memory_stats(device.memory_stats())
@@ -232,4 +232,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

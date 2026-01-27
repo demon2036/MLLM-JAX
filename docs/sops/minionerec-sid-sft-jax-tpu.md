@@ -91,6 +91,10 @@
     - HR@K (K=[1,3,5,10,20,50]): `[0.08604, 0.11405, 0.13236, 0.15839, 0.19193, 0.24487]`
     - NDCG@K: `[0.08604, 0.10192, 0.10947, 0.11772, 0.12619, 0.13666]`
     - `calc.py` matches `eval_predictions.metrics.json` (invalid=0).
+  - Office (dp4): https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/th63oylh
+    - HR@K (K=[1,3,5,10,20,50]): `[0.09453, 0.12536, 0.13954, 0.15845, 0.18372, 0.23510]`
+    - NDCG@K: `[0.09453, 0.11258, 0.11853, 0.12462, 0.13099, 0.14107]`
+    - `calc.py` matches `eval_predictions.metrics.json` (invalid=0).
 
 - Verified results (2026-01-26, v6e-8 spot, `europe-west4-a`, commit `2eb3786`):
   - Industrial: https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/2sictgwy

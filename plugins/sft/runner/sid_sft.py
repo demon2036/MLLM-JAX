@@ -201,7 +201,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             return jnp.float16
         raise ValueError(f"Unsupported dtype: {name!r}")
 
-    mesh = create_mesh_from_config(cfg.jax.mesh_shape)
+    mesh = create_mesh_from_config(cfg.jax.mesh_shape, device=cfg.device)
     compute_dtype = parse_dtype(cfg.jax.compute_dtype)
     param_dtype = parse_dtype(cfg.jax.param_dtype)
 

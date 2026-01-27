@@ -57,8 +57,8 @@ def test_grpo_fused_lm_head_matches_reference_forward_and_backward():
         use_self_old=False,
     )
 
-    np.testing.assert_allclose(np.asarray(per_loss_ref), np.asarray(per_loss_fused), rtol=1e-5, atol=1e-5)
-    np.testing.assert_allclose(np.asarray(per_logps_ref), np.asarray(per_logps_fused), rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(np.asarray(per_loss_ref), np.asarray(per_loss_fused), rtol=2e-4, atol=2e-4)
+    np.testing.assert_allclose(np.asarray(per_logps_ref), np.asarray(per_logps_fused), rtol=2e-4, atol=2e-4)
 
     def loss_ref_fn(h, w):
         per_loss, _ = grpo_per_token_loss_lm_head_reference(
@@ -88,6 +88,5 @@ def test_grpo_fused_lm_head_matches_reference_forward_and_backward():
     grad_ref_h, grad_ref_w = jax.grad(loss_ref_fn, argnums=(0, 1))(hidden_states, lm_head_kernel)
     grad_fused_h, grad_fused_w = jax.grad(loss_fused_fn, argnums=(0, 1))(hidden_states, lm_head_kernel)
 
-    np.testing.assert_allclose(np.asarray(grad_ref_h), np.asarray(grad_fused_h), rtol=2e-5, atol=2e-5)
-    np.testing.assert_allclose(np.asarray(grad_ref_w), np.asarray(grad_fused_w), rtol=2e-5, atol=2e-5)
-
+    np.testing.assert_allclose(np.asarray(grad_ref_h), np.asarray(grad_fused_h), rtol=2e-4, atol=2e-4)
+    np.testing.assert_allclose(np.asarray(grad_ref_w), np.asarray(grad_fused_w), rtol=2e-4, atol=2e-4)

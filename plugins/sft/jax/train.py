@@ -32,9 +32,28 @@ def _device_batch_size(mesh: Mesh, micro_batch_size_per_replica: int) -> int:
     return int(micro_batch_size_per_replica) * replicas
 
 
-def create_mesh_from_config(mesh_shape: str) -> Mesh:
-    # Reuse the GRPO mesh logic: "auto" builds a safe host-local mesh on multi-host TPUs.
-    return create_mesh(str(mesh_shape))
+def create_mesh_from_config(mesh_shape: str, *, device: str | None = None) -> Mesh:
+    """Create a Mesh for SID SFT.
+
+    Note: pytest's SID SFT smoke test sets `device="cpu"` even on TPU VMs; the
+    mesh must then be built from CPU devices (not the TPU devices) so the tiny
+    batch sizes remain compatible with sharding.
+    """
+    device_norm = str(device or "").strip().lower()
+    mesh_shape_norm = str(mesh_shape or "").strip()
+
+    if device_norm in {"cpu", "host"}:
+        devices = jax.devices("cpu")
+        if not devices:
+            raise RuntimeError("Requested device=cpu but no CPU devices are available in this JAX runtime.")
+
+        shape = mesh_shape_norm if mesh_shape_norm and mesh_shape_norm.lower() != "auto" else "1,-1,1"
+
+        from MLLM_JAX.utils import get_jax_mesh2
+
+        return get_jax_mesh2(shape, devices=devices)
+
+    return create_mesh(mesh_shape_norm or "auto")
 
 
 def run_sft_train(

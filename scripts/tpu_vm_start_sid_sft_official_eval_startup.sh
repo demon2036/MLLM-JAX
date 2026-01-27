@@ -1,7 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-exec > >(tee -a /var/log/tpu_startup_sid_sft_official_eval.log) 2>&1
+LOG_FILE="/var/log/tpu_startup_sid_sft_official_eval.log"
+if command -v logger >/dev/null 2>&1; then
+  exec > >(tee -a "$LOG_FILE" | logger -t tpu-startup-sid-sft) 2>&1
+else
+  exec > >(tee -a "$LOG_FILE") 2>&1
+fi
+
+log() {
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"
+}
+
+trap 'log "startup failed at line $LINENO";' ERR
+
+log "startup begin"
 
 meta() {
   curl -fsSL -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1" || true
@@ -55,6 +68,21 @@ fi
 conda activate mllm-jax
 
 python -m pip install -U pip
+python -m pip install -U wandb
+python - <<'PY'
+import os
+import time
+import wandb
+
+project = os.environ.get("WANDB_PROJECT", "minionerec-sid-sft")
+run = wandb.init(
+    project=project,
+    name=f"sid-sft-startup-{int(time.time())}",
+    mode=os.environ.get("WANDB_MODE", "online"),
+)
+run.log({"startup/heartbeat": 1})
+run.finish()
+PY
 python -m pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 python -m pip install -U torch --index-url https://download.pytorch.org/whl/cpu
 

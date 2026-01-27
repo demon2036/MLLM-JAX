@@ -15,8 +15,8 @@ from plugins.sample.decoding.sid3_constrained_beam_search import (
     constrained_beam_search_sid3_prefill,
 )
 from plugins.sample.constraints.sid_trie import build_sid_trie_from_index
-from plugins.sft.metrics import RankingMetrics, compute_hr_ndcg
-from plugins.sft.sid_utils import load_valid_sids_from_info
+from projects.sid_sft.metrics import RankingMetrics, compute_hr_ndcg
+from projects.sid_sft.sid_utils import load_valid_sids_from_info
 
 
 def _decode_sid_triplet(tokenizer: Any, triplet: list[int]) -> str:

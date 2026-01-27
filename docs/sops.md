@@ -5,14 +5,14 @@
 - Repo setup: `docs/sops/repo-setup.md`
 - Clone reference repos into `workdir/`: `docs/sops/clone-reference-repos-into-workdir.md`
 - Clone AkaliKong/MiniOneRec into repo workdir: `docs/sops/clone-akalikong-minionerec-workdir.md`
-- MiniOneRec SID SFT + eval (plugins/sft): `docs/sops/minionerec-sid-sft-and-eval.md`
+- MiniOneRec SID SFT + eval (projects/sid_sft): `docs/sops/minionerec-sid-sft-and-eval.md`
 - Inspect SFT + GRPO GSM8K data stack: `docs/sops/inspect-sft-grpo-data-stack.md`
-- Scan plugins/sft for Torch remnants: `docs/sops/scan-plugins-sft-torch-remnants.md`
+- Scan projects/sid_sft for Torch remnants: `docs/sops/scan-plugins-sft-torch-remnants.md`
 - Inspect loader + sampler stack (SFT vs GRPO): `docs/sops/inspect-loader-sampler-sft-grpo.md`
 - Inspect mesh/sharding/optimizer/checkpoint duplication: `docs/sops/inspect-mesh-sharding-optimizer-duplication.md`
-- Make plugins/sft JAX-only (remove torch): `docs/sops/plugins-sft-jax-only-remove-torch.md`
+- Make projects/sid_sft JAX-only (remove torch): `docs/sops/plugins-sft-jax-only-remove-torch.md`
 - Inspect plugin utility duplicates: `docs/sops/inspect-plugin-utility-duplicates.md`
-- Refactor plan to consolidate `plugins/sft` + `plugins/training`: `docs/sops/plugins-refactor-sft-training-consolidation.md`
+- Refactor plan to consolidate `projects/sid_sft` + `plugins/training`: `docs/sops/plugins-refactor-sft-training-consolidation.md`
 - Add `plugins/common/` shared abstractions: `docs/sops/plugins-common-shared-abstractions.md`
 - Add `plugins/sample/` shared sampling package: `docs/sops/plugins-sample-shared-sampling.md`
 - Vendor MLLM sampler into `plugins/sample/`: `docs/sops/plugins-sample-vendor-mllm-sampler.md`

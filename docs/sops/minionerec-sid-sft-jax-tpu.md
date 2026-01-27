@@ -1,6 +1,6 @@
 # SOP: Run MiniOneRec SID SFT + eval on TPU (JAX backend)
 
-- **Title**: SOP: Run MiniOneRec SID SFT + constrained-decoding HR@K/NDCG@K eval on TPU via `plugins/sft/` (JAX)
+- **Title**: SOP: Run MiniOneRec SID SFT + constrained-decoding HR@K/NDCG@K eval on TPU via `projects/sid_sft/` (JAX)
 - **Prereqs**: TPU VM reachable via `gcloud ... tpu-vm ssh`; repo synced via Git; local `.env` containing `WANDB_API_KEY` synced to TPU (e.g. `/root/.env`); network access for HF model downloads
 - **Environment (verified)**:
   - TPU VM `v4-8` (spot), Ubuntu `22.04.2`, Python `3.12.12` (conda), JAX `0.9.0` + `libtpu 0.0.34`
@@ -116,4 +116,4 @@
 ## References
 
 - Upstream metrics script: `workdir/MiniOneRec/calc.py`
-- Plugin entrypoints: `scripts/run_sid_sft.py`, `plugins/sft/runner/sid_sft.py`
+- Project entrypoints: `scripts/run_sid_sft.py`, `projects/sid_sft/runner/sid_sft.py`

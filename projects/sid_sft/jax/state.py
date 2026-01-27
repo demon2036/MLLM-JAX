@@ -11,7 +11,7 @@ from jax.sharding import Mesh, NamedSharding
 
 from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 
-from plugins.sft.jax.sft_module import TrainSftModule
+from projects.sid_sft.jax.sft_module import TrainSftModule
 
 from plugins.training.update.optimizer import LRScheduleConfig, OptimizerConfig, build_tx
 

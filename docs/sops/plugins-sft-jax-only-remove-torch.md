@@ -1,13 +1,13 @@
-# SOP: Make `plugins/sft/` JAX-only (no torch imports)
+# SOP: Make `projects/sid_sft/` JAX-only (no torch imports)
 
-- **Title**: SOP: Remove Torch dependencies from `plugins/sft/` and validate JAX-only SFT + eval
+- **Title**: SOP: Remove Torch dependencies from `projects/sid_sft/` and validate JAX-only SFT + eval
 - **Prereqs**: `rg` (ripgrep); a valid `WANDB_API_KEY` in `.env` for the W&B-online smoke
 - **Environment (verified)**: Linux `6.14.0-37-generic`; Python `3.12.2`; JAX `0.8.2`; ripgrep `15.1.0`
 
 ## Steps (commands actually run)
 
-- Confirm `plugins/sft/` has no `torch` references:
-  - `rg -n "\\btorch\\b" plugins/sft || true`
+- Confirm `projects/sid_sft/` has no `torch` references:
+  - `rg -n "\\btorch\\b" projects/sid_sft || true`
 
 - Run unit tests:
   - `python -m pytest -q`

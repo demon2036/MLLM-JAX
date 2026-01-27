@@ -13,8 +13,8 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 from plugins.training.mesh import create_mesh
 from plugins.training.update.train_step import training_step
 
-from plugins.sft.jax.data import batched, collate_sft_batch, iter_indices
-from plugins.sft.jax.state import SftStateBundle, create_sft_state
+from projects.sid_sft.jax.data import batched, collate_sft_batch, iter_indices
+from projects.sid_sft.jax.state import SftStateBundle, create_sft_state
 
 
 @dataclass(frozen=True)

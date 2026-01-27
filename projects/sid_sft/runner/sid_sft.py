@@ -9,13 +9,13 @@ import numpy as np
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-from plugins.sft.datasets.concat_dataset import ConcatDataset
-from plugins.sft.datasets.eval_sid_next_item import SidNextItemEvalDataset
-from plugins.sft.datasets.fusion_seq_rec import FusionSeqRecSftDataset
-from plugins.sft.datasets.sid_item_alignment import SidItemAlignmentDataset
-from plugins.sft.datasets.sid_next_item import SidNextItemSftDataset
-from plugins.sft.jax.evaluator import SidNextItemJaxEvaluator, evaluate_sid_next_item_jax
-from plugins.sft.tokens import maybe_extend_tokenizer
+from projects.sid_sft.datasets.concat_dataset import ConcatDataset
+from projects.sid_sft.datasets.eval_sid_next_item import SidNextItemEvalDataset
+from projects.sid_sft.datasets.fusion_seq_rec import FusionSeqRecSftDataset
+from projects.sid_sft.datasets.sid_item_alignment import SidItemAlignmentDataset
+from projects.sid_sft.datasets.sid_next_item import SidNextItemSftDataset
+from projects.sid_sft.jax.evaluator import SidNextItemJaxEvaluator, evaluate_sid_next_item_jax
+from projects.sid_sft.tokens import maybe_extend_tokenizer
 from plugins.common.wandb_utils import maybe_init_wandb
 from plugins.common.tokenizer import prepare_tokenizer
 
@@ -194,9 +194,9 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
     from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 
-    from plugins.sft.jax.checkpoint import load_checkpoint, save_checkpoint
-    from plugins.sft.jax.params import resize_lm_vocab
-    from plugins.sft.jax.train import create_mesh_from_config, run_sft_train
+    from projects.sid_sft.jax.checkpoint import load_checkpoint, save_checkpoint
+    from projects.sid_sft.jax.params import resize_lm_vocab
+    from projects.sid_sft.jax.train import create_mesh_from_config, run_sft_train
 
     def parse_dtype(name: str) -> Any:
         n = str(name or "float32").strip().lower()

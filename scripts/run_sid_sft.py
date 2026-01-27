@@ -16,8 +16,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from plugins.common.env import load_dotenv_if_present
-from plugins.sft.config import DEFAULT_CONFIG, load_config
-from plugins.sft.runner.sid_sft import (
+from projects.sid_sft.config import DEFAULT_CONFIG, load_config
+from projects.sid_sft.runner.sid_sft import (
     SidSftConfig,
     SidSftDataConfig,
     SidSftEvalConfig,
@@ -170,7 +170,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
 def main() -> None:
     load_dotenv_if_present(repo_root=REPO_ROOT)
 
-    parser = ArgumentParser(description="Run MiniOneRec SID SFT (plugins/sft).")
+    parser = ArgumentParser(description="Run MiniOneRec SID SFT (projects/sid_sft).")
     parser.add_argument("--config", type=str, default=None, help="Path to a YAML config file.")
     parser.add_argument("--run-mode", type=str, default="train_eval", choices=["train", "eval", "train_eval"])
     parser.add_argument("--print-config", action="store_true", help="Print the resolved config and exit.")

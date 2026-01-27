@@ -12,8 +12,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from plugins.common.env import load_dotenv_if_present
-from plugins.nano_gpt.config import load_config
-from plugins.nano_gpt.runner import run_nano_gpt
+from projects.nano_gpt.config import load_config
+from projects.nano_gpt.runner import run_nano_gpt
 
 
 def main() -> None:
@@ -37,4 +37,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -16,7 +16,7 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
     import optax
     from flax.training import checkpoints, train_state
 
-    from plugins.nano_gpt.data import prepare_tinyshakespeare_char, sample_batch
+    from projects.nano_gpt.data import prepare_tinyshakespeare_char, sample_batch
     from plugins.nano_gpt.model import GPT, GPTConfig, parse_dtype
 
     seed = int(cfg.get("seed", 1337))

@@ -6,8 +6,8 @@
 
 ## Goal
 
-- Move SFT eval constrained decoding (SID3 beam search) out of `plugins/sft/jax/` into `plugins/sample/` so it can be reused by other pipelines without merging folders.
-- Keep backward compatibility by leaving thin re-export shims under `plugins/sft/jax/`.
+- Move SFT eval constrained decoding (SID3 beam search) out of `projects/sid_sft/jax/` into `plugins/sample/` so it can be reused by other pipelines without merging folders.
+- Keep backward compatibility by leaving thin re-export shims under `projects/sid_sft/jax/`.
 
 ## Steps (commands actually used)
 
@@ -29,10 +29,10 @@
   - `plugins/sample/constraints/sid_trie.py` (SidTrie builder for constrained decoding)
   - `plugins/sample/decoding/sid3_constrained_beam_search.py` (SID3 constrained beam search)
 - Back-compat shims:
-  - `plugins/sft/jax/sid_trie.py`
-  - `plugins/sft/jax/beam_search.py`
+  - `projects/sid_sft/jax/sid_trie.py`
+  - `projects/sid_sft/jax/beam_search.py`
 - Callers use canonical imports:
-  - `plugins/sft/jax/evaluator.py`
+  - `projects/sid_sft/jax/evaluator.py`
 - Unit tests exist and pass:
   - `tests/test_sid_trie.py`
   - `tests/test_sid3_constrained_beam_search.py`

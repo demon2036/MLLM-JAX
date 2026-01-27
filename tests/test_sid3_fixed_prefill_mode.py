@@ -2,7 +2,7 @@ import pytest
 
 pytest.importorskip("jax")
 
-from plugins.sft.jax.evaluator import _build_prefill_buckets, _normalize_prefill_mode
+from projects.sid_sft.jax.evaluator import _build_prefill_buckets, _normalize_prefill_mode
 
 
 def test_normalize_prefill_mode_aliases():

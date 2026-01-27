@@ -1,6 +1,6 @@
-# SOP: Run MiniOneRec SID SFT + HR/NDCG eval (plugins/sft, JAX)
+# SOP: Run MiniOneRec SID SFT + HR/NDCG eval (projects/sid_sft, JAX)
 
-- **Title**: SOP: Run MiniOneRec SID SFT + constrained-decoding HR@K/NDCG@K eval via `plugins/sft/` (JAX backend)
+- **Title**: SOP: Run MiniOneRec SID SFT + constrained-decoding HR@K/NDCG@K eval via `projects/sid_sft/` (JAX backend)
 - **Prereqs**: Ubuntu Linux; Python `3.12.2`; network access (to download HF models for the provided smoke config)
 - **Environment (verified)**: Ubuntu Linux; Python `3.12.2`
 
@@ -31,4 +31,4 @@
 ## References
 
 - Upstream reference implementation: `workdir/MiniOneRec/sft.py`, `workdir/MiniOneRec/evaluate.py`, `workdir/MiniOneRec/calc.py`
-- Plugin entrypoints: `scripts/run_sid_sft.py`, `plugins/sft/runner/sid_sft.py`
+- Project entrypoints: `scripts/run_sid_sft.py`, `projects/sid_sft/runner/sid_sft.py`

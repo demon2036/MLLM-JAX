@@ -1,6 +1,6 @@
-# SOP: Refactor plan to consolidate `plugins/sft` and `plugins/training`
+# SOP: Refactor plan to consolidate `projects/sid_sft` and `plugins/training`
 
-- **Title**: SOP: Audit + propose a consolidation plan for sampler/model/data/sharding/optimizer across `plugins/sft/` and `plugins/training/`
+- **Title**: SOP: Audit + propose a consolidation plan for sampler/model/data/sharding/optimizer across `projects/sid_sft/` and `plugins/training/`
   **Prereqs**: Repo checkout; `rg`; no JAX runtime required for inspection (tests are separate)
   **Environment (verified)**: Ubuntu Linux (repo path `/home/john/workdir/minionerec`)
 
@@ -15,7 +15,7 @@
 
 ### 1) Inventory plugin surface
 
-- `ls -la plugins/sft && ls -la plugins/training`
+- `ls -la projects/sid_sft && ls -la plugins/training`
 - `find plugins -maxdepth 3 -type f -print | sort`
 - `find plugins -maxdepth 2 -type d -print | sort`
 
@@ -26,31 +26,31 @@
 - `nl -ba plugins/training/rollout/sampling.py | sed -n '1,320p'`
 - `nl -ba plugins/training/rollout/backends/naive_sampler.py | sed -n '1,320p'`
 - `nl -ba MLLM_JAX/sample/sample_state_right_padding2.py | sed -n '1,320p'`
-- `nl -ba plugins/sft/jax/evaluator.py | sed -n '1,320p'`
+- `nl -ba projects/sid_sft/jax/evaluator.py | sed -n '1,320p'`
 
 ### 3) Model loading path (safetensors vs torch)
 
-- `nl -ba plugins/sft/hf_safetensors.py | sed -n '1,220p'`
-- `nl -ba plugins/sft/runner/sid_sft.py | sed -n '1,280p'`
+- `nl -ba projects/sid_sft/hf_safetensors.py | sed -n '1,220p'`
+- `nl -ba projects/sid_sft/runner/sid_sft.py | sed -n '1,280p'`
 - `nl -ba training2.py | sed -n '1,260p'`
 - `nl -ba plugins/training/ppo/state.py | sed -n '1,260p'`
 - `rg -n "load_hf_safetensors_state_dict|AutoModelForCausalLM|convert_torch_to_flax_llama" -S`
 
 ### 4) Data loading + batching (SFT datasets vs GSM8K)
 
-- `nl -ba plugins/sft/datasets/csv_utils.py | sed -n '1,260p'`
-- `nl -ba plugins/sft/datasets/sid_next_item.py | sed -n '1,260p'`
+- `nl -ba projects/sid_sft/datasets/csv_utils.py | sed -n '1,260p'`
+- `nl -ba projects/sid_sft/datasets/sid_next_item.py | sed -n '1,260p'`
 - `rg -n "\\bqas\\b|eval_qas|load_dataset\\(" plugins/training/runner/grpo_gsm8k.py | head -n 120`
 - `nl -ba plugins/training/runner/grpo_gsm8k.py | sed -n '620,820p'`
 
 ### 5) Mesh/sharding + optimizer duplication scan
 
 - `nl -ba plugins/training/mesh.py | sed -n '1,260p'`
-- `rg -n "NamedSharding|PartitionSpec" plugins/sft/jax plugins/training training2.py | head -n 160`
+- `rg -n "NamedSharding|PartitionSpec" projects/sid_sft/jax plugins/training training2.py | head -n 160`
 - `rg -n "_form_training_global_array|make_array_from_single_device_arrays" plugins/training/runner/grpo_gsm8k.py`
 - `nl -ba plugins/training/update/optimizer.py | sed -n '1,320p'`
 - `nl -ba plugins/training/update/train_step.py | sed -n '1,320p'`
-- `nl -ba plugins/sft/jax/state.py | sed -n '1,320p'`
+- `nl -ba projects/sid_sft/jax/state.py | sed -n '1,320p'`
 
 ### 6) Run tests (verification gate)
 
@@ -58,14 +58,14 @@
 
 ## Proposed target layout
 
-Recommended: keep `plugins/sft/` and `plugins/training/` separate, but extract shared concerns into a small shared package.
+Recommended: keep `projects/sid_sft/` and `plugins/training/` separate, but extract shared concerns into a small shared package.
 
 ### Option A (recommended): add `plugins/common/`
 
 - `plugins/common/config_loader.py`: shared YAML loader (env expansion + overrides).
 - `plugins/common/wandb_utils.py`: shared `maybe_init_wandb`.
 - `plugins/common/tokenizer.py`: shared tokenizer preparation (`pad_token_id`, `padding_side`).
-- `plugins/common/hf_safetensors.py`: shared safetensors loader (move/re-export from `plugins/sft/hf_safetensors.py`).
+- `plugins/common/hf_safetensors.py`: shared safetensors loader (move/re-export from `projects/sid_sft/hf_safetensors.py`).
 - `plugins/common/sharding/params.py`: shared “partition rules -> NamedSharding -> device_put”.
 - `plugins/common/sharding/batch.py`: shared “numpy batch -> global jax.Array” builder (dp/fsdp-preferred + fallback).
 - `plugins/common/data/padding.py`: shared right-padding helpers (optional early win).
@@ -78,18 +78,18 @@ Recommended: keep `plugins/sft/` and `plugins/training/` separate, but extract s
 
 ### Option B (bigger move): merge SFT under training
 
-- Move SFT JAX modules to `plugins/training/sft/` and keep `plugins/sft/` as re-exports for 1–2 iterations.
+- Move SFT JAX modules to `plugins/training/sft/` and keep `projects/sid_sft/` as re-exports for 1–2 iterations.
 
 ## File-level mapping (Option A)
 
-- **Config**: `plugins/sft/config.py` + `plugins/training/config.py` keep `DEFAULT_CONFIG`, import shared loader helpers.
-- **W&B**: replace GRPO runner `_maybe_init_wandb` with shared helper; optionally re-export `plugins/sft/wandb_utils.py`.
+- **Config**: `projects/sid_sft/config.py` + `plugins/training/config.py` keep `DEFAULT_CONFIG`, import shared loader helpers.
+- **W&B**: replace GRPO runner `_maybe_init_wandb` with shared helper; optionally re-export `projects/sid_sft/wandb_utils.py`.
 - **Tokenizer prep**: unify “pad token fallback + padding_side=right” into `plugins/common/tokenizer.py`.
-- **Model weights**: move `plugins/sft/hf_safetensors.py` -> `plugins/common/hf_safetensors.py` (keep old path as re-export).
+- **Model weights**: move `projects/sid_sft/hf_safetensors.py` -> `plugins/common/hf_safetensors.py` (keep old path as re-export).
 - **Unified loader (new)**: add `plugins/llm/loader.py` (or `plugins/common/model_loader.py`) and migrate:
   - `training2.get_state` (remove `MLLM_JAX.sample.*` imports; use `plugins/sample/mllm_sampler.py`)
   - `plugins/training/ppo/state.get_ppo_state`
-  - optionally `plugins/sft/runner/sid_sft.py` to reduce inline duplication
+  - optionally `projects/sid_sft/runner/sid_sft.py` to reduce inline duplication
 - **Batch sharding**: extract `_form_training_global_array` and padding helpers from `plugins/training/runner/grpo_gsm8k.py`.
 - **Optimizer**: make SFT JAX state use `plugins/training/update/optimizer.build_tx` and retire SFT-local `_build_optimizer`.
 - **Sampling**: move rollout sampling utils (`plugins/training/rollout/*`) -> `plugins/sample/*` and keep `plugins/training/rollout/*` as thin shims.

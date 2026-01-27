@@ -13,11 +13,11 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from plugins.minionerec.rl.datasets import MiniOneRecNextItemRlDataset
 from plugins.minionerec.rl.grpo_module import MiniOneRecGrpoModule
 from plugins.minionerec.rl.reward import build_rank_penalties, compute_ranking_rewards
-from plugins.sft.jax.checkpoint import load_checkpoint
-from plugins.sft.jax.evaluator import evaluate_sid_next_item_jax
-from plugins.sft.jax.params import resize_lm_vocab
-from plugins.sft.jax.sid_trie import build_sid_trie_from_index
-from plugins.sft.wandb_utils import maybe_init_wandb
+from projects.sid_sft.jax.checkpoint import load_checkpoint
+from projects.sid_sft.jax.evaluator import evaluate_sid_next_item_jax
+from projects.sid_sft.jax.params import resize_lm_vocab
+from projects.sid_sft.jax.sid_trie import build_sid_trie_from_index
+from projects.sid_sft.wandb_utils import maybe_init_wandb
 from plugins.training.advantage.grpo import compute_grpo_advantages_by_group_id
 from plugins.training.update.optimizer import OptimizerConfig, build_tx
 
@@ -137,7 +137,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
     from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 
-    from plugins.sft.jax.beam_search import constrained_beam_search_sid3_prefill
+    from projects.sid_sft.jax.beam_search import constrained_beam_search_sid3_prefill
     from plugins.training.mesh import create_mesh
     from plugins.training.update.train_step import training_step
 
@@ -434,7 +434,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
 
         tokenizer.save_pretrained(cfg.output_dir)
         if bool(cfg.train.save_last) and jax.process_index() == 0:
-            from plugins.sft.jax.checkpoint import save_checkpoint
+            from projects.sid_sft.jax.checkpoint import save_checkpoint
 
             save_checkpoint(output_dir=cfg.output_dir, state=state, name="rl_last")
 

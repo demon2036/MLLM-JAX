@@ -11,17 +11,17 @@
 ## Steps (commands actually used)
 
 - Identify SFT dataset files:
-  - `rg --files plugins/sft/datasets`
+  - `rg --files projects/sid_sft/datasets`
 - Inspect SFT dataset utilities + tasks:
-  - `sed -n '1,260p' plugins/sft/datasets/csv_utils.py`
-  - `sed -n '1,260p' plugins/sft/datasets/tokenizer_utils.py`
-  - `sed -n '1,260p' plugins/sft/datasets/sid_next_item.py`
-  - `sed -n '1,260p' plugins/sft/datasets/sid_item_alignment.py`
-  - `sed -n '1,260p' plugins/sft/datasets/eval_sid_next_item.py`
-  - `sed -n '1,260p' plugins/sft/datasets/fusion_seq_rec.py`
+  - `sed -n '1,260p' projects/sid_sft/datasets/csv_utils.py`
+  - `sed -n '1,260p' projects/sid_sft/datasets/tokenizer_utils.py`
+  - `sed -n '1,260p' projects/sid_sft/datasets/sid_next_item.py`
+  - `sed -n '1,260p' projects/sid_sft/datasets/sid_item_alignment.py`
+  - `sed -n '1,260p' projects/sid_sft/datasets/eval_sid_next_item.py`
+  - `sed -n '1,260p' projects/sid_sft/datasets/fusion_seq_rec.py`
 - Inspect SFT batching/collate:
-  - `sed -n '1,260p' plugins/sft/jax/data.py`
-  - `sed -n '1,220p' plugins/sft/jax/train.py`
+  - `sed -n '1,260p' projects/sid_sft/jax/data.py`
+  - `sed -n '1,220p' projects/sid_sft/jax/train.py`
 - Locate GSM8K dataset load + data flow in GRPO runner:
   - `rg -n 'load_dataset|gsm8k|dataset' plugins/training/runner/grpo_gsm8k.py`
   - `sed -n '230,330p' plugins/training/runner/grpo_gsm8k.py`
@@ -41,13 +41,13 @@
 
 ## References
 
-- `plugins/sft/datasets/csv_utils.py`
-- `plugins/sft/datasets/tokenizer_utils.py`
-- `plugins/sft/datasets/sid_next_item.py`
-- `plugins/sft/datasets/sid_item_alignment.py`
-- `plugins/sft/datasets/eval_sid_next_item.py`
-- `plugins/sft/datasets/fusion_seq_rec.py`
-- `plugins/sft/jax/data.py`
-- `plugins/sft/jax/train.py`
+- `projects/sid_sft/datasets/csv_utils.py`
+- `projects/sid_sft/datasets/tokenizer_utils.py`
+- `projects/sid_sft/datasets/sid_next_item.py`
+- `projects/sid_sft/datasets/sid_item_alignment.py`
+- `projects/sid_sft/datasets/eval_sid_next_item.py`
+- `projects/sid_sft/datasets/fusion_seq_rec.py`
+- `projects/sid_sft/jax/data.py`
+- `projects/sid_sft/jax/train.py`
 - `plugins/training/runner/grpo_gsm8k.py`
 - `scripts/run_grpo_gsm8k_training.py`

@@ -37,6 +37,6 @@
 ## References
 
 - `plugins/sample/decoding/sid3_constrained_beam_search.py`
-- `plugins/sft/jax/evaluator.py`
+- `projects/sid_sft/jax/evaluator.py`
 - `plugins/sample/sampling.py`
 - `MLLM_JAX/language/llama/llama.py`

@@ -360,8 +360,8 @@ def build_grpo_per_token_loss_fused_lm_head(
                 dlogits,
                 w_blk,
                 (((2,), (1,)), ((), ())),
-                preferred_element_type=jnp.float32,
-            ).astype(dh_carry.dtype)
+                preferred_element_type=dh_carry.dtype,
+            )
             dh = dh_carry + dh_update
 
             dW_tile = jax.lax.dot_general(
@@ -404,8 +404,8 @@ def build_grpo_per_token_loss_fused_lm_head(
                 dlogits,
                 w_tail,
                 (((2,), (1,)), ((), ())),
-                preferred_element_type=jnp.float32,
-            ).astype(dh.dtype)
+                preferred_element_type=dh.dtype,
+            )
             dh = dh + dh_update
 
             dW_tail = jax.lax.dot_general(

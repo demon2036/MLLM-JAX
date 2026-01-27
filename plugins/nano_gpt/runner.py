@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import functools
 import json
 import os
 import time
-from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
@@ -154,7 +154,7 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
 
     p_eval_step = jax.pmap(eval_step, axis_name="data")
 
-    @jax.jit
+    @functools.partial(jax.jit, static_argnames=("num_tokens", "top_k"))
     def generate_tokens(
         params: Any,
         idx: jnp.ndarray,
@@ -306,4 +306,3 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
 
 
 __all__ = ["run_nano_gpt"]
-

@@ -27,6 +27,16 @@ class GRPOLmHeadFusedConfig:
     temperature: float = 1.0
 
 
+def _segment_sum(updates: Any, segment_ids: Any, *, num_segments: int) -> Any:
+    import jax.numpy as jnp
+
+    num_segments = int(num_segments)
+    if num_segments <= 0:
+        raise ValueError("num_segments must be > 0")
+    out = jnp.zeros((num_segments,) + updates.shape[1:], dtype=updates.dtype)
+    return out.at[segment_ids].add(updates)
+
+
 def grpo_per_token_loss_lm_head_reference(
     *,
     hidden_states: Any,

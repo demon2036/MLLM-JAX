@@ -86,7 +86,8 @@ train:
 This repository is focused on validating and documenting `sglang-jax`. The repo is currently minimal; keep the layout simple and documented as it grows. Recommended folders:
 
 - `docs/` for SOPs, validation notes, and references (branch-specific SOPs under `docs/sops/<branch>/`, e.g., A → `docs/sops/A/`, B → `docs/sops/B/`).
-- `plugins/` for non-invasive overrides and integration code.
+- `plugins/` for reusable, non-invasive overrides and integration code (loss/model/optimizer/sampler/backends).
+- `projects/` for project-scoped configs, data pointers, and entrypoints (e.g., nano-specific datasets/configs); avoid placing non-reusable configs in `plugins/`.
 - `scripts/` for repeatable setup or test helpers.
 - `tests/` for any local verification scripts.
 

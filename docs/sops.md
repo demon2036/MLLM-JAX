@@ -32,6 +32,7 @@
 - Slim repo (move unused code to `deprecated/`): `docs/sops/repo-slim-deprecated.md`
 - TPU alive check: `docs/sops/tpu-alive-check.md`
 - TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
+- TPU v6e-8 SID SFT official-alignment run: `docs/sops/tpu-vm-v6e-8-sid-sft-official-align.md`
 - TPU v4-8 GRPO runner smoke (`rollout.backend=naive`): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
 - TPU v4-8 RL/GSM8K `reinforce++` (100 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
 - TPU v4-8 RL/GSM8K bs128 `reinforce++` (100 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-reinforcepp-wandb-100steps.md`
@@ -80,6 +81,7 @@
 
 - `docs/sops/tpu-alive-check.md`
 - `docs/sops/tpu-vm-create-v4-8-or-v6e-8.md`
+- `docs/sops/tpu-vm-v6e-8-sid-sft-official-align.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-reinforcepp-wandb-100steps.md`

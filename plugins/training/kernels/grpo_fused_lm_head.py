@@ -115,62 +115,53 @@ def _selective_log_softmax_lm_head_streaming(
 
     neg_inf = jnp.asarray(-jnp.inf, dtype=jnp.float32)
 
-    def scan_max_chosen(carry, block_id):
-        m, chosen = carry
+    def _logits_f32(x, w):
+        # Match the repo reference rounding: compute dot in f32 then cast to
+        # the hidden dtype (typically bf16) before any softmax stats.
+        logits = _dot_bt(x, w).astype(x.dtype)
+        return logits.astype(jnp.float32)
+
+    def scan_stats(carry, block_id):
+        m, sumexp, chosen = carry
         start = block_id * block
 
         w_blk = jax.lax.dynamic_slice(lm_head_kernel, (0, start), (hidden, block))
-        logits = _dot_bt(hidden_states, w_blk).astype(jnp.float32)
+        logits = _logits_f32(hidden_states, w_blk)
 
         tile_max = jnp.max(logits, axis=-1)
-        m = jnp.maximum(m, tile_max)
+        new_m = jnp.maximum(m, tile_max)
+        sumexp = sumexp * jnp.exp(m - new_m) + jnp.sum(jnp.exp(logits - new_m[..., None]), axis=-1)
+        m = new_m
 
         in_range = valid_id & (safe_ids >= start) & (safe_ids < start + block)
         offsets = jnp.where(in_range, safe_ids - start, jnp.zeros((), jnp.int32)).astype(jnp.int32)
         chosen_val = jnp.take_along_axis(logits, offsets[..., None], axis=-1)[..., 0]
         chosen = jnp.where(in_range, chosen_val, chosen)
-        return (m, chosen), None
+        return (m, sumexp, chosen), None
 
     init_m = jnp.full((batch, time), neg_inf, dtype=jnp.float32)
+    init_sumexp = jnp.zeros((batch, time), dtype=jnp.float32)
     init_chosen = jnp.zeros((batch, time), dtype=jnp.float32)
-    (m, chosen), _ = jax.lax.scan(
-        scan_max_chosen,
-        (init_m, init_chosen),
+    (m, sumexp, chosen), _ = jax.lax.scan(
+        scan_stats,
+        (init_m, init_sumexp, init_chosen),
         jnp.arange(full_blocks, dtype=jnp.int32),
     )
 
     if rem:
         start = full_blocks * block
         w_tail = lm_head_kernel[:, start:]
-        logits = _dot_bt(hidden_states, w_tail).astype(jnp.float32)
+        logits = _logits_f32(hidden_states, w_tail)
 
         tile_max = jnp.max(logits, axis=-1)
-        m = jnp.maximum(m, tile_max)
+        new_m = jnp.maximum(m, tile_max)
+        sumexp = sumexp * jnp.exp(m - new_m) + jnp.sum(jnp.exp(logits - new_m[..., None]), axis=-1)
+        m = new_m
 
         in_range = valid_id & (safe_ids >= start)
         offsets = jnp.where(in_range, safe_ids - start, jnp.zeros((), jnp.int32)).astype(jnp.int32)
         chosen_val = jnp.take_along_axis(logits, offsets[..., None], axis=-1)[..., 0]
         chosen = jnp.where(in_range, chosen_val, chosen)
-
-    def scan_sumexp(sumexp, block_id):
-        start = block_id * block
-        w_blk = jax.lax.dynamic_slice(lm_head_kernel, (0, start), (hidden, block))
-        logits = _dot_bt(hidden_states, w_blk).astype(jnp.float32)
-        sumexp = sumexp + jnp.sum(jnp.exp(logits - m[..., None]), axis=-1)
-        return sumexp, None
-
-    sumexp0 = jnp.zeros((batch, time), dtype=jnp.float32)
-    sumexp, _ = jax.lax.scan(
-        scan_sumexp,
-        sumexp0,
-        jnp.arange(full_blocks, dtype=jnp.int32),
-    )
-
-    if rem:
-        start = full_blocks * block
-        w_tail = lm_head_kernel[:, start:]
-        logits = _dot_bt(hidden_states, w_tail).astype(jnp.float32)
-        sumexp = sumexp + jnp.sum(jnp.exp(logits - m[..., None]), axis=-1)
 
     lse = m + jnp.log(sumexp)
     logp = chosen - lse
@@ -341,11 +332,14 @@ def build_grpo_per_token_loss_fused_lm_head(
         dlogp = dlogp * dloss2
         scale = dlogp / float(temperature)
         scale_bt = scale.reshape(batch, time)
+        scale_valid = scale * valid_id.reshape(tokens).astype(jnp.float32)
+        safe_ids_flat = safe_ids.reshape(tokens).astype(jnp.int32)
 
         full_blocks = int(vocab // block)
         rem = int(vocab % block)
 
-        def scan_body(dh_carry, block_id):
+        def scan_body(carry, block_id):
+            dh_carry, dW_carry = carry
             start = block_id * block
             w_blk = jax.lax.dynamic_slice(lm_head_kernel, (0, start), (hidden, block))
             logits = jax.lax.dot_general(
@@ -353,7 +347,7 @@ def build_grpo_per_token_loss_fused_lm_head(
                 w_blk,
                 (((2,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
-            ).astype(jnp.float32)
+            ).astype(hidden_states.dtype).astype(jnp.float32)
             probs = jnp.exp(logits - lse_f32[..., None])
 
             dlogits_soft = (-probs) * scale_bt[..., None]
@@ -363,28 +357,17 @@ def build_grpo_per_token_loss_fused_lm_head(
                 (((2,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
             ).astype(jnp.float32)
-            dW_soft = _dot(h2.T, dlogits_soft.reshape(tokens, block)).astype(jnp.float32)
-
-            in_range = valid_id & (safe_ids >= start) & (safe_ids < start + block)
-            in_range_f = in_range.astype(jnp.float32)
-            offsets = jnp.where(in_range, safe_ids - start, jnp.zeros((), jnp.int32)).astype(jnp.int32)
-
-            w_sel = jnp.take(w_blk.T, offsets, axis=0).astype(jnp.float32)
-            dh = dh + w_sel * ((scale_bt * in_range_f)[..., None])
-
-            updates = (h2.astype(jnp.float32) * (scale * in_range_f.reshape(tokens))[:, None]).astype(jnp.float32)
-            seg = _segment_sum(updates, offsets.reshape(tokens), num_segments=block)  # [block, hidden]
-            dW = dW_soft + seg.T
-            return dh, dW
+            dW_tile = _dot(h2.T, dlogits_soft.reshape(tokens, block)).astype(jnp.float32)
+            dW_carry = jax.lax.dynamic_update_slice(dW_carry, dW_tile.astype(lm_head_kernel.dtype), (0, start))
+            return (dh, dW_carry), None
 
         dh0 = jnp.zeros((batch, time, hidden), dtype=jnp.float32)
-        dh, dW_tiles = jax.lax.scan(
+        dW0 = jnp.zeros((hidden, vocab), dtype=lm_head_kernel.dtype)
+        (dh, dW), _ = jax.lax.scan(
             scan_body,
-            dh0,
+            (dh0, dW0),
             jnp.arange(full_blocks, dtype=jnp.int32),
         )
-
-        dW_full = dW_tiles.reshape(full_blocks, hidden, block).transpose(1, 0, 2).reshape(hidden, full_blocks * block)
 
         if rem:
             start = full_blocks * block
@@ -394,7 +377,7 @@ def build_grpo_per_token_loss_fused_lm_head(
                 w_tail,
                 (((2,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
-            ).astype(jnp.float32)
+            ).astype(hidden_states.dtype).astype(jnp.float32)
             probs = jnp.exp(logits - lse_f32[..., None])
 
             dlogits_soft = (-probs) * scale_bt[..., None]
@@ -405,20 +388,14 @@ def build_grpo_per_token_loss_fused_lm_head(
                 preferred_element_type=jnp.float32,
             ).astype(jnp.float32)
             dW_tail = _dot(h2.T, dlogits_soft.reshape(tokens, rem)).astype(jnp.float32)
+            dW = jax.lax.dynamic_update_slice(dW, dW_tail.astype(lm_head_kernel.dtype), (0, start))
 
-            in_range = valid_id & (safe_ids >= start)
-            in_range_f = in_range.astype(jnp.float32)
-            offsets = jnp.where(in_range, safe_ids - start, jnp.zeros((), jnp.int32)).astype(jnp.int32)
+        # Chosen-token term: add `scale * W[:, y]` into `dh`, and scatter-add
+        # `scale * h` into `dW[:, y]`. This is done once (vs per-vocab-tile).
+        w_sel_tok = jnp.take(lm_head_kernel.T, safe_ids_flat, axis=0).astype(jnp.float32)  # [tokens, hidden]
+        dh = dh + (w_sel_tok * scale_valid[:, None]).reshape(batch, time, hidden)
 
-            w_sel = jnp.take(w_tail.T, offsets, axis=0).astype(jnp.float32)
-            dh = dh + w_sel * ((scale_bt * in_range_f)[..., None])
-
-            updates = (h2.astype(jnp.float32) * (scale * in_range_f.reshape(tokens))[:, None]).astype(jnp.float32)
-            seg = _segment_sum(updates, offsets.reshape(tokens), num_segments=rem)  # [rem, hidden]
-            dW_tail = dW_tail + seg.T
-            dW = jnp.concatenate([dW_full, dW_tail], axis=1)
-        else:
-            dW = dW_full
+        dW = dW.at[:, safe_ids_flat].add((h2.astype(jnp.float32).T * scale_valid[None, :]).astype(dW.dtype))
 
         dh = dh.astype(hidden_states.dtype)
         dW = dW.astype(lm_head_kernel.dtype)

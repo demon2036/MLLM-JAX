@@ -20,14 +20,29 @@ meta() {
   curl -fsSL -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1" || true
 }
 
-WANDB_API_KEY="$(meta WANDB_API_KEY | tr -d '\r' | xargs)"
-WANDB_MODE="$(meta WANDB_MODE | tr -d '\r' | xargs)"
-WANDB_PROJECT="$(meta WANDB_PROJECT | tr -d '\r' | xargs)"
-REPO_URL="$(meta REPO_URL | tr -d '\r' | xargs)"
-REPO_REF="$(meta REPO_REF | tr -d '\r' | xargs)"
+fetch_meta() {
+  local key="$1"
+  local value=""
+  for _ in $(seq 1 30); do
+    value="$(meta "$key" | tr -d '\r' | xargs)"
+    if [[ -n "$value" ]]; then
+      echo "$value"
+      return 0
+    fi
+    log "waiting for metadata: $key"
+    sleep 2
+  done
+  return 1
+}
+
+WANDB_API_KEY="$(fetch_meta WANDB_API_KEY || true)"
+WANDB_MODE="$(fetch_meta WANDB_MODE || true)"
+WANDB_PROJECT="$(fetch_meta WANDB_PROJECT || true)"
+REPO_URL="$(fetch_meta REPO_URL || true)"
+REPO_REF="$(fetch_meta REPO_REF || true)"
 
 if [[ -z "$WANDB_API_KEY" ]]; then
-  echo "WANDB_API_KEY is required via instance metadata."
+  log "WANDB_API_KEY is required via instance metadata."
   exit 1
 fi
 

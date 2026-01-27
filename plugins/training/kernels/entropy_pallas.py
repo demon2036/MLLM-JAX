@@ -80,6 +80,46 @@ def _entropy_pallas_fwd(
     interpret: bool,
     debug: bool,
 ) -> Any:
+    import jax.numpy as jnp
+
+    # Two-pass design:
+    # 1) Pallas computes per-vocab-tile softmax stats (max,sumexp,sumexp_x) in parallel.
+    # 2) JAX reduces across tiles to get global entropy.
+    time_block = int(cfg.time_block)
+
+    logits, _original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
+    logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
+
+    max_blocks, sum_blocks, sumx_blocks = _entropy_pallas_fwd_block_stats(
+        logits=logits,
+        cfg=cfg,
+        interpret=interpret,
+        debug=debug,
+    )
+
+    max_global = jnp.max(max_blocks, axis=-1)
+    rescale = jnp.exp(max_blocks - max_global[..., None])
+    sum_global = jnp.sum(sum_blocks * rescale, axis=-1)
+    sumx_global = jnp.sum(sumx_blocks * rescale, axis=-1)
+    lse = max_global + jnp.log(sum_global)
+    entropy = lse - (sumx_global / sum_global)
+    return entropy[:, :original_time].astype(jnp.float32)
+
+
+def _entropy_pallas_fwd_block_stats(
+    *,
+    logits: Any,
+    cfg: EntropyKernelConfig,
+    interpret: bool,
+    debug: bool,
+) -> tuple[Any, Any, Any]:
+    """Return per-vocab-tile softmax stats for entropy.
+
+    Outputs (all float32):
+      - max_blocks: [B, T, K] where K=ceil(V/block_size)
+      - sum_blocks: [B, T, K] sum(exp(x - max_blocks)) within each tile
+      - sumx_blocks: [B, T, K] sum(exp(x - max_blocks) * x) within each tile
+    """
     import functools
 
     import jax
@@ -89,84 +129,52 @@ def _entropy_pallas_fwd(
 
     time_block = int(cfg.time_block)
 
-    logits, _original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
-    logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
+    logits, _ = _pad_time(logits, time_block=time_block, pad_value=0.0)
 
     batch, time, vocab = (int(logits.shape[0]), int(logits.shape[1]), int(logits.shape[2]))
     time_blocks = int(time // time_block)
     block_size = int(cfg.block_size)
     blocks = _ceil_div(vocab, block_size)
 
-    out_entropy = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-
     temperature = float(cfg.temperature)
     if temperature <= 0:
         raise ValueError("temperature must be > 0")
 
-    def kernel(
-        logits_ref,
-        out_entropy_ref,
-        max_ref,
-        sum_ref,
-        sumx_ref,
-    ):
-        pid_k = pl.program_id(2)
+    out_max = jax.ShapeDtypeStruct((batch, time, blocks), jnp.float32)
+    out_sum = jax.ShapeDtypeStruct((batch, time, blocks), jnp.float32)
+    out_sumx = jax.ShapeDtypeStruct((batch, time, blocks), jnp.float32)
 
-        @pl.when(pid_k == 0)
-        def init():
-            max_ref[:] = jnp.full((time_block,), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
-            sum_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
-            sumx_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
-            out_entropy_ref[...] = jnp.zeros_like(out_entropy_ref)
-
+    def kernel(logits_ref, out_max_ref, out_sum_ref, out_sumx_ref):
         x_tile = logits_ref[0, :, :].astype(jnp.float32) / temperature
-
-        prev_max = max_ref[:]
-        prev_sum = sum_ref[:]
-        prev_sumx = sumx_ref[:]
-
         tile_max = jnp.max(x_tile, axis=-1)
-        new_max = jnp.maximum(prev_max, tile_max)
-
-        rescale = jnp.exp(prev_max - new_max)
-        prev_sum = prev_sum * rescale
-        prev_sumx = prev_sumx * rescale
-
-        exp_tile = jnp.exp(x_tile - new_max[:, None])
+        exp_tile = jnp.exp(x_tile - tile_max[:, None])
         tile_sum = jnp.sum(exp_tile, axis=-1)
         tile_sumx = jnp.sum(exp_tile * x_tile, axis=-1)
 
-        max_ref[:] = new_max
-        sum_ref[:] = prev_sum + tile_sum
-        sumx_ref[:] = prev_sumx + tile_sumx
-
-        @pl.when(pid_k == blocks - 1)
-        def out():
-            lse = max_ref[:] + jnp.log(sum_ref[:])
-            entropy = lse - (sumx_ref[:] / sum_ref[:])
-            out_entropy_ref[0, :, 0] = entropy.astype(out_entropy_ref.dtype)
+        out_max_ref[0, :, 0] = tile_max.astype(out_max_ref.dtype)
+        out_sum_ref[0, :, 0] = tile_sum.astype(out_sum_ref.dtype)
+        out_sumx_ref[0, :, 0] = tile_sumx.astype(out_sumx_ref.dtype)
 
     call = pl.pallas_call(
         functools.partial(kernel),
-        out_shape=out_entropy,
+        out_shape=(out_max, out_sum, out_sumx),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k))],
-            out_specs=pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-            grid=(batch, time_blocks, blocks),
-            scratch_shapes=[
-                pltpu.VMEM((time_block,), jnp.float32),
-                pltpu.VMEM((time_block,), jnp.float32),
-                pltpu.VMEM((time_block,), jnp.float32),
+            out_specs=[
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, k)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, k)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, k)),
             ],
+            grid=(batch, time_blocks, blocks),
         ),
-        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "arbitrary")),
+        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "parallel")),
         interpret=interpret,
         debug=bool(debug),
     )
 
-    entropy3 = call(logits)
-    return entropy3[:, :original_time, 0]
+    max3, sum3, sumx3 = call(logits)
+    return max3, sum3, sumx3
 
 
 def _entropy_pallas_fwd_stats(
@@ -184,106 +192,27 @@ def _entropy_pallas_fwd_stats(
         space (i.e. Σ exp(x - max)).
       - per_token_sumexp_x: [B, T] where sumexp_x is Σ exp(x - max) * x.
     """
-    import functools
-
-    import jax
     import jax.numpy as jnp
-    from jax.experimental import pallas as pl
-    from jax.experimental.pallas import tpu as pltpu
-
-    time_block = int(cfg.time_block)
 
     logits, _original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
-    logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
+    logits, original_time = _pad_time(logits, time_block=int(cfg.time_block), pad_value=0.0)
 
-    batch, time, vocab = (int(logits.shape[0]), int(logits.shape[1]), int(logits.shape[2]))
-    time_blocks = int(time // time_block)
-    block_size = int(cfg.block_size)
-    blocks = _ceil_div(vocab, block_size)
-
-    out_max = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_sum = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_sumx = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-
-    temperature = float(cfg.temperature)
-    if temperature <= 0:
-        raise ValueError("temperature must be > 0")
-
-    def kernel(
-        logits_ref,
-        out_max_ref,
-        out_sum_ref,
-        out_sumx_ref,
-        max_ref,
-        sum_ref,
-        sumx_ref,
-    ):
-        pid_k = pl.program_id(2)
-
-        @pl.when(pid_k == 0)
-        def init():
-            max_ref[:] = jnp.full((time_block,), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
-            sum_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
-            sumx_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
-            out_max_ref[...] = jnp.zeros_like(out_max_ref)
-            out_sum_ref[...] = jnp.zeros_like(out_sum_ref)
-            out_sumx_ref[...] = jnp.zeros_like(out_sumx_ref)
-
-        x_tile = logits_ref[0, :, :].astype(jnp.float32) / temperature
-
-        prev_max = max_ref[:]
-        prev_sum = sum_ref[:]
-        prev_sumx = sumx_ref[:]
-
-        tile_max = jnp.max(x_tile, axis=-1)
-        new_max = jnp.maximum(prev_max, tile_max)
-
-        rescale = jnp.exp(prev_max - new_max)
-        prev_sum = prev_sum * rescale
-        prev_sumx = prev_sumx * rescale
-
-        exp_tile = jnp.exp(x_tile - new_max[:, None])
-        tile_sum = jnp.sum(exp_tile, axis=-1)
-        tile_sumx = jnp.sum(exp_tile * x_tile, axis=-1)
-
-        max_ref[:] = new_max
-        sum_ref[:] = prev_sum + tile_sum
-        sumx_ref[:] = prev_sumx + tile_sumx
-
-        @pl.when(pid_k == blocks - 1)
-        def out():
-            out_max_ref[0, :, 0] = max_ref[:].astype(out_max_ref.dtype)
-            out_sum_ref[0, :, 0] = sum_ref[:].astype(out_sum_ref.dtype)
-            out_sumx_ref[0, :, 0] = sumx_ref[:].astype(out_sumx_ref.dtype)
-
-    call = pl.pallas_call(
-        functools.partial(kernel),
-        out_shape=(out_max, out_sum, out_sumx),
-        grid_spec=pltpu.PrefetchScalarGridSpec(
-            num_scalar_prefetch=0,
-            in_specs=[pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k))],
-            out_specs=[
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-            ],
-            grid=(batch, time_blocks, blocks),
-            scratch_shapes=[
-                pltpu.VMEM((time_block,), jnp.float32),
-                pltpu.VMEM((time_block,), jnp.float32),
-                pltpu.VMEM((time_block,), jnp.float32),
-            ],
-        ),
-        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "arbitrary")),
+    max_blocks, sum_blocks, sumx_blocks = _entropy_pallas_fwd_block_stats(
+        logits=logits,
+        cfg=cfg,
         interpret=interpret,
-        debug=bool(debug),
+        debug=debug,
     )
 
-    max3, sum3, sumx3 = call(logits)
-    per_token_max = max3[:, :original_time, 0]
-    per_token_sum = sum3[:, :original_time, 0]
-    per_token_sumx = sumx3[:, :original_time, 0]
-    return per_token_max, per_token_sum, per_token_sumx
+    max_blocks = max_blocks[:, :original_time, :]
+    sum_blocks = sum_blocks[:, :original_time, :]
+    sumx_blocks = sumx_blocks[:, :original_time, :]
+
+    max_local = jnp.max(max_blocks, axis=-1)
+    rescale = jnp.exp(max_blocks - max_local[..., None])
+    sum_local = jnp.sum(sum_blocks * rescale, axis=-1)
+    sumx_local = jnp.sum(sumx_blocks * rescale, axis=-1)
+    return max_local.astype(jnp.float32), sum_local.astype(jnp.float32), sumx_local.astype(jnp.float32)
 
 
 @functools.partial(jax.custom_jvp, nondiff_argnames=("cfg", "interpret", "debug"))

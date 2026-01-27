@@ -152,6 +152,82 @@ def _grpo_pallas_fwd(
     debug: bool,
     use_self_old: bool,
 ) -> tuple[Any, Any, Any, int]:
+    import jax
+    import jax.numpy as jnp
+
+    # Two-pass design:
+    # 1) Pallas computes per-vocab-tile softmax stats in parallel:
+    #      - tile_max, tile_sumexp, tile_chosen_logit (0 when chosen not in tile)
+    # 2) JAX reduces across tiles to get global (max,sumexp,chosen_logit) and then
+    #    computes logp + GRPO loss in regular HLO ops.
+    #
+    # Why: the previous streaming implementation used a sequential "arbitrary"
+    # vocab axis, which is correct but can be much slower than XLA's parallel
+    # softmax lowering on TPU.
+
+    time_block = int(cfg.time_block)
+
+    logits, original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
+    logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
+    chosen_ids, _ = _pad_time(chosen_ids, time_block=time_block, pad_value=-1)
+    old_per_token_logps, _ = _pad_time(old_per_token_logps, time_block=time_block, pad_value=0.0)
+
+    max_blocks, sum_blocks, chosen_blocks = _grpo_pallas_fwd_block_stats(
+        logits=logits,
+        chosen_ids=chosen_ids,
+        cfg=cfg,
+        interpret=interpret,
+        debug=debug,
+    )
+
+    # Reduce across vocab tiles.
+    max_global = jnp.max(max_blocks, axis=-1)
+    sum_global = jnp.sum(sum_blocks * jnp.exp(max_blocks - max_global[..., None]), axis=-1)
+    lse = max_global + jnp.log(sum_global)
+    chosen_logit = jnp.sum(chosen_blocks, axis=-1)
+
+    temperature = float(cfg.temperature)
+    if temperature <= 0:
+        raise ValueError("temperature must be > 0")
+    per_token_logps = (chosen_logit - lse) / temperature
+
+    if use_self_old:
+        old_per_token_logps = jax.lax.stop_gradient(per_token_logps)
+
+    eps_low = float(cfg.epsilon_low)
+    eps_high = float(cfg.epsilon_high)
+    ratio = jnp.exp(per_token_logps - old_per_token_logps.astype(jnp.float32))
+    clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
+
+    advantages = advantages.astype(jnp.float32)
+    per_token_loss1 = ratio * advantages[..., None]
+    per_token_loss2 = clipped_ratio * advantages[..., None]
+    per_token_loss = -jnp.minimum(per_token_loss1, per_token_loss2)
+
+    # Slice off any time padding (vocab padding stays folded into the tile reduce).
+    return (
+        per_token_loss[:, :original_time].astype(jnp.float32),
+        per_token_logps[:, :original_time].astype(jnp.float32),
+        lse[:, :original_time].astype(jnp.float32),
+        original_vocab,
+    )
+
+
+def _grpo_pallas_fwd_block_stats(
+    *,
+    logits: Any,
+    chosen_ids: Any,
+    cfg: GRPOKernelConfig,
+    interpret: bool,
+    debug: bool,
+) -> tuple[Any, Any, Any]:
+    """Return per-vocab-tile softmax stats for logits-level GRPO.
+
+    Outputs (all float32):
+      - max_blocks: [B, T, K] where K=ceil(V/block_size)
+      - sum_blocks: [B, T, K] sum(exp(logits - max_blocks)) within each tile
+      - chosen_blocks: [B, T, K] chosen logit within tile (0.0 if chosen_id not in tile)
+    """
     import functools
 
     import jax
@@ -161,10 +237,8 @@ def _grpo_pallas_fwd(
 
     time_block = int(cfg.time_block)
 
-    logits, original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
-    logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
-    chosen_ids, _ = _pad_time(chosen_ids, time_block=time_block, pad_value=0)
-    old_per_token_logps, _ = _pad_time(old_per_token_logps, time_block=time_block, pad_value=0.0)
+    logits, _ = _pad_time(logits, time_block=time_block, pad_value=0.0)
+    chosen_ids, _ = _pad_time(chosen_ids, time_block=time_block, pad_value=-1)
 
     batch, time, vocab = (int(logits.shape[0]), int(logits.shape[1]), int(logits.shape[2]))
     time_blocks = int(time // time_block)
@@ -172,124 +246,54 @@ def _grpo_pallas_fwd(
     blocks = _ceil_div(vocab, block_size)
 
     chosen_ids3 = chosen_ids[..., None]
-    old_logps3 = old_per_token_logps[..., None]
 
-    out_loss = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_logp = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_lse = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
+    out_max = jax.ShapeDtypeStruct((batch, time, blocks), jnp.float32)
+    out_sum = jax.ShapeDtypeStruct((batch, time, blocks), jnp.float32)
+    out_chosen = jax.ShapeDtypeStruct((batch, time, blocks), jnp.float32)
 
-    eps_low = float(cfg.epsilon_low)
-    eps_high = float(cfg.epsilon_high)
-    temperature = float(cfg.temperature)
-    use_self_old = bool(use_self_old)
-    if temperature <= 0:
-        raise ValueError("temperature must be > 0")
-
-    # TPU Pallas lowering has constraints on small block shapes. In particular,
-    # for rank-2 arrays the *second last* block dimension must be a multiple of
-    # 8 or match the full array dim. Under `shard_map`, the per-device batch can
-    # be small (e.g. 4), so we load the full `(B, 1)` slice and index by
-    # `program_id(0)` inside the kernel.
-    advantages2 = advantages[:, None]
-
-    def kernel(
-        logits_ref,
-        chosen_ids_ref,
-        old_logps_ref,
-        advantages_ref,
-        out_loss_ref,
-        out_logp_ref,
-        out_lse_ref,
-        max_ref,
-        sum_ref,
-        chosen_ref,
-    ):
-        pid_b = pl.program_id(0)
+    def kernel(logits_ref, chosen_ids_ref, out_max_ref, out_sum_ref, out_chosen_ref):
         pid_k = pl.program_id(2)
 
-        @pl.when(pid_k == 0)
-        def init():
-            max_ref[:] = jnp.full((time_block,), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
-            sum_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
-            chosen_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
-            out_loss_ref[...] = jnp.zeros_like(out_loss_ref)
-            out_logp_ref[...] = jnp.zeros_like(out_logp_ref)
-            out_lse_ref[...] = jnp.zeros_like(out_lse_ref)
-
         logits_tile = logits_ref[0, :, :].astype(jnp.float32)
+        tile_max = jnp.max(logits_tile, axis=-1)
+        exp_tile = jnp.exp(logits_tile - tile_max[:, None])
+        tile_sum = jnp.sum(exp_tile, axis=-1)
 
         idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
         block_start = pid_k * block_size
         offset = idx - block_start
         in_range = (offset >= 0) & (offset < block_size)
-        lane_ids = jnp.arange(block_size, dtype=jnp.int32)[None, :]
-        onehot = lane_ids == offset[:, None]
-        chosen_val = jnp.sum(jnp.where(onehot, logits_tile, 0.0), axis=-1)
-        chosen_ref[:] = jnp.where(in_range, chosen_val, chosen_ref[:])
+        safe_offset = jnp.where(in_range, offset, 0).astype(jnp.int32)
+        chosen_val = jnp.take_along_axis(logits_tile, safe_offset[:, None], axis=-1)[:, 0]
+        chosen_val = chosen_val * in_range.astype(jnp.float32)
 
-        prev_max = max_ref[:]
-        prev_sum = sum_ref[:]
-        tile_max = jnp.max(logits_tile, axis=-1)
-        new_max = jnp.maximum(prev_max, tile_max)
-        prev_sum = prev_sum * jnp.exp(prev_max - new_max)
-        tile_sum = jnp.sum(jnp.exp(logits_tile - new_max[:, None]), axis=-1)
-        new_sum = prev_sum + tile_sum
-        max_ref[:] = new_max
-        sum_ref[:] = new_sum
-
-        @pl.when(pid_k == blocks - 1)
-        def out():
-            lse = max_ref[:] + jnp.log(sum_ref[:])
-            out_lse_ref[0, :, 0] = lse.astype(out_lse_ref.dtype)
-
-            logp = (chosen_ref[:] - lse) / temperature
-            out_logp_ref[0, :, 0] = logp.astype(out_logp_ref.dtype)
-
-            if use_self_old:
-                ratio = jnp.ones_like(logp)
-            else:
-                old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
-                ratio = jnp.exp(logp - old_logp)
-            clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
-            advantage = advantages_ref[pid_b, 0].astype(jnp.float32)
-            loss1 = ratio * advantage
-            loss2 = clipped_ratio * advantage
-            per_token_loss = -jnp.minimum(loss1, loss2)
-            out_loss_ref[0, :, 0] = per_token_loss.astype(out_loss_ref.dtype)
+        out_max_ref[0, :, 0] = tile_max.astype(out_max_ref.dtype)
+        out_sum_ref[0, :, 0] = tile_sum.astype(out_sum_ref.dtype)
+        out_chosen_ref[0, :, 0] = chosen_val.astype(out_chosen_ref.dtype)
 
     call = pl.pallas_call(
         functools.partial(kernel),
-        out_shape=(out_loss, out_logp, out_lse),
+        out_shape=(out_max, out_sum, out_chosen),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
                 pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((batch, 1), lambda b, t, k: (0, 0)),
             ],
             out_specs=[
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, k)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, k)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, k)),
             ],
             grid=(batch, time_blocks, blocks),
-            scratch_shapes=[
-                pltpu.VMEM((time_block,), jnp.float32),
-                pltpu.VMEM((time_block,), jnp.float32),
-                pltpu.VMEM((time_block,), jnp.float32),
-            ],
         ),
-        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "arbitrary")),
+        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "parallel")),
         interpret=interpret,
         debug=bool(debug),
     )
 
-    per_token_loss3, per_token_logps3, lse3 = call(logits, chosen_ids3, old_logps3, advantages2)
-    per_token_loss = per_token_loss3[:, :original_time, 0]
-    per_token_logps = per_token_logps3[:, :original_time, 0]
-    lse = lse3[:, :original_time, 0]
-    return per_token_loss, per_token_logps, lse, original_vocab
+    max3, sum3, chosen3 = call(logits, chosen_ids3)
+    return max3, sum3, chosen3
 
 
 def _grpo_pallas_fwd_stats(
@@ -308,109 +312,28 @@ def _grpo_pallas_fwd_stats(
         space (i.e. Σ exp(logits - max)).
       - per_token_chosen_logit: [B, T] (0.0 when chosen_id is not in-shard)
     """
-    import functools
-
-    import jax
     import jax.numpy as jnp
-    from jax.experimental import pallas as pl
-    from jax.experimental.pallas import tpu as pltpu
-
-    time_block = int(cfg.time_block)
 
     logits, _original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
-    logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
-    chosen_ids, _ = _pad_time(chosen_ids, time_block=time_block, pad_value=-1)
+    logits, original_time = _pad_time(logits, time_block=int(cfg.time_block), pad_value=0.0)
+    chosen_ids, _ = _pad_time(chosen_ids, time_block=int(cfg.time_block), pad_value=-1)
 
-    batch, time, vocab = (int(logits.shape[0]), int(logits.shape[1]), int(logits.shape[2]))
-    time_blocks = int(time // time_block)
-    block_size = int(cfg.block_size)
-    blocks = _ceil_div(vocab, block_size)
-
-    chosen_ids3 = chosen_ids[..., None]
-
-    out_max = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_sum = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_chosen = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-
-    def kernel(
-        logits_ref,
-        chosen_ids_ref,
-        out_max_ref,
-        out_sum_ref,
-        out_chosen_ref,
-        max_ref,
-        sum_ref,
-        chosen_ref,
-    ):
-        pid_k = pl.program_id(2)
-
-        @pl.when(pid_k == 0)
-        def init():
-            max_ref[:] = jnp.full((time_block,), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
-            sum_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
-            chosen_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
-            out_max_ref[...] = jnp.zeros_like(out_max_ref)
-            out_sum_ref[...] = jnp.zeros_like(out_sum_ref)
-            out_chosen_ref[...] = jnp.zeros_like(out_chosen_ref)
-
-        logits_tile = logits_ref[0, :, :].astype(jnp.float32)
-
-        idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
-        block_start = pid_k * block_size
-        offset = idx - block_start
-        in_range = (offset >= 0) & (offset < block_size)
-        lane_ids = jnp.arange(block_size, dtype=jnp.int32)[None, :]
-        onehot = lane_ids == offset[:, None]
-        chosen_val = jnp.sum(jnp.where(onehot, logits_tile, 0.0), axis=-1)
-        chosen_ref[:] = jnp.where(in_range, chosen_val, chosen_ref[:])
-
-        prev_max = max_ref[:]
-        prev_sum = sum_ref[:]
-        tile_max = jnp.max(logits_tile, axis=-1)
-        new_max = jnp.maximum(prev_max, tile_max)
-        prev_sum = prev_sum * jnp.exp(prev_max - new_max)
-        tile_sum = jnp.sum(jnp.exp(logits_tile - new_max[:, None]), axis=-1)
-        new_sum = prev_sum + tile_sum
-        max_ref[:] = new_max
-        sum_ref[:] = new_sum
-
-        @pl.when(pid_k == blocks - 1)
-        def out():
-            out_max_ref[0, :, 0] = max_ref[:].astype(out_max_ref.dtype)
-            out_sum_ref[0, :, 0] = sum_ref[:].astype(out_sum_ref.dtype)
-            out_chosen_ref[0, :, 0] = chosen_ref[:].astype(out_chosen_ref.dtype)
-
-    call = pl.pallas_call(
-        functools.partial(kernel),
-        out_shape=(out_max, out_sum, out_chosen),
-        grid_spec=pltpu.PrefetchScalarGridSpec(
-            num_scalar_prefetch=0,
-            in_specs=[
-                pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-            ],
-            out_specs=[
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-            ],
-            grid=(batch, time_blocks, blocks),
-            scratch_shapes=[
-                pltpu.VMEM((time_block,), jnp.float32),
-                pltpu.VMEM((time_block,), jnp.float32),
-                pltpu.VMEM((time_block,), jnp.float32),
-            ],
-        ),
-        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "arbitrary")),
+    max_blocks, sum_blocks, chosen_blocks = _grpo_pallas_fwd_block_stats(
+        logits=logits,
+        chosen_ids=chosen_ids,
+        cfg=cfg,
         interpret=interpret,
-        debug=bool(debug),
+        debug=debug,
     )
 
-    max3, sum3, chosen3 = call(logits, chosen_ids3)
-    per_token_max = max3[:, :original_time, 0]
-    per_token_sum = sum3[:, :original_time, 0]
-    per_token_chosen = chosen3[:, :original_time, 0]
-    return per_token_max, per_token_sum, per_token_chosen
+    max_blocks = max_blocks[:, :original_time, :]
+    sum_blocks = sum_blocks[:, :original_time, :]
+    chosen_blocks = chosen_blocks[:, :original_time, :]
+
+    max_local = jnp.max(max_blocks, axis=-1)
+    sum_local = jnp.sum(sum_blocks * jnp.exp(max_blocks - max_local[..., None]), axis=-1)
+    chosen_local = jnp.sum(chosen_blocks, axis=-1)
+    return max_local.astype(jnp.float32), sum_local.astype(jnp.float32), chosen_local.astype(jnp.float32)
 
 
 def _grpo_pallas_bwd(

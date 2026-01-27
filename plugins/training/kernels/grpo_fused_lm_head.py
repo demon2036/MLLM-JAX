@@ -352,8 +352,8 @@ def build_grpo_per_token_loss_fused_lm_head(
 
             dh_soft = jax.lax.dot_general(
                 probs,
-                w_blk.T,
-                (((2,), (0,)), ((), ())),
+                w_blk,
+                (((2,), (1,)), ((), ())),
                 preferred_element_type=jnp.float32,
             ).astype(jnp.float32)
             dh_update = (dh_soft * (-scale_bt[..., None])).astype(dh_carry.dtype)
@@ -362,9 +362,9 @@ def build_grpo_per_token_loss_fused_lm_head(
             probs2 = probs.reshape(tokens, block)
             scaled_probs = (probs2 * scale_valid[:, None]).astype(lm_head_kernel.dtype)
             dW_tile = jax.lax.dot_general(
-                h2.T,
+                h2,
                 scaled_probs,
-                (((1,), (0,)), ((), ())),
+                (((0,), (0,)), ((), ())),
                 preferred_element_type=lm_head_kernel.dtype,
             )
             dW_carry = jax.lax.dynamic_update_slice(dW_carry, (-dW_tile).astype(lm_head_kernel.dtype), (0, start))
@@ -391,8 +391,8 @@ def build_grpo_per_token_loss_fused_lm_head(
 
             dh_soft = jax.lax.dot_general(
                 probs,
-                w_tail.T,
-                (((2,), (0,)), ((), ())),
+                w_tail,
+                (((2,), (1,)), ((), ())),
                 preferred_element_type=jnp.float32,
             ).astype(jnp.float32)
             dh_update = (dh_soft * (-scale_bt[..., None])).astype(dh.dtype)
@@ -401,9 +401,9 @@ def build_grpo_per_token_loss_fused_lm_head(
             probs2 = probs.reshape(tokens, rem)
             scaled_probs = (probs2 * scale_valid[:, None]).astype(lm_head_kernel.dtype)
             dW_tail = jax.lax.dot_general(
-                h2.T,
+                h2,
                 scaled_probs,
-                (((1,), (0,)), ((), ())),
+                (((0,), (0,)), ((), ())),
                 preferred_element_type=lm_head_kernel.dtype,
             )
             dW = jax.lax.dynamic_update_slice(dW, (-dW_tail).astype(lm_head_kernel.dtype), (0, start))

@@ -15,11 +15,25 @@
   - Finally it sums across all JAX processes to log a **global** count.
 - Why it exists: loss is computed as a **sum over tokens**, then normalized by `total_valid_token_count` so the reported `train-other/loss` is roughly an **average per valid token**, even when completion lengths vary a lot between samples.
 
+### `time/train/update_s` vs `time/train/step_s`
+
+- `time/train/update_s`: wall time of the **update** phase only (forward+loss+backward+optimizer), i.e. the part affected by the GRPO loss/entropy kernels.
+- `time/train/step_s`: wall time of the **full step** (rollout+reward+advantages+update+sync), i.e. strongly affected by rollout completion length.
+- `time/train/step_avg_last10_s`: smoothed version of `step_s` (mean over last 10 steps); still length-sensitive.
+
+### `throughput/*`
+
+- `throughput/train/valid_tokens_per_s = train-other/total_valid_token_count / time/train/step_s`
+- `throughput/train/valid_tokens_per_s_update = train-other/total_valid_token_count / time/train/update_s`
+
 ## How to use it
 
 - Compare runs with different sequence lengths: `train-other/batch_global` might be the same, but `train-other/total_valid_token_count` can differ a lot (longer generations => more valid tokens => more compute).
 - Interpret throughput metrics:
   - `throughput/train/valid_tokens_per_s` is essentially `train-other/total_valid_token_count / time/train/step_s`.
+- Kernel A/B guidance:
+  - If you want to judge the **loss/update-side kernel**, prefer `time/train/update_s` and `throughput/train/valid_tokens_per_s_update`.
+  - `time/train/step_*` can move in the opposite direction when rollouts get longer/shorter, even if the update kernel is faster/slower.
 
 ## Related metrics (GRPO runner)
 

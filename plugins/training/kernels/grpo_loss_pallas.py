@@ -601,9 +601,12 @@ def _grpo_jax_bwd(
     chosen_ids_i32 = chosen_ids.astype(jnp.int32)
     valid = (chosen_ids_i32 >= 0) & (chosen_ids_i32 < vocab)
     safe_ids = jnp.where(valid, chosen_ids_i32, 0)
-    dlogits = dlogits + jax.nn.one_hot(safe_ids, vocab, dtype=jnp.float32) * (
-        scale * valid.astype(jnp.float32)
-    )[..., None]
+    # Avoid materializing a dense one-hot [B,T,V] tensor: scatter the per-token
+    # `scale` into the chosen index.
+    updates = (scale * valid.astype(jnp.float32)).astype(jnp.float32)
+    b_idx = jnp.arange(dlogits.shape[0], dtype=jnp.int32)[:, None]
+    t_idx = jnp.arange(dlogits.shape[1], dtype=jnp.int32)[None, :]
+    dlogits = dlogits.at[b_idx, t_idx, safe_ids].add(updates)
 
     return dlogits.astype(logits.dtype)
 

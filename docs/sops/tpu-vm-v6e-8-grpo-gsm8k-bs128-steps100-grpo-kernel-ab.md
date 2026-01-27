@@ -69,6 +69,7 @@
 ## Notes
 
 - The absolute `time/train/step_*` is strongly affected by completion length (`train-other/total_valid_token_count`), so `throughput/*` is a better apples-to-apples signal when rollouts differ.
+- For loss-kernel A/B, prefer `time/train/update_s` and `throughput/train/valid_tokens_per_s_update` (see `docs/sops/grpo-gsm8k-metrics.md`).
 
 ## References
 

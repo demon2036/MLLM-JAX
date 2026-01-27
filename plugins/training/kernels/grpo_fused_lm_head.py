@@ -103,59 +103,67 @@ def _selective_log_softmax_lm_head_streaming(
             preferred_element_type=jnp.float32,
         )
 
-    def scan_body(_, block_id):
+    neg_inf = jnp.asarray(-jnp.inf, dtype=jnp.float32)
+
+    def scan_max_chosen(carry, block_id):
+        m, chosen = carry
         start = block_id * block
 
         w_blk = jax.lax.dynamic_slice(lm_head_kernel, (0, start), (hidden, block))
-        logits = _dot_bt(hidden_states, w_blk).astype(jnp.float32)  # [B, T, block]
+        logits = _dot_bt(hidden_states, w_blk).astype(jnp.float32)
 
-        tile_max = jnp.max(logits, axis=-1)  # [B, T]
-        tile_sum = jnp.sum(jnp.exp(logits - tile_max[..., None]), axis=-1)  # [B, T]
+        tile_max = jnp.max(logits, axis=-1)
+        m = jnp.maximum(m, tile_max)
 
         in_range = valid_id & (safe_ids >= start) & (safe_ids < start + block)
         offsets = jnp.where(in_range, safe_ids - start, jnp.zeros((), jnp.int32)).astype(jnp.int32)
         chosen_val = jnp.take_along_axis(logits, offsets[..., None], axis=-1)[..., 0]
-        tile_chosen = jnp.where(in_range, chosen_val, jnp.zeros((), jnp.float32))
-        return None, (tile_max, tile_sum, tile_chosen)
+        chosen = jnp.where(in_range, chosen_val, chosen)
+        return (m, chosen), None
 
-    _, (max_blocks, sum_blocks, chosen_blocks) = jax.lax.scan(
-        scan_body,
-        None,
+    init_m = jnp.full((batch, time), neg_inf, dtype=jnp.float32)
+    init_chosen = jnp.zeros((batch, time), dtype=jnp.float32)
+    (m, chosen), _ = jax.lax.scan(
+        scan_max_chosen,
+        (init_m, init_chosen),
         jnp.arange(full_blocks, dtype=jnp.int32),
     )
-
-    if full_blocks:
-        max_blocks = jnp.moveaxis(max_blocks, 0, -1)  # [B, T, K]
-        sum_blocks = jnp.moveaxis(sum_blocks, 0, -1)  # [B, T, K]
-        chosen_blocks = jnp.moveaxis(chosen_blocks, 0, -1)  # [B, T, K]
-    else:
-        max_blocks = jnp.zeros((batch, time, 0), dtype=jnp.float32)
-        sum_blocks = jnp.zeros((batch, time, 0), dtype=jnp.float32)
-        chosen_blocks = jnp.zeros((batch, time, 0), dtype=jnp.float32)
 
     if rem:
         start = full_blocks * block
         w_tail = lm_head_kernel[:, start:]
-        logits = _dot_bt(hidden_states, w_tail).astype(jnp.float32)  # [B, T, rem]
+        logits = _dot_bt(hidden_states, w_tail).astype(jnp.float32)
 
-        tail_max = jnp.max(logits, axis=-1)
-        tail_sum = jnp.sum(jnp.exp(logits - tail_max[..., None]), axis=-1)
+        tile_max = jnp.max(logits, axis=-1)
+        m = jnp.maximum(m, tile_max)
 
         in_range = valid_id & (safe_ids >= start)
         offsets = jnp.where(in_range, safe_ids - start, jnp.zeros((), jnp.int32)).astype(jnp.int32)
         chosen_val = jnp.take_along_axis(logits, offsets[..., None], axis=-1)[..., 0]
-        tail_chosen = jnp.where(in_range, chosen_val, jnp.zeros((), jnp.float32))
+        chosen = jnp.where(in_range, chosen_val, chosen)
 
-        max_blocks = jnp.concatenate([max_blocks, tail_max[..., None]], axis=-1)
-        sum_blocks = jnp.concatenate([sum_blocks, tail_sum[..., None]], axis=-1)
-        chosen_blocks = jnp.concatenate([chosen_blocks, tail_chosen[..., None]], axis=-1)
+    def scan_sumexp(sumexp, block_id):
+        start = block_id * block
+        w_blk = jax.lax.dynamic_slice(lm_head_kernel, (0, start), (hidden, block))
+        logits = _dot_bt(hidden_states, w_blk).astype(jnp.float32)
+        sumexp = sumexp + jnp.sum(jnp.exp(logits - m[..., None]), axis=-1)
+        return sumexp, None
 
-    max_global = jnp.max(max_blocks, axis=-1)
-    sum_global = jnp.sum(sum_blocks * jnp.exp(max_blocks - max_global[..., None]), axis=-1)
-    lse = max_global + jnp.log(sum_global)
-    chosen = jnp.sum(chosen_blocks, axis=-1)
+    sumexp0 = jnp.zeros((batch, time), dtype=jnp.float32)
+    sumexp, _ = jax.lax.scan(
+        scan_sumexp,
+        sumexp0,
+        jnp.arange(full_blocks, dtype=jnp.int32),
+    )
+
+    if rem:
+        start = full_blocks * block
+        w_tail = lm_head_kernel[:, start:]
+        logits = _dot_bt(hidden_states, w_tail).astype(jnp.float32)
+        sumexp = sumexp + jnp.sum(jnp.exp(logits - m[..., None]), axis=-1)
+
+    lse = m + jnp.log(sumexp)
     logp = chosen - lse
-
     return logp.astype(jnp.float32), lse.astype(jnp.float32)
 
 

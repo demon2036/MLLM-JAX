@@ -332,7 +332,6 @@ def build_grpo_per_token_loss_fused_lm_head(
         dlogp = dlogp * dloss2
         scale = dlogp / float(temperature)
         scale_valid = scale * valid_id.reshape(tokens).astype(jnp.float32)
-        scale_work = scale_valid.astype(hidden_states.dtype)
 
         full_blocks = int(vocab // block)
         rem = int(vocab % block)
@@ -347,24 +346,22 @@ def build_grpo_per_token_loss_fused_lm_head(
                 (((2,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
             ).astype(hidden_states.dtype).astype(jnp.float32)
-            probs = jnp.exp(logits - lse_f32[..., None]).astype(hidden_states.dtype)
+            probs = jnp.exp(logits - lse_f32[..., None])
 
             probs2 = probs.reshape(tokens, block)
-            dlogits2 = probs2 * (-scale_work[:, None])
+            dlogits2 = probs2 * (-scale_valid[:, None])
 
             in_range = valid_id & (safe_ids >= start) & (safe_ids < start + block)
             offsets = jnp.where(in_range, safe_ids - start, jnp.zeros((), jnp.int32)).astype(jnp.int32).reshape(tokens)
-            dlogits2 = dlogits2.at[jnp.arange(tokens), offsets].add(
-                scale_work * in_range.reshape(tokens).astype(scale_work.dtype)
-            )
+            dlogits2 = dlogits2.at[jnp.arange(tokens), offsets].add(scale_valid * in_range.reshape(tokens).astype(jnp.float32))
 
             dlogits = dlogits2.reshape(batch, time, block)
             dh_update = jax.lax.dot_general(
                 dlogits,
                 w_blk,
                 (((2,), (1,)), ((), ())),
-                preferred_element_type=dh_carry.dtype,
-            )
+                preferred_element_type=jnp.float32,
+            ).astype(dh_carry.dtype)
             dh = dh_carry + dh_update
 
             dW_tile = jax.lax.dot_general(
@@ -393,24 +390,22 @@ def build_grpo_per_token_loss_fused_lm_head(
                 (((2,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
             ).astype(hidden_states.dtype).astype(jnp.float32)
-            probs = jnp.exp(logits - lse_f32[..., None]).astype(hidden_states.dtype)
+            probs = jnp.exp(logits - lse_f32[..., None])
 
             probs2 = probs.reshape(tokens, rem)
-            dlogits2 = probs2 * (-scale_work[:, None])
+            dlogits2 = probs2 * (-scale_valid[:, None])
 
             in_range = valid_id & (safe_ids >= start)
             offsets = jnp.where(in_range, safe_ids - start, jnp.zeros((), jnp.int32)).astype(jnp.int32).reshape(tokens)
-            dlogits2 = dlogits2.at[jnp.arange(tokens), offsets].add(
-                scale_work * in_range.reshape(tokens).astype(scale_work.dtype)
-            )
+            dlogits2 = dlogits2.at[jnp.arange(tokens), offsets].add(scale_valid * in_range.reshape(tokens).astype(jnp.float32))
 
             dlogits = dlogits2.reshape(batch, time, rem)
             dh_update = jax.lax.dot_general(
                 dlogits,
                 w_tail,
                 (((2,), (1,)), ((), ())),
-                preferred_element_type=dh.dtype,
-            )
+                preferred_element_type=jnp.float32,
+            ).astype(dh.dtype)
             dh = dh + dh_update
 
             dW_tail = jax.lax.dot_general(

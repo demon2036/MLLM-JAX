@@ -392,7 +392,7 @@ def build_grpo_per_token_loss_fused_lm_head(
 
         # Chosen-token term: add `scale * W[:, y]` into `dh`, and scatter-add
         # `scale * h` into `dW[:, y]`. This is done once (vs per-vocab-tile).
-        w_sel_tok = jnp.take(lm_head_kernel.T, safe_ids_flat, axis=0).astype(jnp.float32)  # [tokens, hidden]
+        w_sel_tok = jnp.take(lm_head_kernel, safe_ids_flat, axis=1).T.astype(jnp.float32)  # [tokens, hidden]
         dh = dh + (w_sel_tok * scale_valid[:, None]).reshape(batch, time, hidden)
 
         dW = dW.at[:, safe_ids_flat].add((h2.astype(jnp.float32).T * scale_valid[None, :]).astype(dW.dtype))

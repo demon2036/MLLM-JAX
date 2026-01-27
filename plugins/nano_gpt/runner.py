@@ -20,7 +20,9 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
     from plugins.nano_gpt.model import GPT, GPTConfig, parse_dtype
 
     seed = int(cfg.get("seed", 1337))
-    output_dir = str(cfg.get("output_dir") or "runs/nano_gpt")
+    output_dir = os.path.abspath(str(cfg.get("output_dir") or "runs/nano_gpt"))
+    cfg = dict(cfg)
+    cfg["output_dir"] = output_dir
     os.makedirs(output_dir, exist_ok=True)
 
     resolved_cfg_path = os.path.join(output_dir, "config_resolved.json")

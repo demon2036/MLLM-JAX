@@ -265,6 +265,16 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
         params = flax.core.unfreeze(variables["params"])
     else:
         state_dict = load_hf_safetensors_state_dict(cfg.base_model)
+        if "lm_head.weight" not in state_dict:
+            embed_key = None
+            for key in state_dict.keys():
+                if str(key).endswith("embed_tokens.weight"):
+                    embed_key = str(key)
+                    break
+            if embed_key is None:
+                raise KeyError("lm_head.weight missing and no embed_tokens.weight found in safetensors state_dict")
+            state_dict = dict(state_dict)
+            state_dict["lm_head.weight"] = state_dict[embed_key]
         params = convert_torch_to_flax_llama(state_dict)
         params = jax.tree_util.tree_map(lambda x: np.asarray(x), params)
 

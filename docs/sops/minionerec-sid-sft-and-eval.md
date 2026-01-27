@@ -10,7 +10,7 @@
   - `python -m pytest -q`
 
 - Run a local end-to-end smoke (JAX backend; tiny llama; small sample; constrained decoding enabled):
-  - `./scripts/run_sid_sft.sh --config plugins/sft/configs/sid_sft_jax_smoke_tiny_llama.yaml --run-mode train_eval`
+  - `./scripts/run_sid_sft.sh --config projects/sid_sft/configs/sid_sft_jax_smoke_tiny_llama.yaml --run-mode train_eval`
 
 - Cross-check HR/NDCG against upstream `calc.py` (same `eval_predictions.json`):
   - `python workdir/MiniOneRec/calc.py --path runs/sid_sft_jax_smoke_tiny_llama/eval_predictions.json --item_path workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt`

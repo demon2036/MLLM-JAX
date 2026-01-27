@@ -13,7 +13,7 @@
   - `python -m pytest -q`
 
 - Run an end-to-end JAX smoke with W&B online:
-  - `./scripts/run_sid_sft.sh --config plugins/sft/configs/sid_sft_smoke_tiny_wandb_online.yaml --run-mode train_eval`
+  - `./scripts/run_sid_sft.sh --config projects/sid_sft/configs/sid_sft_smoke_tiny_wandb_online.yaml --run-mode train_eval`
 
 ## Expected Result
 

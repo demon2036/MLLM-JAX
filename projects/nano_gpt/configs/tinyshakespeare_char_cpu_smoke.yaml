@@ -1,0 +1,43 @@
+seed: 1337
+output_dir: runs/nano_gpt_tinyshakespeare_cpu_smoke
+
+data:
+  cache_dir: workdir/nano_gpt_data
+  url: https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
+  train_ratio: 0.9
+
+model:
+  block_size: 128
+  n_layer: 2
+  n_head: 2
+  n_embd: 128
+  dropout: 0.0
+  bias: true
+  param_dtype: float32
+  compute_dtype: float32
+
+train:
+  max_steps: 10
+  global_batch_size: 32
+  learning_rate: 0.001
+  min_lr: 0.0001
+  warmup_steps: 2
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip_norm: 1.0
+  log_every: 1
+  eval_every: 5
+  eval_iters: 5
+  sample_every: 5
+  sample_tokens: 128
+  temperature: 1.0
+  top_k: 40
+  ckpt_every: 10
+  keep_ckpts: 2
+
+wandb:
+  project: nano-gpt-jax
+  mode: disabled
+  name: null
+

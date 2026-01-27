@@ -13,8 +13,8 @@ def test_normalize_prefill_mode_aliases():
     assert _normalize_prefill_mode("one") == "fixed"
 
 
-def test_fixed_prefill_falls_back_to_exact_len_when_bucket_too_large():
-    # max_prompt_len=10, but the next bucket is 128 which would not fit in a tiny max_cache_length.
+def test_fixed_prefill_defaults_to_exact_max_len():
+    # Fixed prefill defaults to the exact max prompt length (single-shape compile).
     buckets = _build_prefill_buckets(
         [5, 10, 7],
         max_cache_length=64,
@@ -58,4 +58,3 @@ def test_unknown_prefill_mode_raises():
             prefill_mode="wat",
             fixed_prefill_len=None,
         )
-

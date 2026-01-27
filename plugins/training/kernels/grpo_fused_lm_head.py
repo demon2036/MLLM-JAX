@@ -332,8 +332,6 @@ def build_grpo_per_token_loss_fused_lm_head(
         dlogp = dlogp * dloss2
         scale = dlogp / float(temperature)
         scale_valid = scale * valid_id.reshape(tokens).astype(jnp.float32)
-        safe_ids_flat = safe_ids.reshape(tokens).astype(jnp.int32)
-        scale_bt = scale_valid.reshape(batch, time)
 
         full_blocks = int(vocab // block)
         rem = int(vocab % block)
@@ -350,24 +348,29 @@ def build_grpo_per_token_loss_fused_lm_head(
             ).astype(hidden_states.dtype).astype(jnp.float32)
             probs = jnp.exp(logits - lse_f32[..., None])
 
-            dh_soft = jax.lax.dot_general(
-                probs,
+            probs2 = probs.reshape(tokens, block)
+            dlogits2 = probs2 * (-scale_valid[:, None])
+
+            in_range = valid_id & (safe_ids >= start) & (safe_ids < start + block)
+            offsets = jnp.where(in_range, safe_ids - start, jnp.zeros((), jnp.int32)).astype(jnp.int32).reshape(tokens)
+            dlogits2 = dlogits2.at[jnp.arange(tokens), offsets].add(scale_valid * in_range.reshape(tokens).astype(jnp.float32))
+
+            dlogits = dlogits2.reshape(batch, time, block)
+            dh_update = jax.lax.dot_general(
+                dlogits,
                 w_blk,
                 (((2,), (1,)), ((), ())),
                 preferred_element_type=jnp.float32,
-            ).astype(jnp.float32)
-            dh_update = (dh_soft * (-scale_bt[..., None])).astype(dh_carry.dtype)
+            ).astype(dh_carry.dtype)
             dh = dh_carry + dh_update
 
-            probs2 = probs.reshape(tokens, block)
-            scaled_probs = (probs2 * scale_valid[:, None]).astype(lm_head_kernel.dtype)
             dW_tile = jax.lax.dot_general(
                 h2,
-                scaled_probs,
+                dlogits2.astype(lm_head_kernel.dtype),
                 (((0,), (0,)), ((), ())),
                 preferred_element_type=lm_head_kernel.dtype,
             )
-            dW_carry = jax.lax.dynamic_update_slice(dW_carry, (-dW_tile).astype(lm_head_kernel.dtype), (0, start))
+            dW_carry = jax.lax.dynamic_update_slice(dW_carry, dW_tile.astype(lm_head_kernel.dtype), (0, start))
             return (dh, dW_carry), None
 
         dh0 = jnp.zeros((batch, time, hidden), dtype=hidden_states.dtype)
@@ -389,31 +392,29 @@ def build_grpo_per_token_loss_fused_lm_head(
             ).astype(hidden_states.dtype).astype(jnp.float32)
             probs = jnp.exp(logits - lse_f32[..., None])
 
-            dh_soft = jax.lax.dot_general(
-                probs,
+            probs2 = probs.reshape(tokens, rem)
+            dlogits2 = probs2 * (-scale_valid[:, None])
+
+            in_range = valid_id & (safe_ids >= start)
+            offsets = jnp.where(in_range, safe_ids - start, jnp.zeros((), jnp.int32)).astype(jnp.int32).reshape(tokens)
+            dlogits2 = dlogits2.at[jnp.arange(tokens), offsets].add(scale_valid * in_range.reshape(tokens).astype(jnp.float32))
+
+            dlogits = dlogits2.reshape(batch, time, rem)
+            dh_update = jax.lax.dot_general(
+                dlogits,
                 w_tail,
                 (((2,), (1,)), ((), ())),
                 preferred_element_type=jnp.float32,
-            ).astype(jnp.float32)
-            dh_update = (dh_soft * (-scale_bt[..., None])).astype(dh.dtype)
+            ).astype(dh.dtype)
             dh = dh + dh_update
 
-            probs2 = probs.reshape(tokens, rem)
-            scaled_probs = (probs2 * scale_valid[:, None]).astype(lm_head_kernel.dtype)
             dW_tail = jax.lax.dot_general(
                 h2,
-                scaled_probs,
+                dlogits2.astype(lm_head_kernel.dtype),
                 (((0,), (0,)), ((), ())),
                 preferred_element_type=lm_head_kernel.dtype,
             )
-            dW = jax.lax.dynamic_update_slice(dW, (-dW_tail).astype(lm_head_kernel.dtype), (0, start))
-
-        # Chosen-token term: add `scale * W[:, y]` into `dh`, and scatter-add
-        # `scale * h` into `dW[:, y]`. This is done once (vs per-vocab-tile).
-        w_sel_tok = jnp.take(lm_head_kernel, safe_ids_flat, axis=1).T.astype(jnp.float32)  # [tokens, hidden]
-        dh = dh + (w_sel_tok * scale_valid[:, None]).reshape(batch, time, hidden).astype(dh.dtype)
-
-        dW = dW.at[:, safe_ids_flat].add((h2.astype(jnp.float32).T * scale_valid[None, :]).astype(dW.dtype))
+            dW = jax.lax.dynamic_update_slice(dW, dW_tail.astype(lm_head_kernel.dtype), (0, start))
 
         dh = dh.astype(hidden_states.dtype)
         dW = dW.astype(lm_head_kernel.dtype)

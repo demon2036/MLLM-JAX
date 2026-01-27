@@ -1,0 +1,3 @@
+#cloud-config
+runcmd:
+  - [ bash, -lc, "set -euo pipefail; curl -fsSL https://raw.githubusercontent.com/demon2036/MLLM-JAX/john/sid3-fixed-prefill-single-compile/scripts/tpu_vm_start_sid_sft_official_eval_startup.sh -o /root/tpu_start_sid_sft_official_eval.sh; bash /root/tpu_start_sid_sft_official_eval.sh" ]

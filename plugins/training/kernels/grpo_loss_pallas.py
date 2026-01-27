@@ -247,9 +247,13 @@ def _grpo_pallas_fwd_block_stats(
 
     chosen_ids3 = chosen_ids[..., None]
 
-    out_max = jax.ShapeDtypeStruct((batch, time, blocks), jnp.float32)
-    out_sum = jax.ShapeDtypeStruct((batch, time, blocks), jnp.float32)
-    out_chosen = jax.ShapeDtypeStruct((batch, time, blocks), jnp.float32)
+    # TPU BlockSpec constraints require the trailing dim to be either 128-aligned
+    # or equal to the full array dim. Since `blocks` is usually not 128-aligned
+    # (e.g. 75), we fold the blocks axis into the leading dimension so the
+    # trailing dimension can stay `1`.
+    out_max = jax.ShapeDtypeStruct((batch * blocks, time, 1), jnp.float32)
+    out_sum = jax.ShapeDtypeStruct((batch * blocks, time, 1), jnp.float32)
+    out_chosen = jax.ShapeDtypeStruct((batch * blocks, time, 1), jnp.float32)
 
     def kernel(logits_ref, chosen_ids_ref, out_max_ref, out_sum_ref, out_chosen_ref):
         pid_k = pl.program_id(2)
@@ -281,9 +285,9 @@ def _grpo_pallas_fwd_block_stats(
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
             ],
             out_specs=[
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, k)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, k)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, k)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b * blocks + k, t, 0)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b * blocks + k, t, 0)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b * blocks + k, t, 0)),
             ],
             grid=(batch, time_blocks, blocks),
         ),
@@ -293,7 +297,10 @@ def _grpo_pallas_fwd_block_stats(
     )
 
     max3, sum3, chosen3 = call(logits, chosen_ids3)
-    return max3, sum3, chosen3
+    max_blocks = max3[:, :, 0].reshape(batch, blocks, time).transpose(0, 2, 1)
+    sum_blocks = sum3[:, :, 0].reshape(batch, blocks, time).transpose(0, 2, 1)
+    chosen_blocks = chosen3[:, :, 0].reshape(batch, blocks, time).transpose(0, 2, 1)
+    return max_blocks, sum_blocks, chosen_blocks
 
 
 def _grpo_pallas_fwd_stats(

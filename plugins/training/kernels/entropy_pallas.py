@@ -140,9 +140,11 @@ def _entropy_pallas_fwd_block_stats(
     if temperature <= 0:
         raise ValueError("temperature must be > 0")
 
-    out_max = jax.ShapeDtypeStruct((batch, time, blocks), jnp.float32)
-    out_sum = jax.ShapeDtypeStruct((batch, time, blocks), jnp.float32)
-    out_sumx = jax.ShapeDtypeStruct((batch, time, blocks), jnp.float32)
+    # Same TPU BlockSpec constraint as GRPO: keep trailing dim `1` by folding
+    # the (usually non-128-aligned) `blocks` axis into the leading dimension.
+    out_max = jax.ShapeDtypeStruct((batch * blocks, time, 1), jnp.float32)
+    out_sum = jax.ShapeDtypeStruct((batch * blocks, time, 1), jnp.float32)
+    out_sumx = jax.ShapeDtypeStruct((batch * blocks, time, 1), jnp.float32)
 
     def kernel(logits_ref, out_max_ref, out_sum_ref, out_sumx_ref):
         x_tile = logits_ref[0, :, :].astype(jnp.float32) / temperature
@@ -162,9 +164,9 @@ def _entropy_pallas_fwd_block_stats(
             num_scalar_prefetch=0,
             in_specs=[pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k))],
             out_specs=[
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, k)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, k)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, k)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b * blocks + k, t, 0)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b * blocks + k, t, 0)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b * blocks + k, t, 0)),
             ],
             grid=(batch, time_blocks, blocks),
         ),
@@ -174,7 +176,10 @@ def _entropy_pallas_fwd_block_stats(
     )
 
     max3, sum3, sumx3 = call(logits)
-    return max3, sum3, sumx3
+    max_blocks = max3[:, :, 0].reshape(batch, blocks, time).transpose(0, 2, 1)
+    sum_blocks = sum3[:, :, 0].reshape(batch, blocks, time).transpose(0, 2, 1)
+    sumx_blocks = sumx3[:, :, 0].reshape(batch, blocks, time).transpose(0, 2, 1)
+    return max_blocks, sum_blocks, sumx_blocks
 
 
 def _entropy_pallas_fwd_stats(

@@ -360,9 +360,14 @@ def build_grpo_per_token_loss_fused_lm_head(
             dh = dh_carry + dh_update
 
             probs2 = probs.reshape(tokens, block)
-            dW_tile = _dot(h2.T, probs2 * scale_valid[:, None]).astype(jnp.float32)
-            dW_tile = -dW_tile
-            dW_carry = jax.lax.dynamic_update_slice(dW_carry, dW_tile.astype(lm_head_kernel.dtype), (0, start))
+            scaled_probs = (probs2 * scale_valid[:, None]).astype(lm_head_kernel.dtype)
+            dW_tile = jax.lax.dot_general(
+                h2.T,
+                scaled_probs,
+                (((1,), (0,)), ((), ())),
+                preferred_element_type=lm_head_kernel.dtype,
+            )
+            dW_carry = jax.lax.dynamic_update_slice(dW_carry, (-dW_tile).astype(lm_head_kernel.dtype), (0, start))
             return (dh, dW_carry), None
 
         dh0 = jnp.zeros((batch, time, hidden), dtype=hidden_states.dtype)
@@ -394,9 +399,14 @@ def build_grpo_per_token_loss_fused_lm_head(
             dh = dh + dh_update
 
             probs2 = probs.reshape(tokens, rem)
-            dW_tail = _dot(h2.T, probs2 * scale_valid[:, None]).astype(jnp.float32)
-            dW_tail = -dW_tail
-            dW = jax.lax.dynamic_update_slice(dW, dW_tail.astype(lm_head_kernel.dtype), (0, start))
+            scaled_probs = (probs2 * scale_valid[:, None]).astype(lm_head_kernel.dtype)
+            dW_tail = jax.lax.dot_general(
+                h2.T,
+                scaled_probs,
+                (((1,), (0,)), ((), ())),
+                preferred_element_type=lm_head_kernel.dtype,
+            )
+            dW = jax.lax.dynamic_update_slice(dW, (-dW_tail).astype(lm_head_kernel.dtype), (0, start))
 
         # Chosen-token term: add `scale * W[:, y]` into `dh`, and scatter-add
         # `scale * h` into `dW[:, y]`. This is done once (vs per-vocab-tile).

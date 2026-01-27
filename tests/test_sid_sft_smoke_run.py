@@ -10,7 +10,7 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
 
-from plugins.sft.runner.sid_sft import (
+from plugins.sft.jax.runner import (
     SidSftConfig,
     SidSftDataConfig,
     SidSftEvalConfig,

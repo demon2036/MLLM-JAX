@@ -5,16 +5,20 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
+from flax.training import train_state
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
 from plugins.training.mesh import create_mesh
 from plugins.training.update.train_step import training_step
+from plugins.training.update.optimizer import LRScheduleConfig, OptimizerConfig, build_tx
 
-from plugins.sft.jax.data import batched, collate_sft_batch, iter_indices
-from plugins.sft.jax.state import SftStateBundle, create_sft_state
+from plugins.sft.jax.sharding import get_partition_rules_llama, match_partition_rules
+
+from plugins.sft.jax.data import collate_sft_batch, iter_indices
 
 
 @dataclass(frozen=True)
@@ -23,6 +27,106 @@ class SftTrainStats:
     micro_steps: int
     effective_batch_size: int
     final_loss: float
+
+
+def _masked_mean(values: jax.Array, mask: jax.Array) -> jax.Array:
+    mask_f = mask.astype(jnp.float32)
+    denom = jnp.maximum(mask_f.sum(), 1.0)
+    return (values.astype(jnp.float32) * mask_f).sum() / denom
+
+
+class TrainSftModule(nn.Module):
+    model: Any
+    label_ignore_id: int = -100
+
+    def __call__(self, inputs: dict[str, jax.Array]) -> dict[str, jax.Array]:
+        input_ids = inputs["input_ids"]
+        attention_mask = inputs["attention_mask"]
+        labels = inputs["labels"]
+
+        logits, _cache = self.model(input_ids=input_ids, attention_mask=attention_mask)
+        shift_logits = logits[:, :-1, :]
+        shift_labels = labels[:, 1:]
+        shift_attention = attention_mask[:, 1:]
+
+        valid = jnp.logical_and(shift_labels != int(self.label_ignore_id), shift_attention.astype(bool))
+        safe_labels = jnp.where(valid, shift_labels, 0).astype(jnp.int32)
+
+        log_probs = jax.nn.log_softmax(shift_logits.astype(jnp.float32), axis=-1)
+        chosen = jnp.take_along_axis(log_probs, safe_labels[..., None], axis=-1)[..., 0]
+        per_token_loss = -chosen
+
+        loss = _masked_mean(per_token_loss, valid)
+        token_count = valid.astype(jnp.int32).sum()
+        return {
+            "loss": loss,
+            "token_count": token_count,
+        }
+
+
+class SftTrainState(train_state.TrainState):
+    micro_step: int = 0
+    micro_in_mini: int = 1
+    grad_accum: Any | None = None
+
+
+@dataclass(frozen=True)
+class SftStateBundle:
+    state: SftTrainState
+    sharding: Any
+
+
+def create_sft_state(
+    *,
+    mesh: Mesh,
+    model: Any,
+    params: Any,
+    training_steps: int,
+    optimizer_name: str,
+    learning_rate: float,
+    weight_decay: float,
+    grad_accum_steps: int,
+    warmup_steps: int = 0,
+    label_ignore_id: int = -100,
+) -> SftStateBundle:
+    grad_accum_steps = int(grad_accum_steps)
+    if grad_accum_steps <= 0:
+        raise ValueError("grad_accum_steps must be >= 1")
+    training_steps = int(training_steps)
+    if training_steps <= 0:
+        raise ValueError("training_steps must be > 0")
+
+    train_module = TrainSftModule(model=model, label_ignore_id=int(label_ignore_id))
+    tx_cfg = OptimizerConfig(
+        name=str(optimizer_name),
+        clip_norm=1.0,
+        weight_decay=float(weight_decay),
+        lr_schedule=LRScheduleConfig(
+            type="warmup_linear",
+            init_value=0.0,
+            peak_value=float(learning_rate),
+            end_value=0.0,
+            warmup_steps=int(warmup_steps),
+        ),
+    )
+    tx = build_tx(training_steps=training_steps, cfg=tx_cfg)
+
+    def init_fn(p):
+        grad_accum = jax.tree_util.tree_map(jnp.zeros_like, p) if grad_accum_steps > 1 else None
+        return SftTrainState.create(
+            apply_fn=train_module.apply,
+            params=p,
+            tx=tx,
+            micro_step=0,
+            micro_in_mini=grad_accum_steps,
+            grad_accum=grad_accum,
+        )
+
+    state_shapes = jax.eval_shape(init_fn, params)
+    partitions = match_partition_rules(get_partition_rules_llama(), state_shapes)
+    shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), partitions)
+    state = jax.jit(init_fn, out_shardings=shardings)(params)
+    return SftStateBundle(state=state, sharding=shardings)
 
 
 def _device_batch_size(mesh: Mesh, micro_batch_size_per_replica: int) -> int:
@@ -45,6 +149,7 @@ def run_sft_train(
     train_dataset: Any,
     pad_token_id: int,
     pad_to_length: int | None,
+    padding_side: str,
     optimizer_name: str,
     learning_rate: float,
     weight_decay: float,
@@ -108,7 +213,12 @@ def run_sft_train(
             cursor += global_micro_batch
 
             examples = [train_dataset[i] for i in batch_idx]
-            batch_np = collate_sft_batch(examples, pad_token_id=int(pad_token_id), pad_to_length=pad_to_length)
+            batch_np = collate_sft_batch(
+                examples,
+                pad_token_id=int(pad_token_id),
+                pad_to_length=pad_to_length,
+                padding_side=str(padding_side or "right"),
+            )
             batch = {k: jax.device_put(v, data_sharding) for k, v in batch_np.as_dict().items()}
 
             bundle_state, metrics = train_step_fn(bundle.state, batch)

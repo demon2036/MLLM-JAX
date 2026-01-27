@@ -50,9 +50,44 @@ def create_mesh(mesh_shape: str):
     """
 
     import jax
+    from jax.experimental import mesh_utils
     from jax.sharding import Mesh
 
-    from MLLM_JAX.utils import get_jax_mesh2
+    def get_jax_mesh2(axis_dims: str, axis_names=("dp", "fsdp", "tp"), devices=None):
+        axis_dims = str(axis_dims)
+        mesh_axis_splitting = False
+        if axis_dims.startswith("!"):
+            mesh_axis_splitting = True
+            axis_dims = axis_dims[1:]
+
+        if ":" in axis_dims:
+            dims: list[int] = []
+            dim_names: list[str] = []
+            for axis in axis_dims.split(","):
+                name, dim = axis.split(":")
+                if name not in axis_names:
+                    raise ValueError(f"Unknown axis name {name!r} (expected one of {axis_names})")
+                dims.append(int(dim))
+                dim_names.append(str(name))
+            if set(dim_names) != set(axis_names):
+                raise ValueError(f"Axis names mismatch: expected {axis_names}, got {dim_names}")
+        else:
+            dims = [int(x) for x in axis_dims.split(",")]
+            dim_names = list(axis_names)
+
+        if len(dims) != len(dim_names):
+            raise ValueError(f"Axis dims length mismatch: dims={dims}, names={dim_names}")
+
+        if devices is not None:
+            mesh_shape = np.arange(len(devices)).reshape(dims).shape
+            physical_mesh = mesh_utils.create_device_mesh(mesh_shape=mesh_shape, devices=devices)
+        else:
+            mesh_shape = np.arange(jax.device_count()).reshape(dims).shape
+            if mesh_axis_splitting:
+                physical_mesh = np.array(jax.devices()).reshape(mesh_shape)
+            else:
+                physical_mesh = mesh_utils.create_device_mesh(mesh_shape)
+        return Mesh(physical_mesh, dim_names)
 
     mesh_shape = str(mesh_shape or "").strip().lower()
     if mesh_shape == "":

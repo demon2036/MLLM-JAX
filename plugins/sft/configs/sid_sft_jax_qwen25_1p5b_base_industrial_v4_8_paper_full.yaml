@@ -1,6 +1,6 @@
 backend: tpu
 base_model: Qwen/Qwen2.5-1.5B
-output_dir: runs/sid_sft_jax_qwen25_1p5b_base_office_v4_8_paper_full
+output_dir: runs/sid_sft_jax_qwen25_1p5b_base_industrial_v4_8_paper_full
 seed: 42
 device: tpu
 
@@ -11,13 +11,13 @@ jax:
   max_cache_length: 512
 
 data:
-  category: Office_Products
-  train_file: workdir/MiniOneRec/data/Amazon/train/Office_Products_5_2016-10-2018-11.csv
-  eval_file: workdir/MiniOneRec/data/Amazon/valid/Office_Products_5_2016-10-2018-11.csv
-  test_file: workdir/MiniOneRec/data/Amazon/test/Office_Products_5_2016-10-2018-11.csv
-  info_file: workdir/MiniOneRec/data/Amazon/info/Office_Products_5_2016-10-2018-11.txt
-  sid_index_path: workdir/MiniOneRec/data/Amazon/index/Office_Products.index.json
-  item_meta_path: workdir/MiniOneRec/data/Amazon/index/Office_Products.item.json
+  category: Industrial_and_Scientific
+  train_file: workdir/MiniOneRec/data/Amazon/train/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  eval_file: workdir/MiniOneRec/data/Amazon/valid/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  test_file: workdir/MiniOneRec/data/Amazon/test/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  info_file: workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt
+  sid_index_path: workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.index.json
+  item_meta_path: workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.item.json
   max_len: 512
   padding_side: left
   sample_train: -1

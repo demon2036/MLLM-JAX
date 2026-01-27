@@ -31,6 +31,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "sid_index_path": "workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.index.json",
         "item_meta_path": "workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.item.json",
         "max_len": 512,
+        "padding_side": "left",
         "sample_train": -1,
         "sample_eval": -1,
         "sample_test": -1,

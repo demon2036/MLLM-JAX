@@ -31,6 +31,7 @@ def collate_sft_batch(
     label_pad_id: int = -100,
     pad_to_multiple_of: int = 8,
     pad_to_length: int | None = None,
+    padding_side: str = "right",
 ) -> Batch:
     if not examples:
         raise ValueError("Empty batch")
@@ -50,9 +51,14 @@ def collate_sft_batch(
             raise ValueError("input_ids/attention_mask/labels length mismatch")
 
         length = int(min(int(ids.shape[0]), int(max_len)))
-        input_ids[i, :length] = ids[:length]
-        attention_mask[i, :length] = mask[:length]
-        labels[i, :length] = lab[:length]
+        if str(padding_side).lower() == "left":
+            input_ids[i, max_len - length : max_len] = ids[-length:]
+            attention_mask[i, max_len - length : max_len] = mask[-length:]
+            labels[i, max_len - length : max_len] = lab[-length:]
+        else:
+            input_ids[i, :length] = ids[:length]
+            attention_mask[i, :length] = mask[:length]
+            labels[i, :length] = lab[:length]
 
     return Batch(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
 

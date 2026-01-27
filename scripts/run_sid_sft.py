@@ -17,7 +17,7 @@ if REPO_ROOT not in sys.path:
 
 from plugins.common.env import load_dotenv_if_present
 from plugins.sft.config import DEFAULT_CONFIG, load_config
-from plugins.sft.runner.sid_sft import (
+from plugins.sft.jax.runner import (
     SidSftConfig,
     SidSftDataConfig,
     SidSftEvalConfig,
@@ -80,6 +80,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
         sid_index_path=str(_get_or_default(cfg, "data.sid_index_path", DEFAULT_CONFIG["data"]["sid_index_path"])),
         item_meta_path=str(_get_or_default(cfg, "data.item_meta_path", DEFAULT_CONFIG["data"]["item_meta_path"])),
         max_len=int(_get_or_default(cfg, "data.max_len", DEFAULT_CONFIG["data"]["max_len"])),
+        padding_side=str(_get_or_default(cfg, "data.padding_side", DEFAULT_CONFIG["data"].get("padding_side") or "left")),
         sample_train=int(_get_or_default(cfg, "data.sample_train", DEFAULT_CONFIG["data"]["sample_train"])),
         sample_eval=int(_get_or_default(cfg, "data.sample_eval", DEFAULT_CONFIG["data"]["sample_eval"])),
         sample_test=int(_get_or_default(cfg, "data.sample_test", DEFAULT_CONFIG["data"]["sample_test"])),

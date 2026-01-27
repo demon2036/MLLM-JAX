@@ -8,7 +8,7 @@
 #
 # This config matches `grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` but turns on:
 # - `train.grpo_kernel.enabled: true`
-# - `train.grpo_kernel.kernel.bwd_impl: jax` (Pallas fwd + JAX bwd; fusion-friendly)
+# - `train.grpo_kernel.kernel.bwd_impl: pallas` (full Pallas fwd+bwd)
 #
 # Intended use: v6e-8 / v6e-16 training (100 steps) with W&B logging.
 
@@ -33,7 +33,7 @@ train:
     kernel:
       block_size: 2048
       time_block: 8
-      bwd_impl: jax
+      bwd_impl: pallas
     sharding:
       batch_axes: [dp, fsdp]
       vocab_axis: null

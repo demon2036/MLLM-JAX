@@ -38,6 +38,7 @@
 - TPU v4-8 RL/GSM8K bs128 algtest (20 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-algtest-20steps.md`
 - TPU v6e-8 GRPO train (100 steps, bs=128 seq, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`
 - TPU v6e-8 GRPO 100-step A/B (baseline vs kernel, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100-grpo-kernel-ab.md`
+- TPU v6e-8 GRPO kernel microbench (B=1,T=4096,V=151936 + memory_stats): `docs/sops/tpu-vm-v6e-8-grpo-kernel-microbench-t4096-vocab151936.md`
 - TPU v6e-8 rollout speed debug (Qwen2.5-3B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - TPU v6e-8 full test-set eval sweep (Qwen2.5-3B, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-full-test-eval-sweep.md`
 - TPU v6e-8 vs v6e-16 speed gap debug (multihost + mesh): `docs/sops/tpu-vm-v6e-8-v6e-16-grpo-gsm8k-speed-gap-debug.md`
@@ -91,6 +92,7 @@
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - `docs/sops/tpu-vm-v6e-8-v6e-16-grpo-gsm8k-speed-gap-debug.md`
 - `docs/sops/tpu-bf16-attention-score-f32.md`
+- `docs/sops/tpu-vm-v6e-8-grpo-kernel-microbench-t4096-vocab151936.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-bs32-len1024-k1-mb4-20steps-timing.md`
 - `docs/sops/tpu-vm-bootstrap.md`

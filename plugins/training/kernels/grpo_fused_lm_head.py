@@ -99,8 +99,6 @@ def _selective_log_softmax_lm_head_streaming(
     full_blocks = int(vocab // block)
     rem = int(vocab % block)
 
-    neg_inf = jnp.asarray(jnp.finfo(jnp.float32).min, dtype=jnp.float32)
-
     def _dot(x, w):
         return jax.lax.dot_general(
             x,
@@ -109,55 +107,57 @@ def _selective_log_softmax_lm_head_streaming(
             preferred_element_type=jnp.float32,
         )
 
-    def _segment_sum(updates, segment_ids, *, num_segments: int):
-        """Minimal segment_sum to avoid jax.ops dependency."""
-        out = jnp.zeros((int(num_segments), int(updates.shape[1])), dtype=updates.dtype)
-        return out.at[segment_ids].add(updates)
-
-    def scan_body(carry, block_id):
-        m, l, chosen = carry
+    def scan_body(_, block_id):
         start = block_id * block
 
         w_blk = jax.lax.dynamic_slice(lm_head_kernel, (0, start), (hidden, block))
         logits = _dot(h2, w_blk).astype(jnp.float32)  # [tokens, block]
 
-        tile_max = jnp.max(logits, axis=-1)
-        new_m = jnp.maximum(m, tile_max)
-        l = l * jnp.exp(m - new_m) + jnp.sum(jnp.exp(logits - new_m[:, None]), axis=-1)
-        m = new_m
+        tile_max = jnp.max(logits, axis=-1)  # [tokens]
+        tile_sum = jnp.sum(jnp.exp(logits - tile_max[:, None]), axis=-1)  # [tokens]
 
         in_range = valid_id & (safe_ids >= start) & (safe_ids < start + block)
         offsets = jnp.where(in_range, safe_ids - start, jnp.zeros((), jnp.int32)).astype(jnp.int32)
         chosen_val = jnp.take_along_axis(logits, offsets[:, None], axis=-1)[:, 0]
-        chosen = jnp.where(in_range, chosen_val, chosen)
-        return (m, l, chosen), None
+        tile_chosen = jnp.where(in_range, chosen_val, jnp.zeros((), jnp.float32))
+        return None, (tile_max, tile_sum, tile_chosen)
 
-    init_m = jnp.full((tokens,), neg_inf, dtype=jnp.float32)
-    init_l = jnp.zeros((tokens,), dtype=jnp.float32)
-    init_chosen = jnp.zeros((tokens,), dtype=jnp.float32)
-
-    (m, l, chosen), _ = jax.lax.scan(
+    _, (max_blocks, sum_blocks, chosen_blocks) = jax.lax.scan(
         scan_body,
-        (init_m, init_l, init_chosen),
+        None,
         jnp.arange(full_blocks, dtype=jnp.int32),
     )
+
+    if full_blocks:
+        max_blocks = max_blocks.transpose(1, 0)  # [tokens, K]
+        sum_blocks = sum_blocks.transpose(1, 0)  # [tokens, K]
+        chosen_blocks = chosen_blocks.transpose(1, 0)  # [tokens, K]
+    else:
+        max_blocks = jnp.zeros((tokens, 0), dtype=jnp.float32)
+        sum_blocks = jnp.zeros((tokens, 0), dtype=jnp.float32)
+        chosen_blocks = jnp.zeros((tokens, 0), dtype=jnp.float32)
 
     if rem:
         start = full_blocks * block
         w_tail = lm_head_kernel[:, start:]
         logits = _dot(h2, w_tail).astype(jnp.float32)  # [tokens, rem]
 
-        tile_max = jnp.max(logits, axis=-1)
-        new_m = jnp.maximum(m, tile_max)
-        l = l * jnp.exp(m - new_m) + jnp.sum(jnp.exp(logits - new_m[:, None]), axis=-1)
-        m = new_m
+        tail_max = jnp.max(logits, axis=-1)
+        tail_sum = jnp.sum(jnp.exp(logits - tail_max[:, None]), axis=-1)
 
         in_range = valid_id & (safe_ids >= start)
         offsets = jnp.where(in_range, safe_ids - start, jnp.zeros((), jnp.int32)).astype(jnp.int32)
         chosen_val = jnp.take_along_axis(logits, offsets[:, None], axis=-1)[:, 0]
-        chosen = jnp.where(in_range, chosen_val, chosen)
+        tail_chosen = jnp.where(in_range, chosen_val, jnp.zeros((), jnp.float32))
 
-    lse = m + jnp.log(l)
+        max_blocks = jnp.concatenate([max_blocks, tail_max[:, None]], axis=-1)
+        sum_blocks = jnp.concatenate([sum_blocks, tail_sum[:, None]], axis=-1)
+        chosen_blocks = jnp.concatenate([chosen_blocks, tail_chosen[:, None]], axis=-1)
+
+    max_global = jnp.max(max_blocks, axis=-1)
+    sum_global = jnp.sum(sum_blocks * jnp.exp(max_blocks - max_global[:, None]), axis=-1)
+    lse = max_global + jnp.log(sum_global)
+    chosen = jnp.sum(chosen_blocks, axis=-1)
     logp = chosen - lse
 
     logp = logp.reshape(batch, time).astype(jnp.float32)

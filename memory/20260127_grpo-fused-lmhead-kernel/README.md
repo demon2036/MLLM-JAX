@@ -28,30 +28,44 @@
   - `scripts/grpo_fused_lm_head_microbench.py`
   - `plugins/training/configs/grpo_fused_lm_head_microbench_bpd1_t8192_h4096_vocab151936_baseline.yaml`
   - `plugins/training/configs/grpo_fused_lm_head_microbench_bpd1_t8192_h4096_vocab151936_fused.yaml`
+  - `plugins/training/configs/grpo_fused_lm_head_microbench_bpd1_t8192_h4096_vocab151936_baseline_f32logits.yaml`
+  - `plugins/training/configs/grpo_fused_lm_head_microbench_bpd1_t8192_h4096_vocab151936_fused_f32logits.yaml`
   - `tests/test_grpo_fused_lm_head.py`
   - `plugins/sft/jax/train.py` (pytest fix for `device="cpu"` on TPU VMs)
   - `plugins/sft/runner/sid_sft.py` (default `rope_theta` for older HF `LlamaConfig`)
 
 ### TPU runs
 
-- Fused microbench baseline (kernel off): https://wandb.ai/johntitordemon2036/mllm-jax-grpo-fused-lmhead-microbench/runs/br66y8np
-- Fused microbench kernel on: https://wandb.ai/johntitordemon2036/mllm-jax-grpo-fused-lmhead-microbench/runs/m9ctmroq
+- Baseline (bf16 logits, kernel off): https://wandb.ai/johntitordemon2036/mllm-jax-grpo-fused-lmhead-microbench/runs/qzr02wl0
+- Fused (bf16 logits, kernel on, bs=2048): https://wandb.ai/johntitordemon2036/mllm-jax-grpo-fused-lmhead-microbench/runs/e846csu5
+- Fused (bf16 logits, kernel on, bs=1024): https://wandb.ai/johntitordemon2036/mllm-jax-grpo-fused-lmhead-microbench/runs/qbobk14f
+
+- Baseline (fp32 logits, kernel off): https://wandb.ai/johntitordemon2036/mllm-jax-grpo-fused-lmhead-microbench/runs/vpuzizea
+- Fused (fp32 logits, kernel on, `cast_logits_to_hidden_dtype=false`): https://wandb.ai/johntitordemon2036/mllm-jax-grpo-fused-lmhead-microbench/runs/kv01ry1h
 
 ### Key metrics
 
 - `mem/peak_bytes_in_use_max`:
-  - baseline: `6564776448`
-  - fused: `6575472640`
+  - baseline (bf16 logits): `6564776448`
+  - fused (bf16 logits, bs=2048): `6568435200`
+  - fused (bf16 logits, bs=1024): `6568061952`
+
+  - baseline (fp32 logits): `6564682752`
+  - fused (fp32 logits): `6567677440`
 
 - `bench/step_s_mean` (optional):
-  - baseline: `0.0635085138026625`
-  - fused: `0.19173476110154297`
+  - baseline (bf16 logits): `0.06374881879746681`
+  - fused (bf16 logits, bs=2048): `0.1557564590999391`
+  - fused (bf16 logits, bs=1024): `0.12882797849888447`
+
+  - baseline (fp32 logits): `0.08782019619975472`
+  - fused (fp32 logits): `0.1286411664012121`
 
 ### Notes
 
 - Correctness: TPU `pytest -q` passes (`42 passed`).
-- Memory: fused LM-head kernel does **not** beat the baseline peak HBM in this microbench yet (slightly worse by ~10MB).
-- Perf: fused kernel is ~3x slower in this microbench (expected due to per-vocab tiling + multiple matmuls).
+- Memory: fused LM-head kernel still does **not** beat the baseline peak HBM in this microbench yet (best attempt is still higher by a few MB).
+- Perf: fused kernel remains slower in this microbench due to per-vocab tiling (many matmuls).
 
 ### Commands actually run (TPU)
 
@@ -63,3 +77,8 @@
   - `cd /root/MLLM-JAX && /root/venvs/mllm-jax/bin/python -u scripts/grpo_fused_lm_head_microbench.py --config plugins/training/configs/grpo_fused_lm_head_microbench_bpd1_t8192_h4096_vocab151936_baseline.yaml`
 - Microbench fused:
   - `cd /root/MLLM-JAX && /root/venvs/mllm-jax/bin/python -u scripts/grpo_fused_lm_head_microbench.py --config plugins/training/configs/grpo_fused_lm_head_microbench_bpd1_t8192_h4096_vocab151936_fused.yaml`
+
+- Microbench baseline (fp32 logits):
+  - `cd /root/MLLM-JAX && /root/venvs/mllm-jax/bin/python -u scripts/grpo_fused_lm_head_microbench.py --config plugins/training/configs/grpo_fused_lm_head_microbench_bpd1_t8192_h4096_vocab151936_baseline_f32logits.yaml`
+- Microbench fused (fp32 logits):
+  - `cd /root/MLLM-JAX && /root/venvs/mllm-jax/bin/python -u scripts/grpo_fused_lm_head_microbench.py --config plugins/training/configs/grpo_fused_lm_head_microbench_bpd1_t8192_h4096_vocab151936_fused_f32logits.yaml`

@@ -266,10 +266,9 @@ def _grpo_pallas_fwd_block_stats(
         idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
         block_start = pid_k * block_size
         offset = idx - block_start
-        in_range = (offset >= 0) & (offset < block_size)
-        safe_offset = jnp.where(in_range, offset, 0).astype(jnp.int32)
-        chosen_val = jnp.take_along_axis(logits_tile, safe_offset[:, None], axis=-1)[:, 0]
-        chosen_val = chosen_val * in_range.astype(jnp.float32)
+        lane_ids = jnp.arange(block_size, dtype=jnp.int32)[None, :]
+        onehot = lane_ids == offset[:, None]
+        chosen_val = jnp.sum(jnp.where(onehot, logits_tile, 0.0), axis=-1)
 
         out_max_ref[0, :, 0] = tile_max.astype(out_max_ref.dtype)
         out_sum_ref[0, :, 0] = tile_sum.astype(out_sum_ref.dtype)

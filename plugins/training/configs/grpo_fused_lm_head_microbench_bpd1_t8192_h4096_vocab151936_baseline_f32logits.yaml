@@ -1,0 +1,26 @@
+mesh_shape: auto
+
+shape:
+  batch_per_device: 1
+  seq_len: 8192
+  hidden: 4096
+  vocab: 151936
+  dtype: bfloat16
+
+warmup_steps: 2
+steps: 10
+
+epsilon_low: 0.2
+epsilon_high: 0.3
+temperature: 1.0
+old_logp_value: 0.0
+
+baseline_logits_dtype: float32
+
+kernel:
+  enabled: false
+  vocab_block_size: 2048
+
+wandb_project: mllm-jax-grpo-fused-lmhead-microbench
+wandb_mode: online
+wandb_name: grpo_fused_lm_head_microbench_bpd1_t8192_h4096_vocab151936_baseline_f32logits

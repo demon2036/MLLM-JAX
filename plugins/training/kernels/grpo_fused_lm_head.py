@@ -25,6 +25,11 @@ class GRPOLmHeadFusedConfig:
     epsilon_low: float = 0.2
     epsilon_high: float = 0.2
     temperature: float = 1.0
+    # If True, emulate bf16 LM-head behavior by rounding dot outputs to the
+    # hidden dtype (typically bf16) before any softmax stats.
+    # If False, keep float32 logits for softmax (higher precision, higher peak
+    # memory for naive baselines).
+    cast_logits_to_hidden_dtype: bool = True
 
 
 def _segment_sum(updates: Any, segment_ids: Any, *, num_segments: int) -> Any:
@@ -78,6 +83,7 @@ def _selective_log_softmax_lm_head_streaming(
     lm_head_kernel: Any,
     chosen_ids: Any,
     vocab_block_size: int,
+    cast_logits_to_hidden_dtype: bool,
 ) -> tuple[Any, Any]:
     """Compute selective logp + per-token logsumexp without `[B,T,V]` logits."""
     import jax
@@ -116,9 +122,11 @@ def _selective_log_softmax_lm_head_streaming(
     neg_inf = jnp.asarray(-jnp.inf, dtype=jnp.float32)
 
     def _logits_f32(x, w):
-        # Match the repo reference rounding: compute dot in f32 then cast to
-        # the hidden dtype (typically bf16) before any softmax stats.
-        logits = _dot_bt(x, w).astype(x.dtype)
+        logits = _dot_bt(x, w)
+        if cast_logits_to_hidden_dtype:
+            # Match the repo reference rounding: compute dot in f32 then cast to
+            # the hidden dtype (typically bf16) before any softmax stats.
+            logits = logits.astype(x.dtype)
         return logits.astype(jnp.float32)
 
     def scan_stats(carry, block_id):
@@ -193,6 +201,7 @@ def grpo_per_token_loss_fused_lm_head_forward(
         epsilon_low=float(cfg.epsilon_low),
         epsilon_high=float(cfg.epsilon_high),
         temperature=float(cfg.temperature),
+        cast_logits_to_hidden_dtype=bool(cfg.cast_logits_to_hidden_dtype),
     )
 
     logp, lse = _selective_log_softmax_lm_head_streaming(
@@ -200,6 +209,7 @@ def grpo_per_token_loss_fused_lm_head_forward(
         lm_head_kernel=lm_head_kernel,
         chosen_ids=chosen_ids,
         vocab_block_size=int(cfg.vocab_block_size),
+        cast_logits_to_hidden_dtype=bool(cfg.cast_logits_to_hidden_dtype),
     )
     per_token_logps = logp / float(cfg.temperature)
 
@@ -240,6 +250,7 @@ def build_grpo_per_token_loss_fused_lm_head(
         epsilon_low=float(cfg.epsilon_low),
         epsilon_high=float(cfg.epsilon_high),
         temperature=float(cfg.temperature),
+        cast_logits_to_hidden_dtype=bool(cfg.cast_logits_to_hidden_dtype),
     )
 
     block = int(cfg.vocab_block_size)
@@ -345,7 +356,10 @@ def build_grpo_per_token_loss_fused_lm_head(
                 w_blk,
                 (((2,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
-            ).astype(hidden_states.dtype).astype(jnp.float32)
+            )
+            if cfg.cast_logits_to_hidden_dtype:
+                logits = logits.astype(hidden_states.dtype)
+            logits = logits.astype(jnp.float32)
             probs = jnp.exp(logits - lse_f32[..., None])
 
             probs2 = probs.reshape(tokens, block)
@@ -389,7 +403,10 @@ def build_grpo_per_token_loss_fused_lm_head(
                 w_tail,
                 (((2,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
-            ).astype(hidden_states.dtype).astype(jnp.float32)
+            )
+            if cfg.cast_logits_to_hidden_dtype:
+                logits = logits.astype(hidden_states.dtype)
+            logits = logits.astype(jnp.float32)
             probs = jnp.exp(logits - lse_f32[..., None])
 
             probs2 = probs.reshape(tokens, rem)

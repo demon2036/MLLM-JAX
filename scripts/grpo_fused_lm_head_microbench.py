@@ -48,6 +48,7 @@ class BenchShapeConfig:
 class KernelSectionConfig:
     enabled: bool = False
     vocab_block_size: int = 2048
+    cast_logits_to_hidden_dtype: bool = True
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class MicrobenchConfig:
     old_logp_value: float = 0.0
 
     kernel: KernelSectionConfig = KernelSectionConfig()
+    baseline_logits_dtype: str = "input"
 
     wandb_project: str = "mllm-jax-grpo-fused-lmhead-microbench"
     wandb_mode: str = "online"
@@ -111,6 +113,9 @@ def _cfg_from_dict(raw: dict[str, Any], *, config_path: str) -> MicrobenchConfig
         raise TypeError("kernel must be a dict")
     enabled = bool(kernel_raw.get("enabled", False))
     vocab_block_size = int(kernel_raw.get("vocab_block_size") or kernel_raw.get("block_size") or 2048)
+    cast_logits_to_hidden_dtype = bool(kernel_raw.get("cast_logits_to_hidden_dtype", True))
+
+    baseline_logits_dtype = str(raw.get("baseline_logits_dtype") or "input")
 
     wandb_project = str(raw.get("wandb_project") or "mllm-jax-grpo-fused-lmhead-microbench")
     wandb_mode = str(raw.get("wandb_mode") or "online")
@@ -127,7 +132,12 @@ def _cfg_from_dict(raw: dict[str, Any], *, config_path: str) -> MicrobenchConfig
         epsilon_high=epsilon_high,
         temperature=temperature,
         old_logp_value=old_logp_value,
-        kernel=KernelSectionConfig(enabled=enabled, vocab_block_size=vocab_block_size),
+        kernel=KernelSectionConfig(
+            enabled=enabled,
+            vocab_block_size=vocab_block_size,
+            cast_logits_to_hidden_dtype=cast_logits_to_hidden_dtype,
+        ),
+        baseline_logits_dtype=baseline_logits_dtype,
         wandb_project=wandb_project,
         wandb_mode=wandb_mode,
         wandb_name=wandb_name,
@@ -230,6 +240,7 @@ def main(argv: list[str] | None = None) -> int:
                 epsilon_low=eps_low,
                 epsilon_high=eps_high,
                 temperature=temperature,
+                cast_logits_to_hidden_dtype=bool(cfg.kernel.cast_logits_to_hidden_dtype),
             )
             per_loss, per_logps = grpo_per_token_loss_fused_lm_head(
                 hidden_states=h,
@@ -246,7 +257,12 @@ def main(argv: list[str] | None = None) -> int:
                 w,
                 (((2,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
-            ).astype(h.dtype)
+            )
+            logits_dtype = str(cfg.baseline_logits_dtype or "input").strip().lower()
+            if logits_dtype in {"input", "in", "same", "same_as_input"}:
+                logits = logits.astype(h.dtype)
+            else:
+                logits = logits.astype(_parse_dtype(logits_dtype))
             per_loss, per_logps = grpo_per_token_loss_reference(
                 logits=logits,
                 chosen_ids=chosen_ids,
@@ -311,6 +327,8 @@ def main(argv: list[str] | None = None) -> int:
         "shape/dtype": str(dtype),
         "kernel/enabled": int(bool(cfg.kernel.enabled)),
         "kernel/vocab_block_size": int(cfg.kernel.vocab_block_size),
+        "kernel/cast_logits_to_hidden_dtype": int(bool(cfg.kernel.cast_logits_to_hidden_dtype)),
+        "baseline/logits_dtype": str(cfg.baseline_logits_dtype),
     }
 
     print("metrics:", metrics)
@@ -325,4 +343,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

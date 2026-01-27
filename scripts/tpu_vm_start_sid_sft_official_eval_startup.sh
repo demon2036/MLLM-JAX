@@ -12,9 +12,29 @@ log() {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"
 }
 
-trap 'log "startup failed at line $LINENO";' ERR
+write_guest_attr() {
+  local namespace="$1"
+  local key="$2"
+  local value="$3"
+  local base="/var/lib/google/guest-attributes/${namespace}"
+  mkdir -p "$base" || true
+  printf "%s" "$value" > "${base}/${key}" || true
+}
+
+trap 'write_guest_attr "sid_sft" "status" "failed_line_${LINENO}"; log "startup failed at line ${LINENO}";' ERR
 
 log "startup begin"
+START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+write_guest_attr "sid_sft" "status" "startup_begin"
+write_guest_attr "sid_sft" "start_time" "$START_TS"
+
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update
+apt-get install -y curl git git-lfs
+git lfs install
+
+write_guest_attr "sid_sft" "status" "deps_installed"
 
 meta() {
   curl -fsSL -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1" || true
@@ -35,6 +55,8 @@ fetch_meta() {
   return 1
 }
 
+write_guest_attr "sid_sft" "status" "metadata_fetch"
+
 WANDB_API_KEY="$(fetch_meta WANDB_API_KEY || true)"
 WANDB_MODE="$(fetch_meta WANDB_MODE || true)"
 WANDB_PROJECT="$(fetch_meta WANDB_PROJECT || true)"
@@ -42,6 +64,7 @@ REPO_URL="$(fetch_meta REPO_URL || true)"
 REPO_REF="$(fetch_meta REPO_REF || true)"
 
 if [[ -z "$WANDB_API_KEY" ]]; then
+  write_guest_attr "sid_sft" "status" "missing_wandb_api_key"
   log "WANDB_API_KEY is required via instance metadata."
   exit 1
 fi
@@ -64,9 +87,10 @@ export PYTHONUNBUFFERED=1
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export TOKENIZERS_PARALLELISM=false
 
-apt-get update
-apt-get install -y git git-lfs curl
-git lfs install
+write_guest_attr "sid_sft" "repo_ref" "$REPO_REF"
+write_guest_attr "sid_sft" "repo_url" "$REPO_URL"
+write_guest_attr "sid_sft" "wandb_mode" "$WANDB_MODE"
+write_guest_attr "sid_sft" "wandb_project" "$WANDB_PROJECT"
 
 if [[ ! -d /root/miniconda3 ]]; then
   curl -fsSL -o /root/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
@@ -84,6 +108,9 @@ conda activate mllm-jax
 
 python -m pip install -U pip
 python -m pip install -U wandb
+
+write_guest_attr "sid_sft" "status" "wandb_heartbeat"
+
 python - <<'PY'
 import os
 import time
@@ -96,10 +123,21 @@ run = wandb.init(
     mode=os.environ.get("WANDB_MODE", "online"),
 )
 run.log({"startup/heartbeat": 1})
+with open("/tmp/wandb_heartbeat_url.txt", "w", encoding="utf-8") as f:
+    f.write(run.get_url() or "")
 run.finish()
 PY
+if [[ -f /tmp/wandb_heartbeat_url.txt ]]; then
+  heartbeat_url="$(cat /tmp/wandb_heartbeat_url.txt)"
+  if [[ -n "$heartbeat_url" ]]; then
+    write_guest_attr "sid_sft" "wandb_heartbeat" "$heartbeat_url"
+  fi
+fi
+
 python -m pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 python -m pip install -U torch --index-url https://download.pytorch.org/whl/cpu
+
+write_guest_attr "sid_sft" "status" "deps_python_installed"
 
 if [[ ! -d /root/MLLM-JAX/.git ]]; then
   git clone "$REPO_URL" /root/MLLM-JAX
@@ -112,6 +150,8 @@ git pull
 
 python -m pip install -U -r requirements-tpu.txt
 python -m pip install -U fire pandas
+
+write_guest_attr "sid_sft" "status" "repo_ready"
 
 mkdir -p workdir
 if [[ ! -d workdir/MiniOneRec/.git ]]; then
@@ -126,6 +166,8 @@ fi
 cd workdir/hf_ckpts/kkknight_MiniOneRec
 git lfs pull --include "Industrial_ckpt/*,Office_ckpt/*"
 cd /root/MLLM-JAX
+
+write_guest_attr "sid_sft" "status" "hf_checkpoints_ready"
 
 python - <<'PY'
 import json
@@ -148,15 +190,49 @@ for path in paths:
             f.write("\n")
 PY
 
+summarize_metrics() {
+  local metrics_path="$1"
+  if [[ ! -f "$metrics_path" ]]; then
+    return 0
+  fi
+  METRICS_PATH="$metrics_path" python - <<'PY'
+import json
+import os
+import sys
+
+path = os.environ.get("METRICS_PATH")
+if not path or not os.path.exists(path):
+    sys.exit(0)
+with open(path, "r", encoding="utf-8") as f:
+    metrics = json.load(f)
+summary = {
+    "hr": metrics.get("hr") or {},
+    "ndcg": metrics.get("ndcg") or {},
+    "invalid_prediction_count": metrics.get("invalid_prediction_count"),
+}
+print(json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
+PY
+}
+
 run_eval() {
   local tag="$1"
   local config_path="$2"
   local output_dir="$3"
   local item_path="$4"
+  write_guest_attr "sid_sft" "status" "eval_${tag}_start"
   rm -f /tmp/libtpu_lockfile || true
   ./scripts/run_sid_sft.sh --config "$config_path" --run-mode eval
   local calc_log="${output_dir}/calc_${tag}.log"
-  python workdir/MiniOneRec/calc.py --path "${output_dir}/eval_predictions.json" --item_path "${item_path}" | tee "$calc_log"
+  local calc_output=""
+  calc_output="$(python workdir/MiniOneRec/calc.py --path "${output_dir}/eval_predictions.json" --item_path "${item_path}")"
+  printf "%s\n" "$calc_output" | tee "$calc_log"
+  write_guest_attr "sid_sft" "calc_${tag}" "$calc_output"
+  local metrics_path="${output_dir}/eval_predictions.metrics.json"
+  local metrics_json=""
+  metrics_json="$(summarize_metrics "$metrics_path")"
+  if [[ -n "$metrics_json" ]]; then
+    write_guest_attr "sid_sft" "metrics_${tag}" "$metrics_json"
+  fi
   ARTIFACT_TAG="$tag" OUTPUT_DIR="$output_dir" CALC_LOG="$calc_log" python - <<'PY'
 import json
 import os
@@ -197,6 +273,7 @@ if os.path.exists(metrics_path):
 run.log_artifact(artifact)
 run.finish()
 PY
+  write_guest_attr "sid_sft" "status" "eval_${tag}_done"
 }
 
 run_eval \
@@ -210,3 +287,6 @@ run_eval \
   "projects/sid_sft/configs/sid_sft_jax_eval_official_minionerec_office_ckpt.yaml" \
   "runs/sid_sft_jax_eval_official_minionerec_office_ckpt" \
   "workdir/MiniOneRec/data/Amazon/info/Office_Products_5_2016-10-2018-11.txt"
+
+write_guest_attr "sid_sft" "status" "completed"
+write_guest_attr "sid_sft" "end_time" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

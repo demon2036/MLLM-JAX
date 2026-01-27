@@ -5,6 +5,7 @@ import pytest
 
 pytest.importorskip("jax")
 torch = pytest.importorskip("torch")
+pytest.importorskip("webdataset")
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace

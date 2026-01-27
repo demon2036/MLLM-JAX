@@ -19,13 +19,15 @@
 1) Bucket prompts by prefill length (sampler-style, e.g. 128/256/512/...) and right-pad to the bucket length.
 2) Pass per-sample `prompt_true_len` (vector) to `constrained_beam_search_sid3_prefill`.
 3) Ensure `max_cache_length` leaves headroom for decoding (`max_cache_length > prefill_len + 2 + len(suffix)`; suffix includes EOS appended internally).
-4) Local sanity:
+4) Optional (avoid many compilations): use a **single fixed** `prefill_len` for the entire run (no multi-bucket), right-pad all prompts to it, and you will only compile once for that shape.
+5) Local sanity:
    - `python -m pytest -q`
 
 ## Expected result
 
 - Evaluator/runner can batch prompts with different true lengths without per-length bucketing.
 - Fewer compile shapes than per-prompt-length bucketing (bounded by the prefill bucket set).
+- If using a single fixed `prefill_len`: exactly one compilation for the prompt shape (assuming batch size and other static args stay constant).
 
 ## Troubleshooting
 

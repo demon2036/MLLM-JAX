@@ -79,6 +79,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "topk": [1, 3, 5, 10, 20, 50],
         "constrained": True,
         "save_predictions_json": True,
+        # Constrained decoding prefill strategy:
+        # - "bucket": sampler-style prefill buckets (default; can compile per bucket)
+        # - "fixed": single fixed prefill length across the whole dataset (compile once)
+        "prefill_mode": "bucket",
+        # Only used when prefill_mode="fixed". If null, derive from dataset.
+        "fixed_prefill_len": None,
     },
     "wandb": {
         "project": "minionerec-sid-sft",

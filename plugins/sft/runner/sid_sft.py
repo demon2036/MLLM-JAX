@@ -84,6 +84,13 @@ class SidSftEvalConfig:
     topk: tuple[int, ...] = (1, 3, 5, 10, 20, 50)
     constrained: bool = True
     save_predictions_json: bool = True
+    # Constrained decoding prefill strategy:
+    # - "bucket": sampler-style prefill buckets (default; can compile per bucket)
+    # - "fixed": single fixed prefill length across the whole dataset (compile once)
+    prefill_mode: str = "bucket"
+    # Only used when prefill_mode="fixed" (or for explicit control). If None,
+    # the evaluator derives a safe fixed prefill length from the dataset.
+    fixed_prefill_len: int | None = None
 
 
 @dataclass(frozen=True)
@@ -369,6 +376,8 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
                     max_cache_length=cfg.jax.max_cache_length,
                     topk=list(cfg.eval.topk),
                     show_progress=False,
+                    prefill_mode=cfg.eval.prefill_mode,
+                    fixed_prefill_len=cfg.eval.fixed_prefill_len,
                 )
                 eval_every_steps = int(cfg.train.eval_steps)
                 if eval_every_steps < 0:
@@ -474,6 +483,8 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             max_cache_length=cfg.jax.max_cache_length,
             topk=list(cfg.eval.topk),
             output_predictions_json=output_predictions_json,
+            prefill_mode=cfg.eval.prefill_mode,
+            fixed_prefill_len=cfg.eval.fixed_prefill_len,
         )
 
         if wandb is not None:
@@ -502,6 +513,8 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             max_cache_length=cfg.jax.max_cache_length,
             topk=list(cfg.eval.topk),
             output_predictions_json=output_predictions_json,
+            prefill_mode=cfg.eval.prefill_mode,
+            fixed_prefill_len=cfg.eval.fixed_prefill_len,
         )
 
         if wandb is not None:

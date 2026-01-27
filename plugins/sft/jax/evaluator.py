@@ -45,6 +45,75 @@ def _find_prefill_length(desired_length: int) -> int:
     raise ValueError(f"No prefill bucket found for desired_length={desired_length}")
 
 
+def _normalize_prefill_mode(mode: str | None) -> str:
+    m = str(mode or "bucket").strip().lower()
+    if m in {"bucket", "buckets"}:
+        return "bucket"
+    if m in {"fixed", "single", "one"}:
+        return "fixed"
+    raise ValueError(f"Unknown prefill_mode={mode!r} (expected: bucket|fixed)")
+
+
+def _build_prefill_buckets(
+    prompt_lens: list[int],
+    *,
+    max_cache_length: int,
+    suffix_len: int,
+    prefill_mode: str | None,
+    fixed_prefill_len: int | None,
+) -> dict[int, list[int]]:
+    n = int(len(prompt_lens))
+    if n <= 0:
+        raise ValueError("Empty prompt_lens")
+
+    mode = _normalize_prefill_mode(prefill_mode)
+    max_cache_length_i = int(max_cache_length)
+    suffix_len_i = int(suffix_len)
+
+    def _check_cache_len(prefill_len: int) -> None:
+        max_pos = int(prefill_len) + 2 + suffix_len_i
+        if max_cache_length_i <= max_pos:
+            raise ValueError(
+                f"max_cache_length too small: need > {max_pos} (prefill_len={int(prefill_len)}, suffix_len={suffix_len_i})"
+            )
+
+    if mode == "fixed":
+        max_prompt_len = max(int(x) for x in prompt_lens)
+        if int(max_prompt_len) <= 0:
+            raise ValueError(f"Invalid prompt length: max_prompt_len={int(max_prompt_len)}")
+
+        if fixed_prefill_len is not None and int(fixed_prefill_len) > 0:
+            prefill_len = int(fixed_prefill_len)
+        else:
+            try:
+                prefill_len = _find_prefill_length(int(max_prompt_len))
+            except ValueError:
+                prefill_len = int(max_prompt_len)
+
+        if int(prefill_len) < int(max_prompt_len):
+            raise ValueError(
+                f"fixed prefill_len too small: prefill_len={int(prefill_len)} < max_prompt_len={int(max_prompt_len)}"
+            )
+
+        try:
+            _check_cache_len(int(prefill_len))
+        except ValueError:
+            # If the bucket ceil is too large for the cache headroom, fall back
+            # to an exact max prompt length (still single-shape compile).
+            if fixed_prefill_len is None:
+                prefill_len = int(max_prompt_len)
+            _check_cache_len(int(prefill_len))
+
+        return {int(prefill_len): list(range(n))}
+
+    buckets: dict[int, list[int]] = {}
+    for i, prompt_len in enumerate(prompt_lens):
+        prefill_len = _find_prefill_length(int(prompt_len))
+        _check_cache_len(int(prefill_len))
+        buckets.setdefault(int(prefill_len), []).append(i)
+    return buckets
+
+
 def evaluate_sid_next_item_jax(
     *,
     model: Any,
@@ -58,6 +127,8 @@ def evaluate_sid_next_item_jax(
     max_cache_length: int,
     topk: list[int],
     output_predictions_json: str | None,
+    prefill_mode: str | None = "bucket",
+    fixed_prefill_len: int | None = None,
 ) -> tuple[list[list[str]], RankingMetrics]:
     valid_sids = load_valid_sids_from_info(info_file)
     trie = build_sid_trie_from_index(tokenizer=tokenizer, sid_index_path=sid_index_path, eos_token_id=int(getattr(tokenizer, "eos_token_id")))
@@ -82,20 +153,18 @@ def evaluate_sid_next_item_jax(
         raise ValueError("Empty eval_dataset")
     suffix_len = int(len(newline_suffix) + 1)  # +EOS appended by beam search
 
-    buckets: dict[int, list[int]] = {}
-    for i, prompt_len in enumerate(prompt_lens):
-        prefill_len = _find_prefill_length(int(prompt_len))
-        max_pos = int(prefill_len) + 2 + int(suffix_len)
-        if int(max_cache_length) <= max_pos:
-            raise ValueError(
-                f"max_cache_length too small: need > {max_pos} (prefill_len={int(prefill_len)}, suffix_len={suffix_len})"
-            )
-        buckets.setdefault(int(prefill_len), []).append(i)
+    buckets = _build_prefill_buckets(
+        prompt_lens,
+        max_cache_length=int(max_cache_length),
+        suffix_len=int(suffix_len),
+        prefill_mode=prefill_mode,
+        fixed_prefill_len=fixed_prefill_len,
+    )
 
     predictions: list[list[str]] = [None] * n  # type: ignore[list-item]
     print(
         f"[eval] samples={n} prefill_buckets={len(buckets)} batch_size={int(batch_size)} "
-        f"num_beams={int(num_beams)} max_cache_length={int(max_cache_length)}"
+        f"num_beams={int(num_beams)} max_cache_length={int(max_cache_length)} prefill_mode={_normalize_prefill_mode(prefill_mode)}"
     )
 
     def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_len: jax.Array):
@@ -190,6 +259,8 @@ class SidNextItemJaxEvaluator:
         max_cache_length: int,
         topk: list[int],
         show_progress: bool = False,
+        prefill_mode: str | None = "bucket",
+        fixed_prefill_len: int | None = None,
     ):
         self._model = model
         self._tokenizer = tokenizer
@@ -211,6 +282,8 @@ class SidNextItemJaxEvaluator:
             eos_token_id=int(getattr(tokenizer, "eos_token_id")),
         )
         self._newline_suffix = _newline_suffix_token_ids(tokenizer)
+        self._prefill_mode = _normalize_prefill_mode(prefill_mode)
+        self._fixed_prefill_len = None if fixed_prefill_len is None else int(fixed_prefill_len)
 
         n = int(len(eval_dataset))
         if n <= 0:
@@ -226,16 +299,13 @@ class SidNextItemJaxEvaluator:
         prompt_lens = [len(eval_dataset[i]["input_ids"]) for i in range(n)]
         suffix_len = int(len(self._newline_suffix) + 1)  # +EOS appended by beam search
 
-        buckets: dict[int, list[int]] = {}
-        for i, prompt_len in enumerate(prompt_lens):
-            prefill_len = _find_prefill_length(int(prompt_len))
-            max_pos = int(prefill_len) + 2 + int(suffix_len)
-            if self._max_cache_length <= max_pos:
-                raise ValueError(
-                    f"max_cache_length too small: need > {max_pos} (prefill_len={int(prefill_len)}, suffix_len={suffix_len})"
-                )
-            buckets.setdefault(int(prefill_len), []).append(i)
-        self._buckets = buckets
+        self._buckets = _build_prefill_buckets(
+            prompt_lens,
+            max_cache_length=int(self._max_cache_length),
+            suffix_len=int(suffix_len),
+            prefill_mode=self._prefill_mode,
+            fixed_prefill_len=self._fixed_prefill_len,
+        )
 
         def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_len: jax.Array):
             out = constrained_beam_search_sid3_prefill(
@@ -284,7 +354,7 @@ class SidNextItemJaxEvaluator:
         predictions: list[list[str]] = [None] * self._n  # type: ignore[list-item]
         print(
             f"[eval] samples={self._n} prefill_buckets={len(self._buckets)} batch_size={self._batch_size} "
-            f"num_beams={self._num_beams} max_cache_length={self._max_cache_length}"
+            f"num_beams={self._num_beams} max_cache_length={self._max_cache_length} prefill_mode={self._prefill_mode}"
         )
 
         for prefill_len, idxs in sorted(self._buckets.items()):

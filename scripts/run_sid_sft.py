@@ -129,6 +129,12 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
         save_predictions_json=bool(
             _get_by_path(cfg, "eval.save_predictions_json") if _get_by_path(cfg, "eval.save_predictions_json") is not None else True
         ),
+        prefill_mode=str(_get_or_default(cfg, "eval.prefill_mode", DEFAULT_CONFIG["eval"].get("prefill_mode") or "bucket")),
+        fixed_prefill_len=(
+            None
+            if _get_or_default(cfg, "eval.fixed_prefill_len", DEFAULT_CONFIG["eval"].get("fixed_prefill_len")) is None
+            else int(_get_or_default(cfg, "eval.fixed_prefill_len", DEFAULT_CONFIG["eval"].get("fixed_prefill_len")))
+        ),
     )
 
     wandb_cfg = SidSftWandbConfig(

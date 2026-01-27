@@ -236,6 +236,8 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     # Model config must reflect the resized vocab (tokenizer + optional padding).
     base_config = AutoConfig.from_pretrained(cfg.base_model, trust_remote_code=True)
     base_config.vocab_size = int(padded_vocab_size)
+    if not hasattr(base_config, "rope_theta"):
+        setattr(base_config, "rope_theta", 10000.0)
 
     # Avoid TPU-only fused attention kernels on CPU/GPU backends.
     attention_mesh = mesh if jax.devices()[0].platform == "tpu" else None

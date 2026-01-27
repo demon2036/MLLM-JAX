@@ -266,6 +266,8 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             raise TypeError("train.grpo_kernel must be a dict")
 
         enabled = bool(grpo_kernel_raw.get("enabled") or False)
+        impl_raw = grpo_kernel_raw.get("impl", grpo_kernel_loss_cfg.impl)
+        impl = str(impl_raw or grpo_kernel_loss_cfg.impl or "logits_pallas").strip().lower()
 
         kernel_params = grpo_kernel_raw.get("kernel")
         if kernel_params is None:
@@ -294,6 +296,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
 
         grpo_kernel_loss_cfg = GRPOKernelLossConfig(
             enabled=enabled,
+            impl=impl,
             kernel=GRPOKernelConfig(block_size=block_size, time_block=time_block, bwd_impl=bwd_impl),
             sharding=GRPOKernelShardingSpec(batch_axes=batch_axes, vocab_axis=vocab_axis),
         )

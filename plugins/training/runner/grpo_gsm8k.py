@@ -41,6 +41,10 @@ class GRPOKernelLossConfig:
     """Config for enabling the GRPO Pallas loss kernel in training."""
 
     enabled: bool = False
+    # Implementation selector:
+    # - "logits_pallas": existing logits-level Pallas kernel (requires logits tensor)
+    # - "fused_lm_head": fused LM-head + GRPO loss (streams over vocab; no logits tensor)
+    impl: str = "logits_pallas"
     kernel: GRPOKernelConfig = field(default_factory=GRPOKernelConfig)
     sharding: GRPOKernelShardingSpec = field(default_factory=GRPOKernelShardingSpec)
 

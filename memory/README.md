@@ -9,3 +9,4 @@ Task-scoped scratch + evidence logs (git-tracked).
 - `memory/20260125_tiled-ce-pallas-kernel/`: Fix Pallas tiled CE/logprob kernel correctness + prep TPU gradcheck.
 - `memory/20260126_grpo-pallas-kernel-multidevice/`: Make GRPO Pallas kernel shard_map multi-device compatible + run TPU 100-step train A/B with W&B.
 - `memory/20260127_grpo-kernel-perf-fix/`: Make GRPO logits-level kernel faster+lower-HBM than pure JAX on TPU microbench (B=1,T=4096,V=151936).
+- `memory/20260127_grpo-fused-lmhead-kernel/`: GRPO fused LM-head loss (no logits materialization) + TPU memory microbench at (B=1,T=8192,V=*) vs pure JAX.

@@ -1,4 +1,4 @@
-from plugins.training.grpo.module import TrainGRPOModulePallas
+from plugins.training.grpo.module import TrainGRPOModuleFusedLmHead, TrainGRPOModulePallas
 
-__all__ = ["TrainGRPOModulePallas"]
+__all__ = ["TrainGRPOModulePallas", "TrainGRPOModuleFusedLmHead"]
 

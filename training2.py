@@ -61,25 +61,46 @@ def get_state(
 
     use_pallas_kernel = bool(getattr(grpo_kernel, "enabled", False)) if grpo_kernel is not None else False
     if use_pallas_kernel:
-        from plugins.training.grpo.module import TrainGRPOModulePallas
-
+        kernel_impl = str(getattr(grpo_kernel, "impl", "") or "logits_pallas").strip().lower()
         kernel_cfg = getattr(grpo_kernel, "kernel", None)
         kernel_sharding = getattr(grpo_kernel, "sharding", None)
-        train_module_cls = TrainGRPOModulePallas
-        train_module = flax.linen.remat(
-            train_module_cls,
-            policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims,
-        )(
-            model=model,
-            pad_token_id=tokenizer.pad_token_id,
-            ref_model=model_ref,
-            num_pre_Q=num_pre_q,
-            beta=beta,
-            max_lengths=max_lengths,
-            mesh=mesh,
-            kernel_cfg=kernel_cfg if kernel_cfg is not None else TrainGRPOModulePallas.kernel_cfg,
-            kernel_sharding=kernel_sharding if kernel_sharding is not None else TrainGRPOModulePallas.kernel_sharding,
-        )
+
+        if kernel_impl in {"fused_lm_head", "lm_head_fused", "fused_lmhead"}:
+            from plugins.training.grpo.module import TrainGRPOModuleFusedLmHead
+            from plugins.training.kernels.grpo_fused_lm_head import GRPOLmHeadFusedConfig
+
+            vocab_block_size = int(getattr(kernel_cfg, "block_size", 2048) if kernel_cfg is not None else 2048)
+            fused_cfg = GRPOLmHeadFusedConfig(vocab_block_size=vocab_block_size)
+
+            train_module = flax.linen.remat(
+                TrainGRPOModuleFusedLmHead,
+                policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims,
+            )(
+                model=model,
+                pad_token_id=tokenizer.pad_token_id,
+                ref_model=model_ref,
+                num_pre_Q=num_pre_q,
+                beta=beta,
+                max_lengths=max_lengths,
+                fused_cfg=fused_cfg,
+            )
+        else:
+            from plugins.training.grpo.module import TrainGRPOModulePallas
+
+            train_module = flax.linen.remat(
+                TrainGRPOModulePallas,
+                policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims,
+            )(
+                model=model,
+                pad_token_id=tokenizer.pad_token_id,
+                ref_model=model_ref,
+                num_pre_Q=num_pre_q,
+                beta=beta,
+                max_lengths=max_lengths,
+                mesh=mesh,
+                kernel_cfg=kernel_cfg if kernel_cfg is not None else TrainGRPOModulePallas.kernel_cfg,
+                kernel_sharding=kernel_sharding if kernel_sharding is not None else TrainGRPOModulePallas.kernel_sharding,
+            )
     else:
         train_module = flax.linen.remat(
             TrainGRPOModule,

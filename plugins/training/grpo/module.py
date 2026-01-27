@@ -17,6 +17,10 @@ from plugins.training.kernels.grpo_loss_pallas import (
     grpo_per_token_loss_pallas,
     grpo_per_token_loss_pallas_sharded,
 )
+from plugins.training.kernels.grpo_fused_lm_head import (
+    GRPOLmHeadFusedConfig,
+    grpo_per_token_loss_fused_lm_head,
+)
 
 
 class TrainGRPOModulePallas(nn.Module):
@@ -154,5 +158,96 @@ class TrainGRPOModulePallas(nn.Module):
             "entropy_loss": avg_entropy_per_sample_truncated,
         }
 
+class TrainGRPOModuleFusedLmHead(nn.Module):
+    """GRPO loss module fused with the LM head projection (no logits tensor)."""
 
-__all__ = ["TrainGRPOModulePallas"]
+    model: Any
+    pad_token_id: float
+    num_pre_Q: int
+    ref_model: Any = None
+    beta: float = 0.0
+    temperature: float = 1.0
+    max_lengths: float = 2048
+    epsilon_low: float = 0.2
+    epsilon_high: float = 0.3
+    entropy_threshold: float = 0.3
+    fused_cfg: GRPOLmHeadFusedConfig = GRPOLmHeadFusedConfig()
+
+    def __call__(self, inputs):
+        input_ids = inputs["input_ids"]
+        attention_mask = inputs["attention_mask"]
+        labels = inputs["labels"]
+
+        seq_len = int(input_ids.shape[1])
+        position_ids = jnp.arange(seq_len, dtype=jnp.int32)[None, :]
+        hidden_states, _ = self.model.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            inputs_embeds=None,
+            cache=None,
+        )
+
+        if self.beta != 0 and self.ref_model is not None:
+            # Keep the ref forward for API parity; KL is not used in this repo's loss.
+            _ref_hidden, _ = self.ref_model.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                inputs_embeds=None,
+                cache=None,
+            )
+            _ = jax.lax.stop_gradient(_ref_hidden)
+        elif self.beta != 0 and self.ref_model is None:
+            print("Warning: beta is non-zero but ref_model not provided. KL penalty calculation will be skipped.")
+
+        # Align with `[B, T-1]` loss positions.
+        hidden_for_loss = hidden_states[:, :-1, :]
+        chosen_ids = input_ids[:, 1:]
+        mask_loss = labels[:, 1:].astype(jnp.float32)
+
+        use_self_old = "old_per_token_logps" not in inputs
+        if use_self_old:
+            old_per_token_logps = jnp.zeros_like(mask_loss, dtype=jnp.float32)
+        else:
+            old_per_token_logps = inputs["old_per_token_logps"].astype(jnp.float32)
+
+        params = self.variables.get("params", {})
+        model_params = params.get("model", params)
+        lm_head_kernel = model_params["lm_head"]["kernel"]
+
+        fused_cfg = GRPOLmHeadFusedConfig(
+            vocab_block_size=int(self.fused_cfg.vocab_block_size),
+            epsilon_low=float(self.epsilon_low),
+            epsilon_high=float(self.epsilon_high),
+            temperature=float(self.temperature),
+        )
+
+        per_token_loss, per_token_logps = grpo_per_token_loss_fused_lm_head(
+            hidden_states=hidden_for_loss,
+            lm_head_kernel=lm_head_kernel,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=old_per_token_logps,
+            advantages=inputs["advantages"],
+            cfg=fused_cfg,
+            use_self_old=bool(use_self_old),
+        )
+
+        total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
+        loss = (per_token_loss * mask_loss).sum() / total_valid_token_count
+
+        # Entropy metrics are monitoring-only; keep them cheap here to preserve the
+        # memory win from avoiding full `[B,T,V]` logits materialization.
+        batch = int(input_ids.shape[0])
+        entropy = jnp.zeros((batch,), dtype=jnp.float32)
+        entropy_loss = jnp.zeros((batch,), dtype=jnp.float32)
+
+        return {
+            "loss": loss,
+            "per_token_logps": jax.lax.stop_gradient(per_token_logps),
+            "entropy": entropy,
+            "entropy_loss": entropy_loss,
+        }
+
+
+__all__ = ["TrainGRPOModulePallas", "TrainGRPOModuleFusedLmHead"]

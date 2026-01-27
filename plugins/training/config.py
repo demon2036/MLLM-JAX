@@ -49,6 +49,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Optional: enable the GRPO Pallas loss kernel (logits-level).
         "grpo_kernel": {
             "enabled": False,
+            # See `plugins/training/runner/grpo_gsm8k.py:GRPOKernelLossConfig`.
+            "impl": "logits_pallas",
             # Kernel tiling knobs.
             "kernel": {
                 "block_size": 2048,

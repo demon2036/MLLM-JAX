@@ -60,8 +60,8 @@ if [[ ! -d /root/miniconda3 ]]; then
 fi
 
 source /root/miniconda3/etc/profile.d/conda.sh
-conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true
-conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true
+yes | conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true
+yes | conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true
 if ! conda env list | awk '{print $1}' | grep -qx mllm-jax; then
   conda create -y -n mllm-jax python=3.12
 fi

@@ -1,0 +1,42 @@
+# GRPO logits-level microbench (Pallas fwd + JAX bwd).
+#
+# Target: v6e-8, per-device shape = (batch=1, seq_len=4096, vocab=151936).
+# This script logs step time + TPU HBM memory_stats() to W&B.
+
+mesh_shape: auto
+
+shape:
+  batch_per_device: 1
+  seq_len: 4096
+  vocab: 151936
+  logits_dtype: bfloat16
+
+warmup_steps: 2
+steps: 10
+
+epsilon_low: 0.2
+epsilon_high: 0.3
+temperature: 1.0
+
+# A stable old-logp constant near -log(vocab) (keeps ratios ~O(1)).
+old_logp_value: -12.0
+
+include_entropy: true
+
+kernel:
+  enabled: true
+  kernel:
+    block_size: 2048
+    time_block: 8
+    bwd_impl: jax
+  sharding:
+    batch_axes: [dp, fsdp]
+    vocab_axis: null
+  entropy:
+    block_size: 2048
+    time_block: 8
+
+wandb_project: mllm-jax-grpo-kernel-microbench
+wandb_mode: online
+wandb_name: grpo_microbench_bpd1_t4096_jax_bwd
+

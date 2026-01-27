@@ -356,7 +356,8 @@ def build_grpo_per_token_loss_fused_lm_head(
                 (((2,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
             ).astype(jnp.float32)
-            dh = dh_carry + dh_soft * (-scale_bt[..., None])
+            dh_update = (dh_soft * (-scale_bt[..., None])).astype(dh_carry.dtype)
+            dh = dh_carry + dh_update
 
             probs2 = probs.reshape(tokens, block)
             dW_tile = _dot(h2.T, probs2 * scale_valid[:, None]).astype(jnp.float32)
@@ -364,7 +365,7 @@ def build_grpo_per_token_loss_fused_lm_head(
             dW_carry = jax.lax.dynamic_update_slice(dW_carry, dW_tile.astype(lm_head_kernel.dtype), (0, start))
             return (dh, dW_carry), None
 
-        dh0 = jnp.zeros((batch, time, hidden), dtype=jnp.float32)
+        dh0 = jnp.zeros((batch, time, hidden), dtype=hidden_states.dtype)
         dW0 = jnp.zeros((hidden, vocab), dtype=lm_head_kernel.dtype)
         (dh, dW), _ = jax.lax.scan(
             scan_body,
@@ -389,7 +390,8 @@ def build_grpo_per_token_loss_fused_lm_head(
                 (((2,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
             ).astype(jnp.float32)
-            dh = dh + dh_soft * (-scale_bt[..., None])
+            dh_update = (dh_soft * (-scale_bt[..., None])).astype(dh.dtype)
+            dh = dh + dh_update
 
             probs2 = probs.reshape(tokens, rem)
             dW_tail = _dot(h2.T, probs2 * scale_valid[:, None]).astype(jnp.float32)
@@ -399,7 +401,7 @@ def build_grpo_per_token_loss_fused_lm_head(
         # Chosen-token term: add `scale * W[:, y]` into `dh`, and scatter-add
         # `scale * h` into `dW[:, y]`. This is done once (vs per-vocab-tile).
         w_sel_tok = jnp.take(lm_head_kernel, safe_ids_flat, axis=1).T.astype(jnp.float32)  # [tokens, hidden]
-        dh = dh + (w_sel_tok * scale_valid[:, None]).reshape(batch, time, hidden)
+        dh = dh + (w_sel_tok * scale_valid[:, None]).reshape(batch, time, hidden).astype(dh.dtype)
 
         dW = dW.at[:, safe_ids_flat].add((h2.astype(jnp.float32).T * scale_valid[None, :]).astype(dW.dtype))
 

@@ -46,7 +46,7 @@ Sanity check:
 ### 3) Sync repo via Git and checkout the target commit
 
 - `git clone https://github.com/demon2036/MLLM-JAX.git /root/MLLM-JAX`
-- `cd /root/MLLM-JAX && git fetch --all --prune && git checkout 96758ea9a20f9db5ca6d5dff45873c08fcfc8340`
+- `cd /root/MLLM-JAX && git fetch --all --prune && git checkout 147e7a84a06a5fab8ed2ea5d9dce8e741a648573`
 
 ### 4) (Optional) W&B auth (note)
 

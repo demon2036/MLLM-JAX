@@ -259,6 +259,23 @@ class LlamaJaxConfig:
 
 
 
+def _resolve_rope_theta(config: Any | None) -> float:
+    if config is None:
+        return 10000.0
+    if hasattr(config, "rope_theta"):
+        return float(getattr(config, "rope_theta"))
+    rope_params = None
+    if hasattr(config, "rope_parameters"):
+        rope_params = getattr(config, "rope_parameters")
+    if rope_params is None and hasattr(config, "rope_scaling"):
+        rope_params = getattr(config, "rope_scaling")
+    if isinstance(rope_params, dict):
+        rope_theta = rope_params.get("rope_theta")
+        if rope_theta is not None:
+            return float(rope_theta)
+    return 10000.0
+
+
 def _compute_default_rope_parameters(
         config=None,
         **rope_kwargs,
@@ -282,7 +299,7 @@ def _compute_default_rope_parameters(
         base = rope_kwargs["base"]
         dim = rope_kwargs["dim"]
     elif config is not None:
-        base = config.rope_theta
+        base = _resolve_rope_theta(config)
         partial_rotary_factor = config.partial_rotary_factor if hasattr(config, "partial_rotary_factor") else 1.0
         head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
         dim = int(head_dim * partial_rotary_factor)
@@ -531,7 +548,7 @@ class LlamaAttention(nn.Module):
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
-        self.rope_theta = config.rope_theta
+        self.rope_theta = _resolve_rope_theta(config)
         self.is_causal = True
         self.q_proj = nn.Dense(self.num_heads * self.head_dim, use_bias=config.attention_bias,
                                #kernel_init=None if self.jax_config is None else nn.with_logical_partitioning(self.jax_config.dense_init, ('embed', 'hidden')),

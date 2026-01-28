@@ -1,9 +1,5 @@
-"""MiniOneRec SID SFT (plugins-first).
+"""Generic SFT utilities (project-agnostic).
 
-This package implements a non-invasive, reproducible pipeline for:
-- SID token extension from `.index.json`
-- Multi-task SFT (SID next-item + SID↔title alignment + optional fusion tasks)
-- Constrained decoding evaluation (valid SID outputs)
-- HR@K / NDCG@K metric computation
+Project-specific SFT runners, datasets, and configs live under `projects/<name>/sft/`.
+Compatibility shims may still exist here to avoid breaking older imports.
 """
-

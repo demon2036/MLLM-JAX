@@ -10,7 +10,7 @@
 - 一旦开了 plan：允许按批次记录（建议每 5–10 个 step，或每个关键 milestone 记录一次），在 `memory/<task>/README.md` 追加“完成判据 + 证据”（例如：命令+exit code、关键输出摘要、改动文件、通过的测试/验证），便于后续复用。
 - 尽量不反问用户：先查 `memory/` 里潜在相关经验（优先看 `memory/README.md`），再查 `docs/` 里潜在相关经验（优先看 `docs/sops.md`；若是分支专用 SOP，再看 `docs/sops/<branch>/`），再在仓库内搜索（如 `rg`/`git`；无 `rg` 时用 `git grep`/`Select-String`），必要时做网络搜索（官方文档/GitHub/PyPI），并把已用链接或命令写入 SOP。
 - 仅在搜索后仍无法推进时才提问，并一次问清最少必要信息。
-- 保持无侵入开发：自定义代码一律放在 `plugins/`，不要直接改动 `easydel/` 或其他上游仓库。
+- 保持无侵入开发：通用/共享代码放在 `plugins/`；项目特定实现放在 `projects/<name>/`；不要直接改动 `easydel/` 或其他上游仓库。
 - 配置语义清晰优先：禁止在 `scripts/` 里用环境变量/拼接参数去“覆盖”训练超参；如果要改配置，必须新建一个新的 YAML config，并用 `*.sh --config <path>.yaml` 启动，让 W&B 配置可追踪、可复现。
 - W&B：TPU 验证/交付默认 `wandb_mode=online`；仅当用户未提供/无法使用 W&B Key 时允许 `disabled`（交付需注明）；本地调试可临时 `disabled`。
 - TPU 使用隔离：除非用户明确指定复用已有 TPU/同一集群，否则每个任务新建独立 TPU（按任务名命名），避免在无关 TPU 上复用环境导致相互影响。
@@ -34,7 +34,7 @@
 - **先写接口/契约，再写实现**：先定义输入/输出、shape/dtype、mask 语义、返回的 metrics 命名，再落地默认实现。
 - **可插拔（pluggable）优先**：用 registry/factory 通过配置选择实现；不要在 runner 里 hardcode 某个实现。
 - **新增行为必须新增 config**：禁止用脚本参数拼接/环境变量暗改超参；新增 loss/optimizer 等必须新建 YAML config（W&B 才能完整追踪）。
-- **自定义代码放 `plugins/`**：接口通常放 `plugins/**/api/` 或 `plugins/common/`；上游目录只做最小必要 glue（如 import / wiring），避免侵入式改动。
+- **自定义代码放 `plugins/` 或 `projects/<name>/`**：通用接口放 `plugins/**/api/` 或 `plugins/common/`；项目特定实现放 `projects/<name>/`；上游目录只做最小必要 glue（如 import / wiring），避免侵入式改动。
 - **文档先行**：接口落地后，在 SOP/README 里写清楚 “扩展点 + 默认实现 + 如何新增一个实现 + 验证命令”。
 
 ### 例子：SFT 的 loss 不要 hardcode CE
@@ -76,7 +76,7 @@ train:
 - 是否先定义了接口契约（输入/输出/语义/metrics）而不是直接写实现？
 - 新增实现是否能通过配置启用（而不是改 runner）？
 - 新增实现是否有独立 YAML config（可复现、可在 W&B 对齐）？
-- 新增实现是否放在 `plugins/` 且侵入改动最小？
+- 新增实现是否放在 `plugins/`（通用）或 `projects/<name>/`（项目特定）且侵入改动最小？
 - 默认配置/不配置时，行为是否保持与历史一致（避免无意破坏已有实验）？
 - metrics 命名是否稳定、可对比（避免随意改 key 导致 W&B 面板断档）？
 - 是否补充了最小验证步骤（smoke 或目标配置），并记录在 SOP/memory？
@@ -86,7 +86,8 @@ train:
 This repository is focused on validating and documenting `sglang-jax`. The repo is currently minimal; keep the layout simple and documented as it grows. Recommended folders:
 
 - `docs/` for SOPs, validation notes, and references (branch-specific SOPs under `docs/sops/<branch>/`, e.g., A → `docs/sops/A/`, B → `docs/sops/B/`).
-- `plugins/` for non-invasive overrides and integration code.
+- `plugins/` for non-invasive shared overrides and integration code.
+- `projects/` for project-specific pipelines (datasets/runner/configs).
 - `scripts/` for repeatable setup or test helpers.
 - `tests/` for any local verification scripts.
 

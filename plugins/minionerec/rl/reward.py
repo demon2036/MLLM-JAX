@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 
-from plugins.sft.metrics import normalize_sid_text
+from projects.minionerec.sft.metrics import normalize_sid_text
 
 
 def build_rank_penalties(num_generations: int) -> np.ndarray:

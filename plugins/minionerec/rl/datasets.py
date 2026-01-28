@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from plugins.sft.datasets.csv_utils import parse_sid_example, read_csv_rows, sample_rows
+from projects.minionerec.sft.datasets.csv_utils import parse_sid_example, read_csv_rows, sample_rows
 
 
 def _format_prompt_next_item(history_item_sid: list[str]) -> str:

@@ -18,6 +18,7 @@ workdir/
 answers/
 memory/
 memo/
+plugins2/
 
 # Local secrets (never commit)
 .env

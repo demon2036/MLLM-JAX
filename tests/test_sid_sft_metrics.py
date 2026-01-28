@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from plugins.sft.metrics import compute_hr_ndcg, normalize_sid_text
+from projects.minionerec.sft.metrics import compute_hr_ndcg, normalize_sid_text
 
 
 def test_normalize_sid_text_strips_common_noise():

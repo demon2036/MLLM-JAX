@@ -14,10 +14,10 @@ from plugins.minionerec.rl.datasets import MiniOneRecNextItemRlDataset
 from plugins.minionerec.rl.grpo_module import MiniOneRecGrpoModule
 from plugins.minionerec.rl.reward import build_rank_penalties, compute_ranking_rewards
 from plugins.sft.jax.checkpoint import load_checkpoint
-from plugins.sft.jax.evaluator import evaluate_sid_next_item_jax
+from projects.minionerec.sft.jax.evaluator import evaluate_sid_next_item_jax
 from plugins.sft.jax.params import resize_lm_vocab
 from plugins.sample.constraints.sid_trie import build_sid_trie_from_index
-from plugins.sft.wandb_utils import maybe_init_wandb
+from plugins.common.wandb_utils import maybe_init_wandb
 from plugins.training.advantage.grpo import compute_grpo_advantages_by_group_id
 from plugins.training.update.optimizer import OptimizerConfig, build_tx
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import jax
@@ -66,12 +67,13 @@ class CausalSelfAttention(nn.Module):
         y = jnp.matmul(att, v.astype(self.cfg.compute_dtype))
         y = y.transpose(0, 2, 1, 3).reshape(bsz, seqlen, n_embd)
 
+        proj_std = 0.02 / math.sqrt(2.0 * float(self.cfg.n_layer))
         y = nn.Dense(
             n_embd,
             use_bias=self.cfg.bias,
             dtype=self.cfg.compute_dtype,
             param_dtype=self.cfg.param_dtype,
-            kernel_init=nn.initializers.normal(stddev=0.02),
+            kernel_init=nn.initializers.normal(stddev=proj_std),
         )(y)
         y = nn.Dropout(rate=self.cfg.dropout)(y, deterministic=deterministic)
         return y
@@ -91,12 +93,13 @@ class MLP(nn.Module):
             kernel_init=nn.initializers.normal(stddev=0.02),
         )(x)
         x = nn.gelu(x, approximate=False)
+        proj_std = 0.02 / math.sqrt(2.0 * float(self.cfg.n_layer))
         x = nn.Dense(
             self.cfg.n_embd,
             use_bias=self.cfg.bias,
             dtype=self.cfg.compute_dtype,
             param_dtype=self.cfg.param_dtype,
-            kernel_init=nn.initializers.normal(stddev=0.02),
+            kernel_init=nn.initializers.normal(stddev=proj_std),
         )(x)
         x = nn.Dropout(rate=self.cfg.dropout)(x, deterministic=deterministic)
         return x
@@ -107,8 +110,22 @@ class Block(nn.Module):
 
     @nn.compact
     def __call__(self, x: jnp.ndarray, *, deterministic: bool) -> jnp.ndarray:
-        x = x + CausalSelfAttention(self.cfg)(nn.LayerNorm(dtype=self.cfg.compute_dtype, param_dtype=self.cfg.param_dtype)(x), deterministic=deterministic)
-        x = x + MLP(self.cfg)(nn.LayerNorm(dtype=self.cfg.compute_dtype, param_dtype=self.cfg.param_dtype)(x), deterministic=deterministic)
+        ln1 = nn.LayerNorm(
+            use_bias=self.cfg.bias,
+            use_scale=True,
+            epsilon=1e-5,
+            dtype=self.cfg.compute_dtype,
+            param_dtype=self.cfg.param_dtype,
+        )
+        ln2 = nn.LayerNorm(
+            use_bias=self.cfg.bias,
+            use_scale=True,
+            epsilon=1e-5,
+            dtype=self.cfg.compute_dtype,
+            param_dtype=self.cfg.param_dtype,
+        )
+        x = x + CausalSelfAttention(self.cfg)(ln1(x), deterministic=deterministic)
+        x = x + MLP(self.cfg)(ln2(x), deterministic=deterministic)
         return x
 
 
@@ -146,11 +163,16 @@ class GPT(nn.Module):
         for _ in range(self.cfg.n_layer):
             x = Block(self.cfg)(x, deterministic=deterministic)
 
-        x = nn.LayerNorm(dtype=self.cfg.compute_dtype, param_dtype=self.cfg.param_dtype)(x)
+        x = nn.LayerNorm(
+            use_bias=self.cfg.bias,
+            use_scale=True,
+            epsilon=1e-5,
+            dtype=self.cfg.compute_dtype,
+            param_dtype=self.cfg.param_dtype,
+        )(x)
 
         logits = jnp.einsum("bte,ve->btv", x.astype(self.cfg.compute_dtype), wte.astype(self.cfg.compute_dtype))
         return logits
 
 
 __all__ = ["GPTConfig", "GPT", "parse_dtype"]
-

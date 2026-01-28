@@ -26,7 +26,7 @@ train:
   warmup_steps: 100
   weight_decay: 0.1
   beta1: 0.9
-  beta2: 0.95
+  beta2: 0.99
   grad_clip_norm: 1.0
   log_every: 10
   eval_every: 250
@@ -42,4 +42,3 @@ wandb:
   project: nano-gpt-jax
   mode: online
   name: null
-

@@ -397,6 +397,18 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     eval_batches_per_process = int(eval_batches_per_process or 1)
     eval_split = str(cfg.get("eval_split") or "test")
 
+    train_steps_per_epoch_raw = cfg.get("train_steps_per_epoch")
+    train_steps_per_epoch = int(train_steps_per_epoch_raw) if train_steps_per_epoch_raw is not None else 0
+
+    eval_full_every_epochs_raw = cfg.get("eval_full_every_epochs")
+    eval_full_every_epochs = int(eval_full_every_epochs_raw) if eval_full_every_epochs_raw is not None else 0
+
+    eval_full_num_pre_q_raw = cfg.get("eval_full_num_pre_q")
+    eval_full_num_pre_q = int(eval_full_num_pre_q_raw) if eval_full_num_pre_q_raw is not None else 1
+
+    eval_full_greedy_raw = cfg.get("eval_full_greedy")
+    eval_full_greedy = bool(eval_full_greedy_raw) if eval_full_greedy_raw is not None else False
+
     return GRPOGsm8kConfig(
         config_path=str(config_path),
         model_path=model_path,
@@ -427,6 +439,10 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         eval_every_steps=eval_every_steps,
         eval_batches_per_process=eval_batches_per_process,
         eval_split=eval_split,
+        train_steps_per_epoch=train_steps_per_epoch,
+        eval_full_every_epochs=eval_full_every_epochs,
+        eval_full_num_pre_q=eval_full_num_pre_q,
+        eval_full_greedy=eval_full_greedy,
     )
 
 

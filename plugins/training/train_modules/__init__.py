@@ -5,6 +5,6 @@ edits to upstream folders (e.g. `MLLM_JAX/`).
 """
 
 from plugins.training.train_modules.grpo_pallas import TrainGRPOModulePallas
+from plugins.training.train_modules.grpo_jax import TrainGRPOModuleJax
 
-__all__ = ["TrainGRPOModulePallas"]
-
+__all__ = ["TrainGRPOModuleJax", "TrainGRPOModulePallas"]

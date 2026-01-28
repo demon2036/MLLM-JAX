@@ -2,6 +2,7 @@
 
 ## Quick tasks (task-based)
 
+- Install `gcloud` (Linux, tarball): `docs/sops/gcloud-install-linux-tarball.md`
 - Repo setup: `docs/sops/repo-setup.md`
 - Clone reference repos into `workdir/`: `docs/sops/clone-reference-repos-into-workdir.md`
 - Clone AkaliKong/MiniOneRec into repo workdir: `docs/sops/clone-akalikong-minionerec-workdir.md`

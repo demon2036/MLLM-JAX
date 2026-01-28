@@ -7,7 +7,14 @@ import jax.numpy as jnp
 import numpy as np
 
 from .configuration_qwen2 import Qwen2Config
-from ..llama.llama import LlamaMLP, LlamaAttention, LlamaDecoderLayer, LlamaRMSNorm, LlamaRotaryEmbedding
+from ..llama.llama import (
+    LlamaAttention,
+    LlamaDecoderLayer,
+    LlamaMLP,
+    LlamaRMSNorm,
+    LlamaRotaryEmbedding,
+    _resolve_rope_theta,
+)
 
 class Qwen2MLP(LlamaMLP):
     config: Qwen2Config
@@ -38,7 +45,7 @@ class Qwen2Attention(LlamaAttention):
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
-        self.rope_theta = config.rope_theta
+        self.rope_theta = _resolve_rope_theta(config)
         self.is_causal = True
         self.q_proj = nn.Dense(self.num_heads * self.head_dim, use_bias=use_bias,dtype=dtype,param_dtype=param_dtype)
         self.k_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=use_bias,dtype=dtype,param_dtype=param_dtype)

@@ -46,7 +46,7 @@ Sanity check:
 ### 3) Sync repo via Git and checkout the target commit
 
 - `git clone https://github.com/demon2036/MLLM-JAX.git /root/MLLM-JAX`
-- `cd /root/MLLM-JAX && git fetch --all --prune && git checkout a258eab4367498fa3be49001329e89dd7fa1f69c`
+- `cd /root/MLLM-JAX && git fetch --all --prune && git checkout 96758ea9a20f9db5ca6d5dff45873c08fcfc8340`
 
 ### 4) (Optional) W&B auth (note)
 
@@ -75,7 +75,11 @@ If you intend to run W&B online:
 ## Expected Result (verified)
 
 - Training completes without traceback (exit code `0`)
-- Final `eval/loss` at `step=5000` is printed in the log (observed: `1.6999`)
+- Official reference (Karpathy nanoGPT README):
+  - For `config/train_shakespeare_char.py` on an A100 GPU: best validation loss `1.4697`
+- TPU v6e-8 observed (this repo, commit above):
+  - Best `val_loss` observed during training: `1.4720` at `step=1500`
+  - Note: this run overfits; final `val_loss` at `step=5000` increases (observed: `1.7049`)
 - Output directory contains `config_resolved.json`, `run_summary.json`, and checkpoints:
   - `runs/nano_gpt_tinyshakespeare_v6e_8_standard_no_wandb/checkpoints/checkpoint_4500`
   - `runs/nano_gpt_tinyshakespeare_v6e_8_standard_no_wandb/checkpoints/checkpoint_5000`

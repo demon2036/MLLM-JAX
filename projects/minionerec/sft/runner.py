@@ -224,6 +224,10 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             f"got {int(jax.process_count())}."
         )
 
+    if int(jax.process_index()) == 0:
+        print(f"backend={jax.default_backend()} process={jax.process_index()}/{jax.process_count()}")
+        print(f"device_count={jax.device_count()} local_device_count={jax.local_device_count()}")
+
     from plugins.sft.jax.checkpoint import load_checkpoint, save_checkpoint
     from plugins.sft.jax.params import resize_lm_vocab
     from plugins.sft.jax.train import create_mesh_from_config, run_sft_train
@@ -239,6 +243,8 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
         raise ValueError(f"Unsupported dtype: {name!r}")
 
     mesh = create_mesh_from_config(cfg.jax.mesh_shape)
+    if int(jax.process_index()) == 0:
+        print(f"mesh_shape={cfg.jax.mesh_shape} resolved_mesh={dict(mesh.shape)}")
     compute_dtype = parse_dtype(cfg.jax.compute_dtype)
     param_dtype = parse_dtype(cfg.jax.param_dtype)
 

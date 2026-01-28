@@ -188,6 +188,21 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
     from plugins.sft.jax.sharding import get_partition_rules_llama, match_partition_rules
 
+    require_multihost = str(os.environ.get("REQUIRE_MULTIHOST", "")).strip().lower() in {"1", "true", "yes"}
+    require_process_count = str(os.environ.get("REQUIRE_JAX_PROCESS_COUNT", "")).strip()
+    if require_multihost and int(jax.process_count()) <= 1:
+        raise RuntimeError(
+            "Expected multi-host JAX runtime (REQUIRE_MULTIHOST=1), but got jax.process_count()==1. "
+            "Launch with --worker=all on multi-host TPUs."
+        )
+    if require_process_count:
+        expected = int(require_process_count)
+        if int(jax.process_count()) != expected:
+            raise RuntimeError(
+                f"Expected jax.process_count()=={expected} (REQUIRE_JAX_PROCESS_COUNT), "
+                f"got {int(jax.process_count())}."
+            )
+
     from plugins.sft.jax.checkpoint import load_checkpoint, save_checkpoint
     from plugins.sft.jax.params import resize_lm_vocab
     from plugins.sft.jax.train import create_mesh_from_config, run_sft_train

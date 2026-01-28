@@ -123,6 +123,42 @@
     - step2: `4.05s`
     - step3: `4.04s`
 
+## Extra: Windows PowerShell tmux background train (v4-8, Industrial)
+
+- Multi-host guard envs (SFT runner):
+  - `REQUIRE_MULTIHOST=1` → error if `jax.process_count()==1`
+  - `REQUIRE_JAX_PROCESS_COUNT=<N>` → error if process count mismatches
+
+- Stop any stale TPU holders:
+  - `gcloud alpha compute tpus tpu-vm ssh "root@minionerec-sft-rl-v4-8-260125030000" --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --command "set -euo pipefail; fuser -k /dev/accel* || true; rm -f /tmp/libtpu_lockfile"`
+
+- Launch Industrial SFT train in tmux (PowerShell):
+  - ```
+    $script = @'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -f /tmp/libtpu_lockfile || true
+    set -a
+    [ -f /root/.env ] && source /root/.env
+    set +a
+    export PYTHONUNBUFFERED=1
+    export HF_HUB_ENABLE_HF_TRANSFER=1
+    source /root/miniconda3/etc/profile.d/conda.sh
+    conda activate mllm-jax
+    cd /root/MLLM-JAX
+    ./scripts/run_sid_sft.sh --config plugins/sft/configs/sid_sft_jax_qwen25_1p5b_base_industrial_v4_8_paper_full.yaml --run-mode train |& tee /root/MLLM-JAX/logs/sid_sft_industrial_train.log
+    '@
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($script))
+    gcloud alpha compute tpus tpu-vm ssh "root@minionerec-sft-rl-v4-8-260125030000" --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --command "set -euo pipefail; cd /root/MLLM-JAX; mkdir -p logs; echo $encoded | base64 -d > /tmp/run_sft_industrial.sh; chmod +x /tmp/run_sft_industrial.sh; tmux new-session -d -s sid_sft_industrial_train /tmp/run_sft_industrial.sh"
+    ```
+
+- Check tmux + log:
+  - `gcloud alpha compute tpus tpu-vm ssh "root@minionerec-sft-rl-v4-8-260125030000" --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --command "tmux ls"`
+  - `gcloud alpha compute tpus tpu-vm ssh "root@minionerec-sft-rl-v4-8-260125030000" --project civil-rarity-482610-s5 --zone us-central2-b --worker 0 --command "tail -n 5 /root/MLLM-JAX/logs/sid_sft_industrial_train.log"`
+
+- W&B run (tmux): `https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/72av8brm`
+- Prior foreground run (aborted): `https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/86s5e8ux`
+
 ## References
 
 - Upstream metrics script: `workdir/MiniOneRec/calc.py`

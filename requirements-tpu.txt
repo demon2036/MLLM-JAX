@@ -9,7 +9,8 @@ flax
 optax
 chex
 torch
-transformers
+# transformers v5 removed `return_tensors="jax"`; keep v4 for JAX return_tensors support.
+transformers<5
 datasets
 tqdm
 wandb

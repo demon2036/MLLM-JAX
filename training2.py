@@ -13,7 +13,6 @@ import optax
 from chex import ArrayTree
 from flax.training import train_state
 
-from MLLM_JAX.train_modules import TrainGRPOModule
 from MLLM_JAX.utils import match_partition_rules, get_partition_rules_llama
 from plugins.sample.mllm_sampler import Sampler, get_model
 # from sample_state_left_padding import get_model, Sampler
@@ -52,13 +51,26 @@ def get_state(
     num_pre_q=16,
     max_lengths=None,
     beta: float = 0.04,
+    policy_loss_impl: str = "jax",
     create_sampler: bool = True,
     tx: Any | None = None,
 ):
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
     model_ref = get_model(mesh, model_path=model_path, only_model=True) if beta != 0 else None
 
-    train_module = flax.linen.remat(TrainGRPOModule,policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)(model=model,
+    policy_loss_impl_norm = str(policy_loss_impl or "jax").strip().lower()
+    if policy_loss_impl_norm == "pallas":
+        from plugins.training.train_modules import TrainGRPOModulePallas
+
+        train_module_cls = TrainGRPOModulePallas
+    else:
+        from MLLM_JAX.train_modules import TrainGRPOModule
+
+        train_module_cls = TrainGRPOModule
+
+    train_module = flax.linen.remat(
+        train_module_cls, policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims
+    )(model=model,
                                    pad_token_id=tokenizer.pad_token_id,
                                    ref_model=model_ref,
                                    num_pre_Q=num_pre_q,

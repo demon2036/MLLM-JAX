@@ -44,6 +44,10 @@ class GRPOTrainConfig:
     ppo_epochs: int = 1
     grad_accum_steps: int = 1
     beta: float = 0.0
+    # Policy loss implementation:
+    # - "jax": use the legacy pure-JAX loss inside TrainGRPOModule
+    # - "pallas": use the Pallas GRPO kernel (plugins/training/kernels)
+    policy_loss_impl: str = "jax"
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
 
 
@@ -445,6 +449,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             num_pre_q=cfg.rollout.n,
             max_lengths=cfg.train.max_length_total,
             beta=cfg.train.beta,
+            policy_loss_impl=cfg.train.policy_loss_impl,
             create_sampler=True,
             tx=tx,
         )

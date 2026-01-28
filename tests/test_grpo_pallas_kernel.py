@@ -6,6 +6,7 @@ from jax.experimental.pallas import tpu as pltpu
 from plugins.training.kernels.grpo_loss_pallas import (
     GRPOKernelConfig,
     grpo_per_token_loss_pallas,
+    grpo_per_token_loss_pallas_on_policy,
     grpo_per_token_loss_reference,
 )
 
@@ -74,6 +75,73 @@ def test_grpo_pallas_kernel_matches_reference_forward_and_backward(vocab: int):
             logits=l,
             chosen_ids=chosen_ids,
             old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+            cfg=cfg,
+            interpret=interpret,
+            debug=False,
+        )
+        return jnp.sum(per_loss)
+
+    grad_ref = jax.grad(loss_ref_fn)(logits)
+    grad_k = jax.grad(loss_k_fn)(logits).astype(jnp.float32)
+
+    assert jnp.max(jnp.abs(grad_ref - grad_k)) < 1e-5
+
+
+@pytest.mark.parametrize("vocab", [15, 24])
+def test_grpo_pallas_kernel_on_policy_matches_reference_forward_and_backward(vocab: int):
+    key = jax.random.PRNGKey(0)
+
+    batch = 2
+    time = 3
+
+    logits = jax.random.normal(key, (batch, time, vocab), dtype=jnp.float32)
+    chosen_ids = jax.random.randint(key, (batch, time), 0, vocab, dtype=jnp.int32)
+    advantages = jax.random.normal(key, (batch,), dtype=jnp.float32)
+
+    eps_low = 0.2
+    eps_high = 0.2
+    temperature = 1.0
+
+    def ref_impl(l):
+        l = l.astype(jnp.float32)
+        logps = jnp.take_along_axis(
+            jax.nn.log_softmax(l, axis=-1),
+            chosen_ids[..., None],
+            axis=-1,
+        )[..., 0] / float(temperature)
+        old = jax.lax.stop_gradient(logps)
+        ratio = jnp.exp(logps - old)
+        clipped_ratio = jnp.clip(ratio, 1.0 - float(eps_low), 1.0 + float(eps_high))
+        loss1 = ratio * advantages[..., None]
+        loss2 = clipped_ratio * advantages[..., None]
+        loss = (-jnp.minimum(loss1, loss2)).astype(jnp.float32)
+        return loss, logps.astype(jnp.float32)
+
+    per_loss_ref, per_logp_ref = ref_impl(logits)
+
+    cfg = GRPOKernelConfig(block_size=8, epsilon_low=eps_low, epsilon_high=eps_high, temperature=temperature)
+    interpret = pltpu.InterpretParams(out_of_bounds_reads="raise", random_seed=0)
+    per_loss_k, per_logp_k = grpo_per_token_loss_pallas_on_policy(
+        logits=logits,
+        chosen_ids=chosen_ids,
+        advantages=advantages,
+        cfg=cfg,
+        interpret=interpret,
+        debug=False,
+    )
+
+    assert jnp.max(jnp.abs(per_loss_ref - per_loss_k)) < 1e-5
+    assert jnp.max(jnp.abs(per_logp_ref - per_logp_k)) < 1e-5
+
+    def loss_ref_fn(l):
+        per_loss, _ = ref_impl(l)
+        return jnp.sum(per_loss)
+
+    def loss_k_fn(l):
+        per_loss, _ = grpo_per_token_loss_pallas_on_policy(
+            logits=l,
+            chosen_ids=chosen_ids,
             advantages=advantages,
             cfg=cfg,
             interpret=interpret,

@@ -438,6 +438,103 @@ def build_grpo_per_token_loss_pallas(
     return _kernel
 
 
+def build_grpo_per_token_loss_pallas_on_policy(
+    cfg: GRPOKernelConfig,
+    *,
+    interpret: bool = False,
+    debug: bool = False,
+):
+    """Pallas GRPO loss for the on-policy (old_logps implicit) PPO epoch.
+
+    This matches the common training contract where the first PPO epoch sets:
+      old_per_token_logps = stop_gradient(per_token_logps)
+    so ratio = exp(logp - stop_grad(logp)) has value 1 but still carries the
+    correct gradient signal.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    cfg = GRPOKernelConfig(
+        block_size=int(cfg.block_size),
+        time_block=int(cfg.time_block),
+        epsilon_low=float(cfg.epsilon_low),
+        epsilon_high=float(cfg.epsilon_high),
+        temperature=float(cfg.temperature),
+    )
+    eps_low = float(cfg.epsilon_low)
+    eps_high = float(cfg.epsilon_high)
+
+    def _compute_loss_from_logps(*, per_token_logps, old_per_token_logps, advantages):
+        ratio = jnp.exp(per_token_logps - old_per_token_logps)
+        clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
+        advantages = advantages.astype(jnp.float32)
+        loss1 = ratio * advantages[..., None]
+        loss2 = clipped_ratio * advantages[..., None]
+        return (-jnp.minimum(loss1, loss2)).astype(jnp.float32)
+
+    @jax.custom_vjp
+    def _kernel(logits, chosen_ids, advantages):
+        dummy_old = jnp.zeros(chosen_ids.shape, dtype=jnp.float32)
+        _loss_unused, per_token_logps, _lse, _original_vocab = _grpo_pallas_fwd(
+            logits=logits,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=dummy_old,
+            advantages=advantages,
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+        )
+        old_per_token_logps = jax.lax.stop_gradient(per_token_logps)
+        per_token_loss = _compute_loss_from_logps(
+            per_token_logps=per_token_logps,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+        )
+        return per_token_loss, per_token_logps
+
+    def fwd(logits, chosen_ids, advantages):
+        dummy_old = jnp.zeros(chosen_ids.shape, dtype=jnp.float32)
+        _loss_unused, per_token_logps, lse, original_vocab = _grpo_pallas_fwd(
+            logits=logits,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=dummy_old,
+            advantages=advantages,
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+        )
+        old_per_token_logps = jax.lax.stop_gradient(per_token_logps)
+        per_token_loss = _compute_loss_from_logps(
+            per_token_logps=per_token_logps,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+        )
+        outs = (per_token_loss, per_token_logps)
+        res = (logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse, original_vocab)
+        return outs, res
+
+    def bwd(res, g):
+        logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse, original_vocab = res
+        dloss, _dlogp = g
+        dlogits = _grpo_pallas_bwd(
+            dloss=dloss.astype(jnp.float32),
+            logits=logits,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+            per_token_logps=per_token_logps,
+            lse=lse,
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+            original_vocab=int(original_vocab),
+        )
+        return (dlogits, None, None)
+
+    _kernel.defvjp(fwd, bwd)
+    return _kernel
+
+
 def grpo_per_token_loss_pallas_default_cfg() -> GRPOKernelConfig:
     return GRPOKernelConfig()
 
@@ -472,10 +569,28 @@ def grpo_per_token_loss_pallas_configured(
     return _fn
 
 
+def grpo_per_token_loss_pallas_on_policy(
+    *,
+    logits: Any,
+    chosen_ids: Any,
+    advantages: Any,
+    cfg: GRPOKernelConfig | None = None,
+    interpret: bool = False,
+    debug: bool = False,
+) -> tuple[Any, Any]:
+    """Compute per-token GRPO loss/logps with implicit old_logps=stop_grad(logps)."""
+    if cfg is None:
+        cfg = GRPOKernelConfig()
+    fn = build_grpo_per_token_loss_pallas_on_policy(cfg, interpret=interpret, debug=debug)
+    return fn(logits, chosen_ids, advantages)
+
+
 __all__ = [
     "GRPOKernelConfig",
     "grpo_per_token_loss_reference",
     "grpo_per_token_loss_pallas",
     "grpo_per_token_loss_pallas_default_cfg",
     "grpo_per_token_loss_pallas_configured",
+    "grpo_per_token_loss_pallas_on_policy",
+    "build_grpo_per_token_loss_pallas_on_policy",
 ]

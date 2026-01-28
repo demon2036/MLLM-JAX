@@ -210,6 +210,11 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     beta = float(beta or 0.0)
     mesh_shape = str(cfg.get("mesh_shape") or "1,-1,1")
 
+    policy_loss_impl_raw = _get_by_path(cfg, "train.policy_loss_impl")
+    if policy_loss_impl_raw is None:
+        policy_loss_impl_raw = cfg.get("policy_loss_impl")
+    policy_loss_impl = str(policy_loss_impl_raw or "jax").strip().lower()
+
     from plugins.training.update.optimizer import LRScheduleConfig, OptimizerConfig
 
     optimizer_raw = _get_by_path(cfg, "train.optimizer")
@@ -410,6 +415,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             ppo_epochs=ppo_epochs,
             grad_accum_steps=grad_accum_steps,
             beta=beta,
+            policy_loss_impl=policy_loss_impl,
             optimizer=optimizer_cfg,
         ),
         mesh_shape=mesh_shape,

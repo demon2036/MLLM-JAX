@@ -36,7 +36,7 @@ train:
   temperature: 1.0
   top_k: 50
   ckpt_every: 500
-  keep_ckpts: 2
+  keep_ckpts: 20
 
 wandb:
   project: nano-gpt-jax

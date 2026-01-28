@@ -96,6 +96,17 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
         cosine = min_lr + 0.5 * (learning_rate - min_lr) * (1.0 + jnp.cos(jnp.pi * progress))
         return jnp.where(stepf < float(warmup_steps), warmup, cosine)
 
+    model = GPT(model_cfg)
+
+    init_rng = jax.random.PRNGKey(seed)
+    dummy_idx = jnp.zeros((1, model_cfg.block_size), dtype=jnp.int32)
+    params = model.init({"params": init_rng}, dummy_idx, deterministic=True)["params"]
+
+    # Align optimizer semantics with the common nanoGPT AdamW setup:
+    # apply weight decay only to parameters with ndim >= 2 (e.g., kernels/embeddings),
+    # and exclude biases / LayerNorm scale/bias (ndim == 1).
+    decay_mask = jax.tree_util.tree_map(lambda x: getattr(x, "ndim", 0) >= 2, params)
+
     tx = optax.chain(
         optax.clip_by_global_norm(grad_clip_norm),
         optax.adamw(
@@ -103,14 +114,9 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
             b1=beta1,
             b2=beta2,
             weight_decay=weight_decay,
+            mask=decay_mask,
         ),
     )
-
-    model = GPT(model_cfg)
-
-    init_rng = jax.random.PRNGKey(seed)
-    dummy_idx = jnp.zeros((1, model_cfg.block_size), dtype=jnp.int32)
-    params = model.init({"params": init_rng}, dummy_idx, deterministic=True)["params"]
     state = train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
     state = jax.device_put_replicated(state, devices)
 

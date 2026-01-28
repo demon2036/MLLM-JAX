@@ -5,6 +5,8 @@ from typing import Any
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+from jax.experimental.shard_map import shard_map
+from jax.sharding import PartitionSpec as PS
 
 from plugins.training.kernels.grpo_loss_pallas import (
     GRPOKernelConfig,
@@ -17,6 +19,7 @@ class TrainGRPOModulePallas(nn.Module):
     """TrainGRPOModule variant that uses the Pallas GRPO kernel for policy loss."""
 
     model: Any
+    mesh: Any
     pad_token_id: float
     num_pre_Q: int
     ref_model: Any = None
@@ -55,25 +58,67 @@ class TrainGRPOModulePallas(nn.Module):
         )
         advantages = inputs["advantages"]
 
-        if "old_per_token_logps" in inputs:
-            old_per_token_logps = inputs["old_per_token_logps"]
-            per_token_loss, per_token_logps = grpo_per_token_loss_pallas(
-                logits=logits[..., :-1, :],
-                chosen_ids=chosen_ids,
-                old_per_token_logps=old_per_token_logps,
-                advantages=advantages,
+        def _call_kernel_on_policy(local_logits, local_chosen_ids, local_advantages):
+            return grpo_per_token_loss_pallas_on_policy(
+                logits=local_logits,
+                chosen_ids=local_chosen_ids,
+                advantages=local_advantages,
                 cfg=kernel_cfg,
                 interpret=False,
                 debug=False,
             )
-        else:
-            per_token_loss, per_token_logps = grpo_per_token_loss_pallas_on_policy(
-                logits=logits[..., :-1, :],
-                chosen_ids=chosen_ids,
-                advantages=advantages,
+
+        def _call_kernel(local_logits, local_chosen_ids, local_old_logps, local_advantages):
+            return grpo_per_token_loss_pallas(
+                logits=local_logits,
+                chosen_ids=local_chosen_ids,
+                old_per_token_logps=local_old_logps,
+                advantages=local_advantages,
                 cfg=kernel_cfg,
                 interpret=False,
                 debug=False,
+            )
+
+        if "old_per_token_logps" in inputs:
+            old_per_token_logps = inputs["old_per_token_logps"]
+            per_token_loss, per_token_logps = shard_map(
+                _call_kernel,
+                mesh=self.mesh,
+                in_specs=(
+                    PS(("dp", "fsdp"), None, "tp"),
+                    PS(("dp", "fsdp"), None),
+                    PS(("dp", "fsdp"), None),
+                    PS(("dp", "fsdp"),),
+                ),
+                out_specs=(
+                    PS(("dp", "fsdp"), None),
+                    PS(("dp", "fsdp"), None),
+                ),
+                check_rep=False,
+            )(
+                logits[..., :-1, :],
+                chosen_ids,
+                old_per_token_logps,
+                advantages,
+            )
+        else:
+            per_token_loss, per_token_logps = shard_map(
+                _call_kernel_on_policy,
+                mesh=self.mesh,
+                in_specs=(
+                    PS(("dp", "fsdp"), None, "tp"),
+                    PS(("dp", "fsdp"), None),
+                    PS(("dp", "fsdp"),),
+                ),
+                out_specs=(
+                    PS(("dp", "fsdp"), None),
+                    PS(("dp", "fsdp"), None),
+                ),
+                check_rep=False,
+            )(
+                logits[..., :-1, :],
+                chosen_ids,
+                advantages,
             )
 
         probs = jax.nn.softmax(logits[..., :-1, :] / self.temperature, axis=-1)
@@ -105,4 +150,3 @@ class TrainGRPOModulePallas(nn.Module):
 
 
 __all__ = ["TrainGRPOModulePallas"]
-

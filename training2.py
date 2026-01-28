@@ -68,15 +68,20 @@ def get_state(
 
         train_module_cls = TrainGRPOModule
 
+    train_module_kwargs = {
+        "model": model,
+        "pad_token_id": tokenizer.pad_token_id,
+        "ref_model": model_ref,
+        "num_pre_Q": num_pre_q,
+        "beta": beta,
+        "max_lengths": max_lengths,
+    }
+    if policy_loss_impl_norm == "pallas":
+        train_module_kwargs["mesh"] = mesh
+
     train_module = flax.linen.remat(
         train_module_cls, policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims
-    )(model=model,
-                                   pad_token_id=tokenizer.pad_token_id,
-                                   ref_model=model_ref,
-                                   num_pre_Q=num_pre_q,
-                                   beta=beta,
-                                   max_lengths=max_lengths,
-                                   )
+    )(**train_module_kwargs)
 
     # train_module = TrainGRPOModule(
     #     model=model,

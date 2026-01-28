@@ -37,6 +37,13 @@ class SidSftDataConfig:
     item_meta_path: str
     max_len: int = 512
     padding_side: str = "left"
+    # Training-only padding policy.
+    # - "fixed": pad every step to `max_len`.
+    # - "pow2_buckets": pad every step to the smallest bucket >= global max len.
+    # - "max": pad every step to the global max len (can trigger many recompiles).
+    train_pad_policy: str = "fixed"
+    train_pad_buckets: tuple[int, ...] = (128, 256, 512)
+    train_pad_to_multiple_of: int = 8
     sample_train: int = -1
     sample_eval: int = -1
     sample_test: int = -1
@@ -177,6 +184,7 @@ def _build_eval_dataset(cfg: SidSftConfig, tokenizer: Any) -> SidNextItemEvalDat
 
 def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]:
     import math
+    import time
 
     import flax
     import jax
@@ -189,19 +197,32 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     from plugins.sft.jax.sharding import get_partition_rules_llama, match_partition_rules
 
     require_multihost = str(os.environ.get("REQUIRE_MULTIHOST", "")).strip().lower() in {"1", "true", "yes"}
-    require_process_count = str(os.environ.get("REQUIRE_JAX_PROCESS_COUNT", "")).strip()
+    require_process_count_raw = str(os.environ.get("REQUIRE_JAX_PROCESS_COUNT", "")).strip()
+    require_process_count = int(require_process_count_raw) if require_process_count_raw else 0
+
+    try:
+        jax.distributed.initialize()
+    except Exception as e:
+        if require_multihost or require_process_count > 0:
+            raise RuntimeError(
+                "jax.distributed.initialize() failed but a multi-host runtime is required "
+                "(REQUIRE_MULTIHOST=1 or REQUIRE_JAX_PROCESS_COUNT is set). "
+                "Start the job on all workers (`gcloud ... tpu-vm ssh --worker=all`) "
+                "or launch one process per worker."
+            ) from e
+        if str(os.environ.get("PRINT_JAX_DISTRIBUTED_INIT_ERROR", "")).strip() == "1":
+            print(f"jax.distributed.initialize() skipped: {e}")
+
     if require_multihost and int(jax.process_count()) <= 1:
         raise RuntimeError(
             "Expected multi-host JAX runtime (REQUIRE_MULTIHOST=1), but got jax.process_count()==1. "
             "Launch with --worker=all on multi-host TPUs."
         )
-    if require_process_count:
-        expected = int(require_process_count)
-        if int(jax.process_count()) != expected:
-            raise RuntimeError(
-                f"Expected jax.process_count()=={expected} (REQUIRE_JAX_PROCESS_COUNT), "
-                f"got {int(jax.process_count())}."
-            )
+    if require_process_count > 0 and int(jax.process_count()) != int(require_process_count):
+        raise RuntimeError(
+            f"Expected jax.process_count()=={int(require_process_count)} (REQUIRE_JAX_PROCESS_COUNT), "
+            f"got {int(jax.process_count())}."
+        )
 
     from plugins.sft.jax.checkpoint import load_checkpoint, save_checkpoint
     from plugins.sft.jax.params import resize_lm_vocab
@@ -360,59 +381,172 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
         evaluator = None
         eval_every_steps = 0
+        eval_topk = sorted({int(k) for k in cfg.eval.topk if int(k) > 0 and int(k) <= int(cfg.eval.num_beams)})
+        if not eval_topk:
+            raise ValueError(f"No valid eval.topk <= num_beams={int(cfg.eval.num_beams)}: {list(cfg.eval.topk)}")
+
+        process_count = int(jax.process_count())
+        process_index = int(jax.process_index())
+        process_allgather = None
+        if process_count > 1:
+            from jax.experimental.multihost_utils import process_allgather as _process_allgather
+
+            process_allgather = _process_allgather
+
+        # Local per-process eval dataset subset (for multi-host speed).
+        eval_dataset_full = None
 
         # For `train_eval`, run constrained-decoding eval periodically so W&B
         # shows metrics during training (at least once per epoch).
         if run_mode_norm == "train_eval" and cfg.eval.enabled:
-            if int(jax.process_count()) != 1:
-                print("[eval] periodic eval requires single-process JAX; skipping epoch eval.")
+            if not cfg.eval.constrained:
+                raise NotImplementedError("JAX evaluator currently supports only constrained=true (SID trie).")
+
+            eval_dataset_full = _build_eval_dataset(cfg, tokenizer)
+            n_eval = int(len(eval_dataset_full))
+            if n_eval <= 0:
+                raise ValueError("Empty eval_dataset")
+
+            if process_count > 1:
+
+                class _EvalSubsetDataset:
+                    def __init__(self, base: Any, indices: list[int]):
+                        self._base = base
+                        self._indices = indices
+                        self._targets = list(getattr(base, "get_targets")())
+
+                    def __len__(self) -> int:
+                        return len(self._indices)
+
+                    def __getitem__(self, idx: int) -> Any:
+                        return self._base[self._indices[idx]]
+
+                    def get_targets(self) -> list[str]:
+                        return [self._targets[i] for i in self._indices]
+
+                subset_indices = list(range(process_index, n_eval, process_count))
+                if subset_indices:
+                    eval_subset = _EvalSubsetDataset(eval_dataset_full, subset_indices)
+                    evaluator = SidNextItemJaxEvaluator(
+                        model=model,
+                        tokenizer=tokenizer,
+                        eval_dataset=eval_subset,
+                        sid_index_path=cfg.data.sid_index_path,
+                        info_file=cfg.data.info_file,
+                        batch_size=cfg.eval.batch_size,
+                        num_beams=cfg.eval.num_beams,
+                        max_cache_length=cfg.jax.max_cache_length,
+                        topk=eval_topk,
+                        show_progress=False,
+                    )
+                elif jax.process_index() == 0:
+                    print(f"[eval] WARNING: eval_dataset size={n_eval} < process_count={process_count}; some workers will eval 0 samples.")
             else:
-                eval_dataset = _build_eval_dataset(cfg, tokenizer)
                 evaluator = SidNextItemJaxEvaluator(
                     model=model,
                     tokenizer=tokenizer,
-                    eval_dataset=eval_dataset,
+                    eval_dataset=eval_dataset_full,
                     sid_index_path=cfg.data.sid_index_path,
                     info_file=cfg.data.info_file,
                     batch_size=cfg.eval.batch_size,
                     num_beams=cfg.eval.num_beams,
                     max_cache_length=cfg.jax.max_cache_length,
-                    topk=list(cfg.eval.topk),
+                    topk=eval_topk,
                     show_progress=False,
                 )
-                eval_every_steps = int(cfg.train.eval_steps)
-                if eval_every_steps < 0:
-                    eval_every_steps = 0
-                elif eval_every_steps == 0:
-                    eval_every_steps = int(steps_per_epoch)
+
+            eval_every_steps = int(cfg.train.eval_steps)
+            if eval_every_steps < 0:
+                eval_every_steps = 0
+            elif eval_every_steps == 0:
+                eval_every_steps = int(steps_per_epoch)
 
         def eval_cb(step: int, st: Any) -> None:
             nonlocal eval_metrics
-            if evaluator is None:
-                return
-            if int(jax.process_index()) != 0:
-                return
+            from projects.minionerec.sft.metrics import RankingMetrics
 
             epoch = float(step) / max(1.0, float(steps_per_epoch))
-            print(f"[eval] step={int(step)}/{int(max_steps)} epoch={epoch:.2f}")
+            t0 = time.perf_counter()
 
             output_predictions_json = None
-            if int(step) == int(max_steps) and bool(cfg.eval.save_predictions_json):
+            if process_count == 1 and int(step) == int(max_steps) and bool(cfg.eval.save_predictions_json):
                 output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json")
+            elif process_count > 1 and int(step) == int(max_steps) and bool(cfg.eval.save_predictions_json) and jax.process_index() == 0:
+                print("[eval] multi-host periodic eval does not write eval_predictions.json; run a single-host eval job if needed.")
 
-            _preds, metrics = evaluator.evaluate(
-                params=st.params,
-                output_predictions_json=output_predictions_json,
+            local_n = 0
+            local_invalid = 0
+            local_sum_hr = [0.0 for _ in eval_topk]
+            local_sum_ndcg_raw = [0.0 for _ in eval_topk]
+
+            if evaluator is not None:
+                _preds, metrics_local = evaluator.evaluate(
+                    params=st.params,
+                    output_predictions_json=output_predictions_json,
+                )
+                local_n = int(metrics_local.n_samples)
+                local_invalid = int(metrics_local.invalid_prediction_count)
+                log2 = float(math.log(2.0))
+                for i, k in enumerate(eval_topk):
+                    local_sum_hr[i] = float(metrics_local.hr[int(k)]) * float(local_n)
+                    local_sum_ndcg_raw[i] = (float(metrics_local.ndcg[int(k)]) * float(local_n)) / log2
+
+            # Aggregate sums/counts across processes.
+            local_vec = np.asarray(
+                [*local_sum_hr, *local_sum_ndcg_raw, float(local_invalid), float(local_n)],
+                dtype=np.float64,
             )
-            eval_metrics = metrics
+            global_vec = local_vec
+            if process_allgather is not None:
+                gathered = np.asarray(process_allgather(local_vec))
+                global_vec = gathered.sum(axis=0)
+
+            m = int(len(eval_topk))
+            global_sum_hr = global_vec[:m]
+            global_sum_ndcg_raw = global_vec[m : 2 * m]
+            global_invalid = int(global_vec[2 * m])
+            global_n = int(global_vec[2 * m + 1])
+
+            log2 = float(math.log(2.0))
+            hr = {int(k): float(global_sum_hr[i]) / float(global_n) if global_n > 0 else float("nan") for i, k in enumerate(eval_topk)}
+            ndcg = {
+                int(k): (float(global_sum_ndcg_raw[i]) / float(global_n) * log2) if global_n > 0 else float("nan")
+                for i, k in enumerate(eval_topk)
+            }
+            eval_metrics = RankingMetrics(
+                hr=hr,
+                ndcg=ndcg,
+                topk=list(eval_topk),
+                n_samples=int(global_n),
+                n_beams=int(cfg.eval.num_beams),
+                invalid_prediction_count=int(global_invalid),
+            )
+
+            t_eval_s = float(time.perf_counter() - t0)
+            if jax.process_index() == 0:
+                print(
+                    "[eval] "
+                    + " ".join(
+                        [
+                            f"step={int(step)}/{int(max_steps)}",
+                            f"epoch={epoch:.2f}",
+                            f"samples={int(global_n)}",
+                            f"hr@1={hr.get(1, float('nan')):.4f}",
+                            f"ndcg@10={ndcg.get(10, float('nan')):.4f}",
+                            f"t={t_eval_s:.2f}s",
+                        ]
+                    )
+                )
 
             if wandb is not None:
                 log = {"eval/epoch": epoch}
-                for k, v in metrics.hr.items():
+                for k, v in eval_metrics.hr.items():
                     log[f"eval/hr@{k}"] = v
-                for k, v in metrics.ndcg.items():
+                for k, v in eval_metrics.ndcg.items():
                     log[f"eval/ndcg@{k}"] = v
-                log["eval/invalid_prediction_count"] = metrics.invalid_prediction_count
+                log["eval/invalid_prediction_count"] = int(eval_metrics.invalid_prediction_count)
+                log["eval/n_samples"] = int(eval_metrics.n_samples)
+                log["time/eval_step_s"] = float(t_eval_s)
                 wandb.log(log, step=int(step))
 
         state, train_stats = run_sft_train(
@@ -422,6 +556,9 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             train_dataset=train_dataset,
             pad_token_id=int(pad_token_id),
             pad_to_length=int(cfg.data.max_len) if int(cfg.data.max_len) > 0 else None,
+            pad_policy=str(cfg.data.train_pad_policy or "fixed"),
+            pad_buckets=tuple(int(x) for x in (cfg.data.train_pad_buckets or (128, 256, 512))),
+            pad_to_multiple_of=int(getattr(cfg.data, "train_pad_to_multiple_of", 8) or 8),
             padding_side=str(cfg.data.padding_side or "left"),
             optimizer_name=cfg.train.optimizer,
             learning_rate=float(cfg.train.learning_rate),
@@ -447,6 +584,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
                 if wandb is not None
                 else None
             ),
+            log_extra_cb=((lambda step, extra: wandb.log(extra, step=int(step))) if wandb is not None else None),
             eval_every_steps=int(eval_every_steps),
             eval_cb=(eval_cb if eval_every_steps > 0 else None),
             checkpoint_every_steps=int(save_steps),
@@ -468,7 +606,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             ckpt_params = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), ckpt_params)
             eval_params = jax.tree_util.tree_map(lambda x, sh: jax.device_put(jnp.asarray(x, dtype=param_dtype), sh), ckpt_params, shardings)
 
-    if run_mode_norm == "train_eval" and cfg.eval.enabled and eval_metrics is None:
+    if run_mode_norm == "train_eval" and cfg.eval.enabled and eval_metrics is None and int(jax.process_count()) == 1:
         if not cfg.eval.constrained:
             raise NotImplementedError("JAX evaluator currently supports only constrained=true (SID trie).")
         eval_dataset = _build_eval_dataset(cfg, tokenizer)

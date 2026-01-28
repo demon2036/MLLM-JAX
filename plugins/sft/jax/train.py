@@ -12,6 +12,7 @@ import numpy as np
 from flax.training import train_state
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
+from plugins.common.sharding.batch import make_form_training_global_array
 from plugins.training.mesh import create_mesh
 from plugins.training.update.train_step import training_step
 from plugins.training.update.optimizer import LRScheduleConfig, OptimizerConfig, build_tx
@@ -149,6 +150,9 @@ def run_sft_train(
     train_dataset: Any,
     pad_token_id: int,
     pad_to_length: int | None,
+    pad_policy: str = "fixed",
+    pad_buckets: tuple[int, ...] = (128, 256, 512),
+    pad_to_multiple_of: int = 8,
     padding_side: str,
     optimizer_name: str,
     learning_rate: float,
@@ -160,6 +164,7 @@ def run_sft_train(
     logging_steps: int,
     warmup_steps: int = 0,
     log_cb: Callable[[int, float, int, float], None] | None = None,
+    log_extra_cb: Callable[[int, dict[str, float]], None] | None = None,
     eval_every_steps: int = 0,
     eval_cb: Callable[[int, Any], None] | None = None,
     checkpoint_every_steps: int = 0,
@@ -185,15 +190,53 @@ def run_sft_train(
         warmup_steps=int(warmup_steps),
     )
 
-    data_sharding = NamedSharding(mesh, P(("dp", "fsdp"), None))
     train_step_fn = jax.jit(training_step, donate_argnums=(0,), out_shardings=(bundle.sharding, None))
 
     global_micro_batch = _device_batch_size(mesh, micro_batch_size_per_replica)
     effective_batch = int(global_micro_batch) * int(grad_accum_steps)
 
+    process_count = int(jax.process_count())
+    process_index = int(jax.process_index())
+    if process_count <= 0:
+        raise RuntimeError("Unexpected jax.process_count() <= 0")
+    if int(global_micro_batch) % process_count != 0:
+        raise ValueError(
+            f"global_micro_batch={int(global_micro_batch)} must be divisible by process_count={process_count} "
+            "to shard batches evenly across hosts."
+        )
+    local_micro_batch = int(global_micro_batch) // process_count
+
+    process_allgather = None
+    if process_count > 1:
+        from jax.experimental.multihost_utils import process_allgather as _process_allgather
+
+        process_allgather = _process_allgather
+
+    _form_training_global_array = make_form_training_global_array(mesh)
+
     n = int(len(train_dataset))
     if n <= 0:
         raise ValueError("Empty train_dataset")
+
+    pad_policy_norm = str(pad_policy or "fixed").strip().lower()
+    if pad_policy_norm not in {"fixed", "max", "pow2_buckets"}:
+        raise ValueError(f"Unknown pad_policy={pad_policy!r} (expected fixed|max|pow2_buckets)")
+
+    pad_to_length = int(pad_to_length) if pad_to_length is not None and int(pad_to_length) > 0 else None
+    if pad_policy_norm == "fixed" and pad_to_length is None:
+        raise ValueError("pad_to_length must be set when pad_policy='fixed'")
+
+    pad_to_multiple_of = int(pad_to_multiple_of)
+    if pad_to_multiple_of <= 0:
+        pad_to_multiple_of = 1
+
+    buckets: list[int] = sorted({int(x) for x in pad_buckets if int(x) > 0})
+    if pad_policy_norm == "pow2_buckets":
+        if not buckets:
+            raise ValueError("pad_buckets must be non-empty when pad_policy='pow2_buckets'")
+        bad = [b for b in buckets if int(b) % int(pad_to_multiple_of) != 0]
+        if bad:
+            raise ValueError(f"pad_buckets must be divisible by pad_to_multiple_of={pad_to_multiple_of}; bad={bad}")
 
     # Simple cycling iterator over shuffled indices; avoids epoch bookkeeping.
     indices = iter_indices(n=n, seed=seed, shuffle=True)
@@ -205,6 +248,10 @@ def run_sft_train(
     for step in range(1, max_steps + 1):
         step_t0 = time.perf_counter()
         losses = []
+        pad_lens_step: list[int] = []
+        max_lens_step: list[int] = []
+        avg_lens_step: list[float] = []
+        token_utils_step: list[float] = []
         for _ in range(int(grad_accum_steps)):
             if cursor + global_micro_batch > len(indices):
                 indices = iter_indices(n=n, seed=seed + step, shuffle=True)
@@ -212,14 +259,73 @@ def run_sft_train(
             batch_idx = indices[cursor : cursor + global_micro_batch]
             cursor += global_micro_batch
 
-            examples = [train_dataset[i] for i in batch_idx]
+            # Each process owns `local_micro_batch` examples; the global batch
+            # is formed by sharding across all hosts/devices.
+            local_start = int(process_index) * int(local_micro_batch)
+            local_idx = batch_idx[local_start : local_start + int(local_micro_batch)]
+            if len(local_idx) != int(local_micro_batch):
+                raise RuntimeError(
+                    f"Unexpected local batch slice: got {len(local_idx)} indices, expected {int(local_micro_batch)}"
+                )
+
+            examples = [train_dataset[i] for i in local_idx]
+
+            # Resolve per-micro-step padding length.
+            #
+            # NOTE: once the input pipeline switches to per-process local batches
+            # (for multi-host efficiency), the true max length must be aggregated
+            # across processes so every host uses an identical `pad_len`.
+            pad_len = pad_to_length
+
+            local_max_len = max(len(x["input_ids"]) for x in examples)
+            global_max_len = int(local_max_len)
+            if process_allgather is not None:
+                gathered = np.asarray(process_allgather(np.asarray([int(local_max_len)], dtype=np.int32)))
+                global_max_len = int(gathered.max())
+
+            max_lens_step.append(int(global_max_len))
+
+            if pad_to_length is not None and int(global_max_len) > int(pad_to_length):
+                raise ValueError(
+                    f"Batch max_len={int(global_max_len)} exceeds pad_to_length={int(pad_to_length)}; "
+                    "increase data.max_len or ensure examples are truncated."
+                )
+
+            if pad_policy_norm == "max":
+                pad_len = int(global_max_len)
+            elif pad_policy_norm == "pow2_buckets":
+                for b in buckets:
+                    if int(b) >= int(global_max_len):
+                        pad_len = int(b)
+                        break
+                if pad_len is None:
+                    raise ValueError(
+                        f"pad_policy='pow2_buckets' but global_max_len={int(global_max_len)} exceeds max bucket={int(buckets[-1])}. "
+                        "Add a larger bucket or increase data.max_len."
+                    )
+
             batch_np = collate_sft_batch(
                 examples,
                 pad_token_id=int(pad_token_id),
-                pad_to_length=pad_to_length,
+                pad_to_multiple_of=int(pad_to_multiple_of),
+                pad_to_length=pad_len,
                 padding_side=str(padding_side or "right"),
             )
-            batch = {k: jax.device_put(v, data_sharding) for k, v in batch_np.as_dict().items()}
+            pad_len_actual = int(batch_np.input_ids.shape[1])
+            pad_lens_step.append(int(pad_len_actual))
+
+            local_token_count = int(batch_np.attention_mask.sum())
+            global_token_count = int(local_token_count)
+            if process_allgather is not None:
+                gathered_tokens = np.asarray(process_allgather(np.asarray([int(local_token_count)], dtype=np.int64)))
+                global_token_count = int(gathered_tokens.sum())
+
+            denom = float(int(global_micro_batch) * int(pad_len_actual))
+            token_util = float(global_token_count) / denom if denom > 0 else float("nan")
+            token_utils_step.append(float(token_util))
+            avg_lens_step.append(float(global_token_count) / float(int(global_micro_batch)))
+
+            batch = jax.tree_util.tree_map_with_path(_form_training_global_array, batch_np.as_dict())
 
             bundle_state, metrics = train_step_fn(bundle.state, batch)
             bundle = SftStateBundle(state=bundle_state, sharding=bundle.sharding)
@@ -235,6 +341,21 @@ def run_sft_train(
             print(f"[sft] step={step}/{max_steps} loss={last_loss:.6f} effective_bs={effective_batch} dt={step_dt:.3f}s t={wall_dt:.1f}s")
             if log_cb is not None:
                 log_cb(int(step), float(last_loss), int(effective_batch), float(step_dt))
+            if log_extra_cb is not None:
+                def _mean(xs: list[float] | list[int]) -> float:
+                    if not xs:
+                        return float("nan")
+                    return float(sum(float(x) for x in xs) / len(xs))
+
+                log_extra_cb(
+                    int(step),
+                    {
+                        "train/max_len_global": _mean(max_lens_step),
+                        "train/pad_len": _mean(pad_lens_step),
+                        "train/avg_seq_len": _mean(avg_lens_step),
+                        "train/token_utilization": _mean(token_utils_step),
+                    },
+                )
 
         if checkpoint_cb is not None and int(checkpoint_every_steps) > 0 and step % int(checkpoint_every_steps) == 0:
             checkpoint_cb(int(step), bundle.state)

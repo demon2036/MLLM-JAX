@@ -32,6 +32,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "item_meta_path": "workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.item.json",
         "max_len": 512,
         "padding_side": "left",
+        # Training padding policy (affects SFT speed/efficiency):
+        # - "fixed": always pad to `data.max_len` (stable shapes, higher compute).
+        # - "pow2_buckets": pad to the smallest bucket >= global max length for the step.
+        # - "max": pad to the true (global) max length (can trigger many recompiles).
+        "train_pad_policy": "fixed",
+        "train_pad_buckets": [128, 256, 512],
+        "train_pad_to_multiple_of": 8,
         "sample_train": -1,
         "sample_eval": -1,
         "sample_test": -1,

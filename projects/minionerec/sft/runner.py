@@ -200,18 +200,22 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     require_process_count_raw = str(os.environ.get("REQUIRE_JAX_PROCESS_COUNT", "")).strip()
     require_process_count = int(require_process_count_raw) if require_process_count_raw else 0
 
-    try:
-        jax.distributed.initialize()
-    except Exception as e:
-        if require_multihost or require_process_count > 0:
+    # Avoid calling `jax.distributed.initialize()` unless multi-host is required.
+    #
+    # On multi-host TPU VMs (e.g. v6e-16), calling `jax.distributed.initialize()`
+    # from only *one* worker (e.g. eval on worker 0) can hang waiting for missing
+    # workers. We prefer an explicit opt-in via `REQUIRE_MULTIHOST=1` or
+    # `REQUIRE_JAX_PROCESS_COUNT=<N>` (set by our multi-host launch wrappers).
+    if require_multihost or require_process_count > 0:
+        try:
+            jax.distributed.initialize()
+        except Exception as e:
             raise RuntimeError(
                 "jax.distributed.initialize() failed but a multi-host runtime is required "
                 "(REQUIRE_MULTIHOST=1 or REQUIRE_JAX_PROCESS_COUNT is set). "
                 "Start the job on all workers (`gcloud ... tpu-vm ssh --worker=all`) "
                 "or launch one process per worker."
             ) from e
-        if str(os.environ.get("PRINT_JAX_DISTRIBUTED_INIT_ERROR", "")).strip() == "1":
-            print(f"jax.distributed.initialize() skipped: {e}")
 
     if require_multihost and int(jax.process_count()) <= 1:
         raise RuntimeError(

@@ -88,6 +88,7 @@ def build_tx(*, training_steps: int, cfg: OptimizerConfig):
 
     This is intended to be passed to `training2.get_state(..., tx=...)`.
     """
+    import jax.numpy as jnp
     import optax
 
     lr_schedule = build_lr_schedule(training_steps=training_steps, cfg=cfg.lr_schedule)
@@ -95,9 +96,9 @@ def build_tx(*, training_steps: int, cfg: OptimizerConfig):
     weight_decay = float(cfg.weight_decay)
 
     if name == "lion":
-        base = optax.lion(lr_schedule, weight_decay=weight_decay)
+        base = optax.lion(lr_schedule, weight_decay=weight_decay, mu_dtype=jnp.float32)
     elif name == "adamw":
-        base = optax.adamw(lr_schedule, weight_decay=weight_decay)
+        base = optax.adamw(lr_schedule, weight_decay=weight_decay, mu_dtype=jnp.float32)
     elif name == "sgd":
         base = optax.sgd(lr_schedule)
         if weight_decay != 0.0:

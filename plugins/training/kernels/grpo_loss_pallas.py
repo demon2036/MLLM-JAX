@@ -383,16 +383,22 @@ def _grpo_pallas_bwd(
             logits_sub = logits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock].astype(compute_dtype)
             log_softmax_sub = logits_sub - lse_val[:, None]
             if use_bf16_softmax:
-                probs_sub = jnp.exp(log_softmax_sub.astype(jnp.bfloat16)).astype(jnp.float32)
+                probs_sub = jnp.exp(log_softmax_sub.astype(jnp.bfloat16))
+                scale_bf16 = scale.astype(jnp.bfloat16)
+                dlogits_sub = (-probs_sub) * scale_bf16[:, None]
             else:
                 probs_sub = jnp.exp(log_softmax_sub).astype(jnp.float32)
-            dlogits_sub = (-probs_sub) * scale[:, None]
+                dlogits_sub = (-probs_sub) * scale[:, None]
 
             sb_start = block_start + sb * index_subblock
             offset = idx - sb_start
             onehot = (lane_ids == offset[:, None]).astype(jnp.float32)
-            dlogits_sub = dlogits_sub + onehot * scale[:, None]
-            dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = dlogits_sub.astype(dlogits_ref.dtype)
+            if use_bf16_softmax:
+                dlogits_sub = dlogits_sub + onehot.astype(jnp.bfloat16) * scale_bf16[:, None]
+                dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = dlogits_sub.astype(dlogits_ref.dtype)
+            else:
+                dlogits_sub = dlogits_sub + onehot * scale[:, None]
+                dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = dlogits_sub.astype(dlogits_ref.dtype)
 
     call = pl.pallas_call(
         functools.partial(kernel),

@@ -166,9 +166,6 @@ def _grpo_pallas_fwd(
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
     temperature = float(cfg.temperature)
-    eps_low_v = jnp.asarray(1.0 - eps_low, dtype=compute_dtype)
-    eps_high_v = jnp.asarray(1.0 + eps_high, dtype=compute_dtype)
-    zero_v = jnp.asarray(0.0, dtype=compute_dtype)
 
     def kernel(
         logits_ref,
@@ -184,6 +181,7 @@ def _grpo_pallas_fwd(
     ):
         pid_b = pl.program_id(0)
         pid_k = pl.program_id(2)
+        zero_v = jnp.asarray(0.0, dtype=compute_dtype)
 
         @pl.when(pid_k == 0)
         def init():
@@ -217,6 +215,8 @@ def _grpo_pallas_fwd(
 
         @pl.when(pid_k == blocks - 1)
         def out():
+            eps_low_v = jnp.asarray(1.0 - eps_low, dtype=compute_dtype)
+            eps_high_v = jnp.asarray(1.0 + eps_high, dtype=compute_dtype)
             lse = max_ref[:] + jnp.log(sum_ref[:])
             out_lse_ref[0, :, 0] = lse.astype(out_lse_ref.dtype)
 

@@ -34,6 +34,7 @@
 - TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
 - TPU v6e-8 SID SFT official-alignment run: `docs/sops/tpu-vm-v6e-8-sid-sft-official-align.md`
 - TPU v6e-8 nanoGPT Tiny Shakespeare standard train (W&B online): `docs/sops/tpu-vm-v6e-8-nanogpt-tinyshakespeare-standard.md`
+- TPU v6e-8 unified-api-refactor SFT + nanoGPT regression (W&B online): `docs/sops/tpu-vm-v6e-8-unified-api-refactor-sft-nanogpt-regression.md`
 - TPU v4-8 GRPO runner smoke (`rollout.backend=naive`): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
 - TPU v4-8 RL/GSM8K `reinforce++` (100 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
 - TPU v4-8 RL/GSM8K bs128 `reinforce++` (100 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-reinforcepp-wandb-100steps.md`
@@ -84,6 +85,7 @@
 - `docs/sops/tpu-vm-create-v4-8-or-v6e-8.md`
 - `docs/sops/tpu-vm-v6e-8-sid-sft-official-align.md`
 - `docs/sops/tpu-vm-v6e-8-nanogpt-tinyshakespeare-standard.md`
+- `docs/sops/tpu-vm-v6e-8-unified-api-refactor-sft-nanogpt-regression.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-reinforcepp-wandb-100steps.md`
@@ -128,6 +130,7 @@
 - `docs/sops/grpo-gsm8k-length-and-eval.md`
 - `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
+- `docs/sops/tpu-vm-v6e-8-unified-api-refactor-sft-nanogpt-regression.md`
 
 ### Docs
 

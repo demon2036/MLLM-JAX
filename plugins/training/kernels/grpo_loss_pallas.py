@@ -157,7 +157,8 @@ def _grpo_pallas_fwd(
         raise ValueError("time_block must be > 0")
     if time_block % 8 != 0:
         raise ValueError("time_block must be divisible by 8")
-    compute_dtype = _resolve_compute_dtype(cfg.compute_dtype)
+    logp_dtype = _resolve_compute_dtype(cfg.compute_dtype)
+    compute_dtype = jnp.float32
 
     logits, original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
     logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
@@ -170,15 +171,13 @@ def _grpo_pallas_fwd(
     blocks = _ceil_div(vocab, block_size)
     index_subblock = _choose_index_subblock(block_size)
     num_index_subblocks = int(block_size // index_subblock)
-    index_subblock = _choose_index_subblock(block_size)
-    num_index_subblocks = int(block_size // index_subblock)
 
     chosen_ids3 = chosen_ids[..., None]
     old_logps3 = old_per_token_logps[..., None]
     advantages2 = advantages[:, None]
 
     out_loss = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_logp = jax.ShapeDtypeStruct((batch, time, 1), compute_dtype)
+    out_logp = jax.ShapeDtypeStruct((batch, time, 1), logp_dtype)
     out_lse = jax.ShapeDtypeStruct((batch, time, 1), compute_dtype)
 
     eps_low = float(cfg.epsilon_low)
@@ -315,7 +314,7 @@ def _grpo_pallas_bwd(
     if time_block % 8 != 0:
         raise ValueError("time_block must be divisible by 8")
     original_time = int(dloss.shape[1])
-    compute_dtype = _resolve_compute_dtype(cfg.compute_dtype)
+    compute_dtype = jnp.float32
 
     logits, _ = _pad_vocab(logits, block_size=cfg.block_size)
     logits, _ = _pad_time(logits, time_block=time_block, pad_value=0.0)
@@ -329,6 +328,8 @@ def _grpo_pallas_bwd(
     time_blocks = int(time // time_block)
     block_size = int(cfg.block_size)
     blocks = _ceil_div(vocab, block_size)
+    index_subblock = _choose_index_subblock(block_size)
+    num_index_subblocks = int(block_size // index_subblock)
 
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
@@ -513,15 +514,12 @@ def build_grpo_per_token_loss_pallas_on_policy(
     )
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
-    compute_dtype = _resolve_compute_dtype(cfg.compute_dtype)
-    eps_low_v = jnp.asarray(1.0 - eps_low, dtype=compute_dtype)
-    eps_high_v = jnp.asarray(1.0 + eps_high, dtype=compute_dtype)
 
     def _compute_loss_from_logps(*, per_token_logps, old_per_token_logps, advantages):
-        ratio = jnp.exp(per_token_logps.astype(compute_dtype) - old_per_token_logps.astype(compute_dtype)).astype(
-            compute_dtype
-        )
-        clipped_ratio = jnp.clip(ratio, eps_low_v, eps_high_v).astype(compute_dtype)
+        per_token_logps = per_token_logps.astype(jnp.float32)
+        old_per_token_logps = old_per_token_logps.astype(jnp.float32)
+        ratio = jnp.exp(per_token_logps - old_per_token_logps)
+        clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
         advantages = advantages.astype(jnp.float32)
         loss1 = ratio * advantages[..., None]
         loss2 = clipped_ratio * advantages[..., None]

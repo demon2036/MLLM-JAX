@@ -40,6 +40,7 @@ class GRPOKernelBenchWandbConfig:
     time: int
     vocab: int
     dtype: str
+    compute_dtype: str
     seed: int
     iters: int
     warmup: int
@@ -58,6 +59,7 @@ def main():
     p.add_argument("--time", type=int, default=2048)
     p.add_argument("--vocab", type=int, default=151643)
     p.add_argument("--dtype", choices=["bf16", "f16", "f32"], default="bf16")
+    p.add_argument("--compute_dtype", choices=["bf16", "f32"], default="bf16")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--iters", type=int, default=10)
     p.add_argument("--warmup", type=int, default=1)
@@ -93,6 +95,7 @@ def main():
         time=int(args.time),
         vocab=int(args.vocab),
         dtype=str(args.dtype),
+        compute_dtype=str(args.compute_dtype),
         seed=int(args.seed),
         iters=int(args.iters),
         warmup=int(args.warmup),
@@ -149,6 +152,7 @@ def main():
         epsilon_low=float(args.epsilon_low),
         epsilon_high=float(args.epsilon_high),
         temperature=float(args.temperature),
+        compute_dtype=str(args.compute_dtype),
     )
 
     def scalar_loss_ref(l):
@@ -206,7 +210,11 @@ def main():
         "shape": {"batch": int(args.batch), "time": int(args.time), "vocab": int(args.vocab)},
         "dtype": str(dtype),
         "loss": float(jnp.asarray(loss)),
-        "kernel": {"block_size": int(kernel_cfg.block_size), "time_block": int(kernel_cfg.time_block)},
+        "kernel": {
+            "block_size": int(kernel_cfg.block_size),
+            "time_block": int(kernel_cfg.time_block),
+            "compute_dtype": str(kernel_cfg.compute_dtype),
+        },
         "grpo": {
             "epsilon_low": float(args.epsilon_low),
             "epsilon_high": float(args.epsilon_high),

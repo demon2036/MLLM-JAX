@@ -1,6 +1,7 @@
-"""JAX/TPU backend helpers for MiniOneRec SFT."""
+"""DEPRECATED: use `plugins.training.sft.jax`.
 
-from plugins.sft.jax.params import VocabResizeResult, resize_lm_vocab
+This package is kept as an import-compatibility shim.
+"""
 
-__all__ = ["VocabResizeResult", "resize_lm_vocab"]
+from plugins.training.sft.jax import *  # noqa: F403
 

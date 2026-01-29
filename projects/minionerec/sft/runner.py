@@ -57,6 +57,18 @@ class SidSftTasksConfig:
 
 
 @dataclass(frozen=True)
+class SidSftMuonConfig:
+    """Muon optimizer hyperparameters (used when train.optimizer == 'muon')."""
+
+    aux_learning_rate: float = 3e-4
+    momentum: float = 0.95
+    nesterov: bool = True
+    ns_steps: int = 5
+    eps: float = 1e-7
+    max_dim: int = 10_000
+
+
+@dataclass(frozen=True)
 class SidSftTrainConfig:
     per_device_train_batch_size: int = 1
     per_device_eval_batch_size: int = 1
@@ -64,6 +76,7 @@ class SidSftTrainConfig:
     gradient_accumulation_steps: int = 1
     learning_rate: float = 3e-4
     optimizer: str = "adamw"
+    muon: SidSftMuonConfig = field(default_factory=SidSftMuonConfig)
     weight_decay: float = 0.0
     num_train_epochs: float = 1.0
     max_steps: int = -1
@@ -194,7 +207,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
     from MLLM_JAX.language.llama.llama import LlamaJaxConfig, convert_torch_to_flax_llama
     from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
-    from plugins.sft.jax.sharding import get_partition_rules_llama, match_partition_rules
+    from plugins.training.sft.jax.sharding import get_partition_rules_llama, match_partition_rules
 
     require_multihost = str(os.environ.get("REQUIRE_MULTIHOST", "")).strip().lower() in {"1", "true", "yes"}
     require_process_count_raw = str(os.environ.get("REQUIRE_JAX_PROCESS_COUNT", "")).strip()
@@ -232,9 +245,9 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
         print(f"backend={jax.default_backend()} process={jax.process_index()}/{jax.process_count()}")
         print(f"device_count={jax.device_count()} local_device_count={jax.local_device_count()}")
 
-    from plugins.sft.jax.checkpoint import load_checkpoint, save_checkpoint
-    from plugins.sft.jax.params import resize_lm_vocab
-    from plugins.sft.jax.train import SftLossEvaluator, create_mesh_from_config, run_sft_train
+    from plugins.training.sft.jax.checkpoint import load_checkpoint, save_checkpoint
+    from plugins.training.sft.jax.params import resize_lm_vocab
+    from plugins.training.sft.jax.train import SftLossEvaluator, create_mesh_from_config, run_sft_train
 
     def parse_dtype(name: str) -> Any:
         n = str(name or "float32").strip().lower()
@@ -650,6 +663,12 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             optimizer_name=cfg.train.optimizer,
             learning_rate=float(cfg.train.learning_rate),
             weight_decay=float(cfg.train.weight_decay),
+            muon_aux_learning_rate=float(cfg.train.muon.aux_learning_rate),
+            muon_momentum=float(cfg.train.muon.momentum),
+            muon_nesterov=bool(cfg.train.muon.nesterov),
+            muon_ns_steps=int(cfg.train.muon.ns_steps),
+            muon_eps=float(cfg.train.muon.eps),
+            muon_max_dim=int(cfg.train.muon.max_dim),
             grad_accum_steps=int(grad_accum_steps),
             micro_batch_size_per_replica=int(cfg.train.per_device_train_batch_size),
             max_steps=int(max_steps),

@@ -1,25 +1,6 @@
 from __future__ import annotations
 
-"""Compatibility shim for MiniOneRec SID SFT runner."""
+"""DEPRECATED: use `plugins.training.sft.jax.runner`."""
 
-from projects.minionerec.sft.runner import (
-    SidSftConfig,
-    SidSftDataConfig,
-    SidSftEvalConfig,
-    SidSftJaxConfig,
-    SidSftTasksConfig,
-    SidSftTrainConfig,
-    SidSftWandbConfig,
-    run_sid_sft,
-)
+from plugins.training.sft.jax.runner import *  # noqa: F403
 
-__all__ = [
-    "SidSftConfig",
-    "SidSftDataConfig",
-    "SidSftEvalConfig",
-    "SidSftJaxConfig",
-    "SidSftTasksConfig",
-    "SidSftTrainConfig",
-    "SidSftWandbConfig",
-    "run_sid_sft",
-]

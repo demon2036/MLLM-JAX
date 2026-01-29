@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-"""Compatibility shim for MiniOneRec JAX evaluator."""
+"""DEPRECATED: use `plugins.training.sft.jax.evaluator`."""
 
-from projects.minionerec.sft.jax.evaluator import SidNextItemJaxEvaluator, evaluate_sid_next_item_jax
+from plugins.training.sft.jax.evaluator import *  # noqa: F403
 
-__all__ = ["SidNextItemJaxEvaluator", "evaluate_sid_next_item_jax"]

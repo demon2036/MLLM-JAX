@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import random
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 from transformers import AutoConfig, AutoTokenizer
@@ -234,7 +234,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
     from plugins.sft.jax.checkpoint import load_checkpoint, save_checkpoint
     from plugins.sft.jax.params import resize_lm_vocab
-    from plugins.sft.jax.train import create_mesh_from_config, run_sft_train
+    from plugins.sft.jax.train import SftLossEvaluator, create_mesh_from_config, run_sft_train
 
     def parse_dtype(name: str) -> Any:
         n = str(name or "float32").strip().lower()
@@ -391,6 +391,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
         evaluator = None
         eval_every_steps = 0
+        eval_cb_impl: Callable[[int, Any], None] | None = None
         eval_topk = sorted({int(k) for k in cfg.eval.topk if int(k) > 0 and int(k) <= int(cfg.eval.num_beams)})
         if not eval_topk:
             raise ValueError(f"No valid eval.topk <= num_beams={int(cfg.eval.num_beams)}: {list(cfg.eval.topk)}")
@@ -405,6 +406,79 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
         # Local per-process eval dataset subset (for multi-host speed).
         eval_dataset_full = None
+
+        # Paper-aligned: periodic validation loss + save best checkpoint.
+        best_eval_loss = float("inf")
+        best_eval_step = 0
+        val_dataset = None
+        val_loss_evaluator = None
+        if run_mode_norm == "train":
+            eval_every_steps = int(cfg.train.eval_steps)
+            if eval_every_steps > 0:
+                val_dataset = SidNextItemSftDataset(
+                    csv_path=cfg.data.eval_file,
+                    tokenizer=tokenizer,
+                    max_len=cfg.data.max_len,
+                    sample=cfg.data.sample_eval,
+                    seed=cfg.seed,
+                    include_labels=True,
+                    pretokenize=True,
+                )
+                val_loss_evaluator = SftLossEvaluator(
+                    mesh=mesh,
+                    model=model,
+                    pad_token_id=int(pad_token_id),
+                    pad_to_length=int(cfg.data.max_len) if int(cfg.data.max_len) > 0 else None,
+                    padding_side=str(cfg.data.padding_side or "left"),
+                    micro_batch_size_per_replica=int(cfg.train.per_device_eval_batch_size),
+                    pad_to_multiple_of=int(getattr(cfg.data, "train_pad_to_multiple_of", 8) or 8),
+                    label_ignore_id=-100,
+                )
+
+                def _eval_loss_cb(step: int, st: Any) -> None:
+                    nonlocal best_eval_loss, best_eval_step
+                    assert val_loss_evaluator is not None
+                    assert val_dataset is not None
+                    stats = val_loss_evaluator.evaluate(params=st.params, eval_dataset=val_dataset)
+                    if jax.process_index() == 0:
+                        epoch = float(step) / max(1.0, float(steps_per_epoch))
+                        print(
+                            "[eval_loss] "
+                            + " ".join(
+                                [
+                                    f"step={int(step)}/{int(max_steps)}",
+                                    f"epoch={epoch:.2f}",
+                                    f"loss={float(stats.loss):.6f}",
+                                    f"tokens={int(stats.token_count)}",
+                                    f"t={float(stats.dt_sec):.2f}s",
+                                    f"best={float(best_eval_loss):.6f}@{int(best_eval_step)}",
+                                ]
+                            )
+                        )
+                        if wandb is not None:
+                            wandb.log(
+                                {
+                                    "eval/loss": float(stats.loss),
+                                    "eval/token_count": int(stats.token_count),
+                                    "time/eval_loss_s": float(stats.dt_sec),
+                                },
+                                step=int(step),
+                            )
+
+                    if jax.process_index() == 0 and float(stats.loss) < float(best_eval_loss):
+                        best_eval_loss = float(stats.loss)
+                        best_eval_step = int(step)
+                        save_checkpoint(output_dir=cfg.output_dir, state=st, name="best")
+                        if wandb is not None:
+                            wandb.log(
+                                {
+                                    "eval/best_loss": float(best_eval_loss),
+                                    "eval/best_step": int(best_eval_step),
+                                },
+                                step=int(step),
+                            )
+
+                eval_cb_impl = _eval_loss_cb
 
         # For `train_eval`, run constrained-decoding eval periodically so W&B
         # shows metrics during training (at least once per epoch).
@@ -559,6 +633,9 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
                 log["time/eval_step_s"] = float(t_eval_s)
                 wandb.log(log, step=int(step))
 
+        if eval_cb_impl is None and run_mode_norm == "train_eval" and cfg.eval.enabled and int(eval_every_steps) > 0:
+            eval_cb_impl = eval_cb
+
         state, train_stats = run_sft_train(
             mesh=mesh,
             model=model,
@@ -596,7 +673,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             ),
             log_extra_cb=((lambda step, extra: wandb.log(extra, step=int(step))) if wandb is not None else None),
             eval_every_steps=int(eval_every_steps),
-            eval_cb=(eval_cb if eval_every_steps > 0 else None),
+            eval_cb=(eval_cb_impl if eval_every_steps > 0 else None),
             checkpoint_every_steps=int(save_steps),
             checkpoint_cb=(checkpoint_cb if save_steps > 0 else None),
         )

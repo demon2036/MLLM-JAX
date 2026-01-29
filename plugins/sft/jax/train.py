@@ -142,6 +142,141 @@ def create_mesh_from_config(mesh_shape: str) -> Mesh:
     return create_mesh(str(mesh_shape))
 
 
+@dataclass(frozen=True)
+class SftEvalLossStats:
+    loss: float
+    token_count: int
+    dt_sec: float
+
+
+class SftLossEvaluator:
+    def __init__(
+        self,
+        *,
+        mesh: Mesh,
+        model: Any,
+        pad_token_id: int,
+        pad_to_length: int | None,
+        padding_side: str,
+        micro_batch_size_per_replica: int,
+        pad_to_multiple_of: int = 8,
+        label_ignore_id: int = -100,
+    ):
+        import jax
+
+        self._mesh = mesh
+        self._pad_token_id = int(pad_token_id)
+        self._pad_to_length = int(pad_to_length) if pad_to_length is not None and int(pad_to_length) > 0 else None
+        self._padding_side = str(padding_side or "left")
+        self._micro_batch_size_per_replica = int(micro_batch_size_per_replica)
+        self._pad_to_multiple_of = int(pad_to_multiple_of) if int(pad_to_multiple_of) > 0 else 1
+        self._label_ignore_id = int(label_ignore_id)
+
+        if self._micro_batch_size_per_replica <= 0:
+            raise ValueError("micro_batch_size_per_replica must be >= 1")
+
+        self._form_training_global_array = make_form_training_global_array(mesh)
+        eval_module = TrainSftModule(model=model, label_ignore_id=int(self._label_ignore_id))
+
+        def _eval_fn(params_in: Any, inputs: dict[str, jax.Array]) -> dict[str, jax.Array]:
+            variables = {"params": {"model": params_in}}
+            out = eval_module.apply(variables, inputs)
+            return {"loss": out["loss"], "token_count": out["token_count"]}
+
+        self._eval_step = jax.jit(_eval_fn)
+
+        replicas = int(mesh.shape.get("dp", 1)) * int(mesh.shape.get("fsdp", 1))
+        if replicas <= 0:
+            raise ValueError(f"Invalid mesh replicas={replicas}")
+        self._global_batch = int(self._micro_batch_size_per_replica) * int(replicas)
+
+        process_count = int(jax.process_count())
+        if process_count <= 0:
+            raise RuntimeError("Unexpected jax.process_count() <= 0")
+        if int(self._global_batch) % process_count != 0:
+            raise ValueError(
+                f"global_batch={int(self._global_batch)} must be divisible by process_count={process_count} "
+                "to shard eval batches evenly across hosts."
+            )
+        self._local_batch = int(self._global_batch) // process_count
+        self._process_count = int(process_count)
+        self._process_index = int(jax.process_index())
+
+        self._process_allgather = None
+        if process_count > 1:
+            from jax.experimental.multihost_utils import process_allgather as _process_allgather
+
+            self._process_allgather = _process_allgather
+
+    def evaluate(self, *, params: Any, eval_dataset: Any) -> SftEvalLossStats:
+        n = int(len(eval_dataset))
+        if n <= 0:
+            raise ValueError("Empty eval_dataset")
+
+        pad_len = self._pad_to_length
+        if pad_len is None:
+            local_max_len = max(len(eval_dataset[i]["input_ids"]) for i in range(min(n, 256)))
+            global_max_len = int(local_max_len)
+            if self._process_allgather is not None:
+                gathered = np.asarray(self._process_allgather(np.asarray([int(local_max_len)], dtype=np.int32)))
+                global_max_len = int(gathered.max())
+            pad_len = int(global_max_len)
+
+        dummy = {
+            "input_ids": [self._pad_token_id],
+            "attention_mask": [0],
+            "labels": [int(self._label_ignore_id)],
+        }
+
+        sum_loss_tokens_local = 0.0
+        token_count_local = 0
+
+        t0 = time.perf_counter()
+        num_batches = int(math.ceil(float(n) / float(int(self._global_batch))))
+        for b in range(num_batches):
+            start = int(b) * int(self._global_batch)
+            end = min(n, start + int(self._global_batch))
+            global_idx = list(range(start, end))
+            if len(global_idx) < int(self._global_batch):
+                global_idx.extend([-1] * (int(self._global_batch) - len(global_idx)))
+
+            local_start = int(self._process_index) * int(self._local_batch)
+            local_idx = global_idx[local_start : local_start + int(self._local_batch)]
+            if len(local_idx) != int(self._local_batch):
+                raise RuntimeError("Unexpected eval local batch slice length")
+
+            examples = [eval_dataset[i] if int(i) >= 0 else dummy for i in local_idx]
+            batch_np = collate_sft_batch(
+                examples,
+                pad_token_id=int(self._pad_token_id),
+                label_pad_id=int(self._label_ignore_id),
+                pad_to_multiple_of=int(self._pad_to_multiple_of),
+                pad_to_length=int(pad_len),
+                padding_side=str(self._padding_side),
+            )
+            batch = jax.tree_util.tree_map_with_path(self._form_training_global_array, batch_np.as_dict())
+            metrics = self._eval_step(params, batch)
+
+            loss = float(np.asarray(metrics["loss"], dtype=np.float64))
+            token_count = int(np.asarray(metrics["token_count"], dtype=np.int64))
+            sum_loss_tokens_local += float(loss) * float(token_count)
+            token_count_local += int(token_count)
+
+        dt = float(time.perf_counter() - t0)
+
+        sum_loss_tokens = float(sum_loss_tokens_local)
+        token_count = int(token_count_local)
+        if self._process_allgather is not None:
+            gathered = np.asarray(
+                self._process_allgather(np.asarray([float(sum_loss_tokens_local), float(token_count_local)], dtype=np.float64))
+            )
+            sum_loss_tokens = float(gathered[:, 0].sum(axis=0))
+            token_count = int(gathered[:, 1].sum(axis=0))
+
+        loss = float(sum_loss_tokens) / float(token_count) if token_count > 0 else float("nan")
+        return SftEvalLossStats(loss=float(loss), token_count=int(token_count), dt_sec=float(dt))
+
+
 def run_sft_train(
     *,
     mesh: Mesh,
@@ -360,7 +495,7 @@ def run_sft_train(
         if checkpoint_cb is not None and int(checkpoint_every_steps) > 0 and step % int(checkpoint_every_steps) == 0:
             checkpoint_cb(int(step), bundle.state)
 
-        if eval_cb is not None and int(eval_every_steps) > 0 and step % int(eval_every_steps) == 0:
+        if eval_cb is not None and int(eval_every_steps) > 0 and (step % int(eval_every_steps) == 0 or step == max_steps):
             eval_cb(int(step), bundle.state)
 
     return bundle.state, SftTrainStats(
@@ -371,4 +506,4 @@ def run_sft_train(
     )
 
 
-__all__ = ["SftTrainStats", "create_mesh_from_config", "run_sft_train"]
+__all__ = ["SftEvalLossStats", "SftLossEvaluator", "SftTrainStats", "create_mesh_from_config", "run_sft_train"]

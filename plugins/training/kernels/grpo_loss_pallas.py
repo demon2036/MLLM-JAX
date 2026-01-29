@@ -315,6 +315,8 @@ def _grpo_pallas_bwd(
         raise ValueError("time_block must be divisible by 8")
     original_time = int(dloss.shape[1])
     compute_dtype = jnp.float32
+    softmax_dtype = _resolve_compute_dtype(cfg.compute_dtype)
+    use_bf16_softmax = softmax_dtype == jnp.bfloat16
 
     logits, _ = _pad_vocab(logits, block_size=cfg.block_size)
     logits, _ = _pad_time(logits, time_block=time_block, pad_value=0.0)
@@ -379,7 +381,11 @@ def _grpo_pallas_bwd(
         lane_ids = jnp.arange(index_subblock, dtype=jnp.int32)[None, :]
         for sb in range(num_index_subblocks):
             logits_sub = logits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock].astype(compute_dtype)
-            probs_sub = jnp.exp(logits_sub - lse_val[:, None]).astype(jnp.float32)
+            log_softmax_sub = logits_sub - lse_val[:, None]
+            if use_bf16_softmax:
+                probs_sub = jnp.exp(log_softmax_sub.astype(jnp.bfloat16)).astype(jnp.float32)
+            else:
+                probs_sub = jnp.exp(log_softmax_sub).astype(jnp.float32)
             dlogits_sub = (-probs_sub) * scale[:, None]
 
             sb_start = block_start + sb * index_subblock

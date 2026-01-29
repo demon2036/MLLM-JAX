@@ -153,6 +153,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     from MLLM_JAX.language.llama.llama import LlamaJaxConfig, convert_torch_to_flax_llama
     from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
     from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
+    from plugins.common.sharding.batch import local_from_global, make_form_training_global_array
     from projects.minionerec.sft.datasets.concat_dataset import ConcatDataset
     from projects.minionerec.sft.tokens import maybe_extend_tokenizer
 
@@ -285,6 +286,16 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
         if prompt_batch <= 0 or k <= 0:
             raise ValueError("rollout.prompt_batch_size and rollout.num_generations must be > 0")
 
+        process_count = int(jax.process_count())
+        process_index = int(jax.process_index())
+        if prompt_batch % max(1, process_count) != 0:
+            raise ValueError(
+                f"rollout.prompt_batch_size={prompt_batch} must be divisible by jax.process_count()={process_count} for multi-host training."
+            )
+        local_prompt_batch = int(prompt_batch // max(1, process_count))
+        if local_prompt_batch <= 0:
+            raise ValueError("Derived local_prompt_batch must be > 0")
+
         datasets = []
         if cfg.tasks.sid_next_item:
             datasets.append(
@@ -328,6 +339,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             max_steps = int(math.ceil(float(cfg.train.num_train_epochs) * steps_per_epoch))
 
         tx = build_tx(training_steps=max_steps, cfg=cfg.train.optimizer)
+        form_global = make_form_training_global_array(mesh)
 
         train_module = flax.linen.remat(MiniOneRecGrpoModule, policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)(
             model=model,
@@ -394,15 +406,19 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
 
         last_loss = float("nan")
         for step in range(1, max_steps + 1):
-            # Sample prompt batch (cycle).
+            # Sample prompt batch (cycle). We slice the global prompt batch across
+            # processes so each dp replica sees a distinct subset.
             if cursor + prompt_batch > len(indices):
                 rng_py.shuffle(indices)
                 cursor = 0
-            batch_idx = indices[cursor : cursor + prompt_batch]
+            global_idx = indices[cursor : cursor + prompt_batch]
             cursor += prompt_batch
 
             prompts = []
             targets = []
+            start = int(process_index) * int(local_prompt_batch)
+            end = start + int(local_prompt_batch)
+            batch_idx = global_idx[start:end]
             for i in batch_idx:
                 ex = train_dataset[i]
                 prompts.append(ex.prompt)
@@ -411,36 +427,39 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             prompt_ids_list = [list(tokenizer.encode(p, add_special_tokens=False))[-prompt_pad_len:] for p in prompts]
             true_lens = np.asarray([len(x) for x in prompt_ids_list], dtype=np.int32)
             pad_token_id = int(tokenizer.pad_token_id)
-            prompt_np = np.full((prompt_batch, prompt_pad_len), pad_token_id, dtype=np.int32)
+            prompt_np = np.full((local_prompt_batch, prompt_pad_len), pad_token_id, dtype=np.int32)
             for i, ids in enumerate(prompt_ids_list):
                 prompt_np[i, : len(ids)] = np.asarray(ids, dtype=np.int32)
 
-            prompt_arr = jnp.asarray(prompt_np, dtype=jnp.int32)
-            true_len_arr = jnp.asarray(true_lens, dtype=jnp.int32)
+            prompt_pack = {"prompt_input_ids": prompt_np, "prompt_true_len": true_lens}
+            prompt_pack = jax.tree_util.tree_map_with_path(form_global, prompt_pack)
+            prompt_arr = prompt_pack["prompt_input_ids"]
+            true_len_arr = prompt_pack["prompt_true_len"]
 
             # Constrained generation: top-K SIDs.
-            tok = np.asarray(beam_search_jit(state.params, prompt_arr, true_len_arr))  # [B, K, 3]
+            tok_global = beam_search_jit(state.params, prompt_arr, true_len_arr)  # [global_B, K, 3]
+            tok = local_from_global(tok_global)  # [local_B, K, 3]
 
             preds_grouped: list[list[str]] = []
-            for i in range(prompt_batch):
+            for i in range(local_prompt_batch):
                 preds_grouped.append([_decode_sid_triplet(tokenizer, tok[i, j]) for j in range(k)])
 
             rewards, correct = compute_ranking_rewards(predictions=preds_grouped, targets=targets, rank_penalties=rank_penalties)
-            group_ids = np.repeat(np.arange(prompt_batch, dtype=np.int32), k)
+            group_ids = np.repeat(np.arange(local_prompt_batch, dtype=np.int32), k)
             advantages = compute_grpo_advantages_by_group_id(rewards=rewards, group_ids=group_ids)
 
             # Build padded training sequences.
-            completion_ids = np.zeros((prompt_batch, k, 5), dtype=np.int32)
+            completion_ids = np.zeros((local_prompt_batch, k, 5), dtype=np.int32)
             completion_ids[:, :, :3] = tok
             completion_ids[:, :, 3] = int(newline_id)
             completion_ids[:, :, 4] = int(tokenizer.eos_token_id)
-            completion_flat = completion_ids.reshape(prompt_batch * k, 5)
+            completion_flat = completion_ids.reshape(local_prompt_batch * k, 5)
 
-            input_ids = np.full((prompt_batch * k, global_len), pad_token_id, dtype=np.int32)
-            attention_mask = np.zeros((prompt_batch * k, global_len), dtype=np.int32)
-            labels = np.zeros((prompt_batch * k, global_len), dtype=np.int32)
+            input_ids = np.full((local_prompt_batch * k, global_len), pad_token_id, dtype=np.int32)
+            attention_mask = np.zeros((local_prompt_batch * k, global_len), dtype=np.int32)
+            labels = np.zeros((local_prompt_batch * k, global_len), dtype=np.int32)
 
-            for i in range(prompt_batch):
+            for i in range(local_prompt_batch):
                 p_ids = np.asarray(prompt_ids_list[i], dtype=np.int32)
                 p_len = int(p_ids.shape[0])
                 for j in range(k):
@@ -465,12 +484,13 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                         attention_mask[row, :seq_len] = 1
                         labels[row, p_len:seq_len] = 1
 
-            batch = {
-                "input_ids": jax.device_put(jnp.asarray(input_ids, dtype=jnp.int32), data_sharding),
-                "attention_mask": jax.device_put(jnp.asarray(attention_mask, dtype=jnp.int32), data_sharding),
-                "labels": jax.device_put(jnp.asarray(labels, dtype=jnp.int32), data_sharding),
-                "advantages": jax.device_put(jnp.asarray(advantages, dtype=jnp.float32), data_sharding),
+            batch_local = {
+                "input_ids": np.asarray(input_ids, dtype=np.int32),
+                "attention_mask": np.asarray(attention_mask, dtype=np.int32),
+                "labels": np.asarray(labels, dtype=np.int32),
+                "advantages": np.asarray(advantages, dtype=np.float32),
             }
+            batch = jax.tree_util.tree_map_with_path(form_global, batch_local)
 
             # Gradient accumulation over the full (prompt_batch*k) batch.
             micro = int(prompt_batch * k) // int(cfg.train.grad_accum_steps)
@@ -485,8 +505,8 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
 
             if step % int(cfg.train.logging_steps) == 0 or step == 1 or step == max_steps:
                 reward_mean = float(np.mean(rewards)) if rewards.size else float("nan")
-                pass_at_1 = float(np.mean(correct.reshape(prompt_batch, k)[:, 0])) if correct.size else float("nan")
-                pass_at_k = float(np.mean(np.max(correct.reshape(prompt_batch, k), axis=1))) if correct.size else float("nan")
+                pass_at_1 = float(np.mean(correct.reshape(local_prompt_batch, k)[:, 0])) if correct.size else float("nan")
+                pass_at_k = float(np.mean(np.max(correct.reshape(local_prompt_batch, k), axis=1))) if correct.size else float("nan")
                 if jax.process_index() == 0:
                     print(f"[rl] step={step}/{max_steps} loss={last_loss:.6f} reward_mean={reward_mean:.6f} pass@1={pass_at_1:.4f} pass@K={pass_at_k:.4f}")
                     if wandb is not None:
@@ -501,6 +521,11 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                         )
 
             if cfg.eval.enabled and int(cfg.eval.every_steps) > 0 and step % int(cfg.eval.every_steps) == 0:
+                if int(jax.process_count()) > 1:
+                    # Keep training fast and avoid complex multi-host gather logic.
+                    if wandb is not None and jax.process_index() == 0:
+                        wandb.log({"eval_small/skipped_multihost": 1}, step=step)
+                    continue
                 eval_dataset = MiniOneRecNextItemRlDataset(csv_path=cfg.data.eval_file, sample=cfg.data.sample_eval, seed=cfg.seed)
                 prompts_eval = [eval_dataset[i].prompt for i in range(min(len(eval_dataset), 256))]
                 targets_eval = [eval_dataset[i].target_sid for i in range(min(len(eval_dataset), 256))]

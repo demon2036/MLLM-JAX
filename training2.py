@@ -64,9 +64,9 @@ def get_state(
 
         train_module_cls = TrainGRPOModulePallas
     else:
-        from plugins.training.train_modules import TrainGRPOModuleJax
+        from MLLM_JAX.train_modules import TrainGRPOModule
 
-        train_module_cls = TrainGRPOModuleJax
+        train_module_cls = TrainGRPOModule
 
     train_module_kwargs = {
         "model": model,

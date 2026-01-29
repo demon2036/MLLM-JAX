@@ -22,15 +22,7 @@ from MLLM_JAX.utils import collect_process_data, get_partition_rules_llama, matc
 
 
 def _resolve_param_dtype() -> jnp.dtype:
-    param_dtype_raw = os.environ.get("MLLM_JAX_PARAM_DTYPE", "").strip().lower()
-    if param_dtype_raw == "":
-        # Training/eval on TPU generally expects bf16 params for memory and speed.
-        # Keep CPU/default behavior conservative (float32) unless explicitly overridden.
-        try:
-            backend = str(jax.default_backend() or "").lower()
-        except Exception:
-            backend = ""
-        param_dtype_raw = "bfloat16" if backend == "tpu" else "float32"
+    param_dtype_raw = os.environ.get("MLLM_JAX_PARAM_DTYPE", "float32").strip().lower()
     if param_dtype_raw in {"float32", "f32"}:
         return jnp.float32
     if param_dtype_raw in {"bfloat16", "bf16"}:

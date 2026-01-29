@@ -45,6 +45,7 @@
 - TPU v6e-16 multi-host SID SFT + GRPO bench (W&B online): `docs/sops/tpu-vm-v6e-16-minionerec-sid-sft-multihost-and-grpo.md`
 - TPU v6e-16 multi-host SID SFT train + v6e-8 eval + calc cross-check (W&B online): `docs/sops/tpu-vm-v6e-16-minionerec-sid-sft-multihost-train-v6e-8-eval.md`
 - TPU v6e-16 multi-host SID base SFT + GCS ckpt handoff + v6e-8 eval (W&B online): `docs/sops/tpu-vm-v6e-16-minionerec-sid-sft-multihost-base-gcs-handoff-v6e-8-eval.md`
+- TPU v6e-16 multi-host MiniOneRec RL (from SFT best) + GCS handoff + v6e-8 eval (W&B online): `docs/sops/tpu-vm-v6e-16-minionerec-rl-from-sft-best-gcs-handoff-v6e-8-eval.md`
 - TPU bf16 attention-score precision (dot_general fp32 output): `docs/sops/tpu-bf16-attention-score-f32.md`
 - TPU v4-8 timing (len=1024, 20 steps, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`
 - TPU v4-8 timing (bs=32, len=1024, k=1, micro_batch=4, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-bs32-len1024-k1-mb4-20steps-timing.md`
@@ -93,6 +94,7 @@
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - `docs/sops/tpu-vm-v6e-8-v6e-16-grpo-gsm8k-speed-gap-debug.md`
 - `docs/sops/tpu-vm-v6e-16-minionerec-sid-sft-multihost-and-grpo.md`
+- `docs/sops/tpu-vm-v6e-16-minionerec-rl-from-sft-best-gcs-handoff-v6e-8-eval.md`
 - `docs/sops/tpu-bf16-attention-score-f32.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-bs32-len1024-k1-mb4-20steps-timing.md`

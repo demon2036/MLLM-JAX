@@ -1,0 +1,68 @@
+backend: tpu
+base_model: Qwen/Qwen2.5-1.5B
+output_dir: runs/sid_sft_jax_qwen25_1p5b_base_industrial_v6e8_e3_muon_lr3e3_aux3e3_train
+seed: 42
+device: tpu
+
+jax:
+  mesh_shape: "auto"
+  param_dtype: bfloat16
+  compute_dtype: bfloat16
+  max_cache_length: 512
+
+data:
+  category: Industrial_and_Scientific
+  train_file: workdir/MiniOneRec/data/Amazon/train/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  eval_file: workdir/MiniOneRec/data/Amazon/valid/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  test_file: workdir/MiniOneRec/data/Amazon/test/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  info_file: workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt
+  sid_index_path: workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.index.json
+  item_meta_path: workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.item.json
+  max_len: 512
+  sample_train: -1
+  sample_eval: -1
+  sample_test: -1
+
+tasks:
+  sid_next_item: true
+  sid_item_alignment: true
+  fusion_seq_rec: true
+
+train:
+  per_device_train_batch_size: 16
+  per_device_eval_batch_size: 1
+  global_batch_size: 1024
+  gradient_accumulation_steps: 1
+  learning_rate: 0.003
+  optimizer: muon
+  muon:
+    aux_learning_rate: 0.003
+    momentum: 0.95
+    nesterov: true
+    ns_steps: 5
+    eps: 1e-7
+    max_dim: 10000
+  weight_decay: 0.0
+  num_train_epochs: 3
+  max_steps: -1
+  warmup_steps: 20
+  logging_steps: 10
+  eval_steps: -1
+  save_steps: 0
+  save_total_limit: 0
+  save_last: true
+  group_by_length: false
+  freeze_LLM: false
+  train_from_scratch: false
+  resume_from_checkpoint: null
+  early_stopping_patience: 0
+  bf16: false
+  fp16: false
+
+eval:
+  enabled: false
+
+wandb:
+  project: minionerec-sid-sft
+  mode: online
+  name: null

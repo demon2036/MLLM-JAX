@@ -180,7 +180,10 @@ def _scale_by_muon(
             u = _muon_newton_schulz_5(g=g_eff, steps=int(ns_steps), eps=float(eps))
             return u, m_new
 
-        new_updates, new_momentum = jax.tree_util.tree_map(update_leaf, updates, state.momentum, params)
+        pairs = jax.tree_util.tree_map(update_leaf, updates, state.momentum, params)
+        is_pair = lambda x: isinstance(x, tuple)
+        new_updates = jax.tree_util.tree_map(lambda x: x[0], pairs, is_leaf=is_pair)
+        new_momentum = jax.tree_util.tree_map(lambda x: x[1], pairs, is_leaf=is_pair)
         return new_updates, _MuonState(momentum=new_momentum)
 
     return optax.GradientTransformation(init_fn, update_fn)

@@ -1,6 +1,5 @@
-from __future__ import annotations
+"""DEPRECATED: use `plugins.training.rl.rollout.optimizations.qwen2_decode_attention`."""
 
-from plugins.sample.optimizations.qwen2_decode_attention import patch_qwen2_attention_decode_fast
-
-__all__ = ["patch_qwen2_attention_decode_fast"]
+from plugins.training.rl.rollout.optimizations.qwen2_decode_attention import *  # noqa: F403
+from plugins.training.rl.rollout.optimizations.qwen2_decode_attention import __all__  # type: ignore  # noqa: E402,F401
 

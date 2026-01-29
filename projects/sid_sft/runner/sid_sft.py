@@ -16,8 +16,8 @@ from projects.sid_sft.datasets.sid_item_alignment import SidItemAlignmentDataset
 from projects.sid_sft.datasets.sid_next_item import SidNextItemSftDataset
 from projects.sid_sft.jax.evaluator import SidNextItemJaxEvaluator, evaluate_sid_next_item_jax
 from projects.sid_sft.tokens import maybe_extend_tokenizer
-from plugins.common.wandb_utils import maybe_init_wandb
-from plugins.common.tokenizer import prepare_tokenizer
+from plugins.training.core.logging.wandb import maybe_init_wandb
+from plugins.training.core.tokenizer import prepare_tokenizer
 
 
 def _set_seed(seed: int) -> None:

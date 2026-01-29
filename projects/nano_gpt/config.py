@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from plugins.common.config_loader import load_config as _load_config
+from plugins.training.core.config.loader import load_config as _load_config
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -57,4 +57,3 @@ def load_config(config_path: str | None, overrides: list[str] | None = None) -> 
 
 
 __all__ = ["DEFAULT_CONFIG", "load_config"]
-

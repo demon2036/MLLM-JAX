@@ -1,5 +1,5 @@
-from __future__ import annotations
+"""DEPRECATED: use `plugins.training.rl.rollout.optimizations`."""
 
-from plugins.sample.optimizations import patch_sampler_generate_fast, patch_qwen2_attention_decode_fast
+from plugins.training.rl.rollout.optimizations import *  # noqa: F403
+from plugins.training.rl.rollout.optimizations import __all__  # type: ignore  # noqa: E402,F401
 
-__all__ = ["patch_sampler_generate_fast", "patch_qwen2_attention_decode_fast"]

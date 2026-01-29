@@ -1,6 +1,5 @@
-from __future__ import annotations
+"""DEPRECATED: use `plugins.training.rl.rollout.sampling`."""
 
-from plugins.sample.sampling import build_chat_prompts, generate_answers_and_training_batch
-
-__all__ = ["build_chat_prompts", "generate_answers_and_training_batch"]
+from plugins.training.rl.rollout.sampling import *  # noqa: F403
+from plugins.training.rl.rollout.sampling import __all__  # type: ignore  # noqa: E402,F401
 

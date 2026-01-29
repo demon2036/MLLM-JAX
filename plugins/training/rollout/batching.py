@@ -1,10 +1,5 @@
-from __future__ import annotations
+"""DEPRECATED: use `plugins.training.rl.rollout.batching`."""
 
-from plugins.sample.batching import ceil_div, infer_rollout_passes, round_up_passes_for_divisibility
-
-__all__ = [
-    "ceil_div",
-    "infer_rollout_passes",
-    "round_up_passes_for_divisibility",
-]
+from plugins.training.rl.rollout.batching import *  # noqa: F403
+from plugins.training.rl.rollout.batching import __all__  # type: ignore  # noqa: E402,F401
 

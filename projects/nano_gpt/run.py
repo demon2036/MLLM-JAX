@@ -11,7 +11,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, o
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from plugins.common.env import load_dotenv_if_present
+from plugins.training.core.runtime.env import load_dotenv_if_present
 from projects.nano_gpt.config import load_config
 from projects.nano_gpt.runner import run_nano_gpt
 

@@ -1,7 +1,6 @@
-"""Update phase (loss/gradients -> parameter update)."""
+"""DEPRECATED: use `plugins.training.rl.update` and `plugins.training.core.step.train_step`."""
 
-from plugins.training.update.modules import PPOUpdateModule
-from plugins.training.update.ppo import ppo_update
-from plugins.training.update.train_step import training_step
+from plugins.training.core.step.train_step import training_step
+from plugins.training.rl.update import PPOUpdateModule, PolicyGradientUpdateModule, ppo_update
 
-__all__ = ["PPOUpdateModule", "ppo_update", "training_step"]
+__all__ = ["PPOUpdateModule", "PolicyGradientUpdateModule", "ppo_update", "training_step"]

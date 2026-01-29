@@ -1,34 +1,9 @@
-"""Training API layer: contracts and validation helpers."""
+"""DEPRECATED: use `plugins.api.training`.
 
-from plugins.training.api.batch_schema import BatchSchemaError, validate_grpo_batch
-from plugins.training.api.interfaces import (
-    AdvantageModule,
-    AdvantageResult,
-    Batch,
-    GRPOWorkflow,
-    RewardFunction,
-    RewardModule,
-    RewardResult,
-    RolloutModule,
-    RolloutResult,
-    RolloutSampler,
-    UpdateModule,
-    UpdateResult,
-)
+This package is a compatibility shim for older import paths.
+"""
 
-__all__ = [
-    "AdvantageModule",
-    "AdvantageResult",
-    "Batch",
-    "BatchSchemaError",
-    "GRPOWorkflow",
-    "RewardFunction",
-    "RewardModule",
-    "RewardResult",
-    "RolloutModule",
-    "RolloutResult",
-    "RolloutSampler",
-    "UpdateModule",
-    "UpdateResult",
-    "validate_grpo_batch",
-]
+from plugins.api.training import *  # noqa: F403
+
+from plugins.api.training import __all__  # type: ignore  # noqa: E402,F401
+

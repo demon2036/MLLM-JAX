@@ -1,27 +1,5 @@
-from __future__ import annotations
+"""DEPRECATED: use `plugins.training.rl.reward.modules`."""
 
-from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Sequence
+from plugins.training.rl.reward.modules import *  # noqa: F403
+from plugins.training.rl.reward.modules import __all__  # type: ignore  # noqa: E402,F401
 
-from plugins.training.api import RewardResult
-from plugins.training.reward.weighted import compute_weighted_rewards
-
-
-@dataclass(frozen=True)
-class WeightedRewardModule:
-    """Weighted reward composition over multiple reward functions."""
-
-    reward_funcs: Sequence[Callable[..., float]]
-    reward_weights: Sequence[float]
-
-    def compute(self, *, inputs: Sequence[Mapping[str, Any]], answers: Sequence[str]) -> RewardResult:
-        rewards_per_func, rewards = compute_weighted_rewards(
-            reward_funcs=self.reward_funcs,
-            reward_weights=self.reward_weights,
-            inputs=inputs,
-            answers=answers,
-        )
-        return RewardResult(rewards=rewards, rewards_per_func=rewards_per_func)
-
-
-__all__ = ["WeightedRewardModule"]

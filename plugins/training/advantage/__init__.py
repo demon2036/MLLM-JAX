@@ -1,10 +1,5 @@
-"""Advantage estimation phase (rewards -> advantages)."""
+"""DEPRECATED: use `plugins.training.rl.advantage`."""
 
-from plugins.training.advantage.grpo import compute_grpo_advantages_by_group_id
-from plugins.training.advantage.modules import CallableAdvantageModule, GroupIdGRPOAdvantageModule
+from plugins.training.rl.advantage import *  # noqa: F403
+from plugins.training.rl.advantage import __all__  # type: ignore  # noqa: E402,F401
 
-__all__ = [
-    "CallableAdvantageModule",
-    "GroupIdGRPOAdvantageModule",
-    "compute_grpo_advantages_by_group_id",
-]

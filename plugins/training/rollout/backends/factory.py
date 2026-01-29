@@ -1,26 +1,5 @@
-from __future__ import annotations
+"""DEPRECATED: use `plugins.training.rl.rollout.backends.factory`."""
 
-from typing import Any
+from plugins.training.rl.rollout.backends.factory import *  # noqa: F403
+from plugins.training.rl.rollout.backends.factory import __all__  # type: ignore  # noqa: E402,F401
 
-from plugins.training.api import RolloutSampler
-from plugins.training.rollout.backends.base import RolloutBackend
-from plugins.training.rollout.backends.naive_sampler import NaiveSamplerRolloutBackend
-
-
-SUPPORTED_ROLLOUT_BACKENDS = ("naive",)
-
-
-def create_rollout_backend(
-    *,
-    name: str,
-    sampler: RolloutSampler | None = None,
-    tokenizer: Any | None = None,
-    model_path: str | None = None,
-    **_kwargs: Any,
-) -> RolloutBackend:
-    key = str(name).strip().lower()
-    if key in {"naive", "naive_sampler", "sampler"}:
-        if sampler is None:
-            raise ValueError("rollout.backend='naive' requires a sampler.")
-        return NaiveSamplerRolloutBackend(sampler=sampler)
-    raise ValueError(f"Unknown rollout.backend={name!r}. Supported backends: {SUPPORTED_ROLLOUT_BACKENDS}")

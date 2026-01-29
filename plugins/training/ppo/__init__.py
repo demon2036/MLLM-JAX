@@ -1,5 +1,5 @@
-from plugins.training.ppo.module import PPOActorCriticModule
-from plugins.training.ppo.state import PPOTrainState, get_ppo_state
-from plugins.training.ppo.train_step import ppo_training_step
+"""DEPRECATED: use `plugins.training.rl.ppo`."""
 
-__all__ = ["PPOActorCriticModule", "PPOTrainState", "get_ppo_state", "ppo_training_step"]
+from plugins.training.rl.ppo import *  # noqa: F403
+from plugins.training.rl.ppo import __all__  # type: ignore  # noqa: E402,F401
+

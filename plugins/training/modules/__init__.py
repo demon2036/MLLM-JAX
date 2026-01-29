@@ -7,10 +7,10 @@ New code should import phase modules directly:
 - `plugins.training.update.modules`
 """
 
-from plugins.training.advantage.modules import GroupIdGRPOAdvantageModule
-from plugins.training.reward.modules import WeightedRewardModule
-from plugins.training.rollout.modules import GRPOSyncRollout, RolloutBackendModule
-from plugins.training.update.modules import PPOUpdateModule
+from plugins.training.rl.advantage.modules import GroupIdGRPOAdvantageModule
+from plugins.training.rl.reward.modules import WeightedRewardModule
+from plugins.training.rl.rollout.modules import GRPOSyncRollout, RolloutBackendModule
+from plugins.training.rl.update.modules import PPOUpdateModule
 
 __all__ = [
     "GRPOSyncRollout",

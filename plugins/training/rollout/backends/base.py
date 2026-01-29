@@ -1,33 +1,5 @@
-from __future__ import annotations
+"""DEPRECATED: use `plugins.training.rl.rollout.backends.base`."""
 
-from typing import Any, Protocol, Sequence
+from plugins.training.rl.rollout.backends.base import *  # noqa: F403
+from plugins.training.rl.rollout.backends.base import __all__  # type: ignore  # noqa: E402,F401
 
-from plugins.training.api import RolloutResult
-
-
-class RolloutBackend(Protocol):
-    """A rollout engine that turns prompts into (answers, training batch).
-
-    The backend owns whatever state it needs to generate (in-process sampler,
-    external engine client, etc). Callers provide the latest `params` so the
-    backend can implement optional weight syncing strategies.
-
-    Optional hooks (duck-typed, used by the runner when present):
-    - `initialize()`: eager backend initialization (e.g. spin up an engine).
-    - `sync_weights(params)`: push the latest policy weights into the backend.
-    - `flush_cache()`: release KV/cache memory after rollout.
-    - `release_weights()`: drop any weight buffers/aliases after rollout (useful
-      when the training step donates buffers and you don't want the backend to
-      keep references alive across the update).
-    - `shutdown()`: teardown backend resources.
-    """
-
-    def rollout(
-        self,
-        *,
-        prompts: Sequence[str],
-        params: Any,
-        system_prompt: str,
-        global_length: int,
-        max_length_sample: int,
-    ) -> RolloutResult: ...

@@ -6,6 +6,10 @@ __pycache__/
 .idea/
 *.iml
 
+# Virtualenvs (local only)
+.venv/
+.venv*/
+
 # OS
 .DS_Store
 

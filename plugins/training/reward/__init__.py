@@ -1,6 +1,5 @@
-"""Reward phase (trajectory -> scalar rewards)."""
+"""DEPRECATED: use `plugins.training.rl.reward`."""
 
-from plugins.training.reward.modules import WeightedRewardModule
-from plugins.training.reward.weighted import compute_weighted_rewards
+from plugins.training.rl.reward import *  # noqa: F403
+from plugins.training.rl.reward import __all__  # type: ignore  # noqa: E402,F401
 
-__all__ = ["WeightedRewardModule", "compute_weighted_rewards"]

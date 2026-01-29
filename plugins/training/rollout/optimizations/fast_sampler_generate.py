@@ -1,6 +1,5 @@
-from __future__ import annotations
+"""DEPRECATED: use `plugins.training.rl.rollout.optimizations.fast_sampler_generate`."""
 
-from plugins.sample.optimizations.fast_sampler_generate import patch_sampler_generate_fast
-
-__all__ = ["patch_sampler_generate_fast"]
+from plugins.training.rl.rollout.optimizations.fast_sampler_generate import *  # noqa: F403
+from plugins.training.rl.rollout.optimizations.fast_sampler_generate import __all__  # type: ignore  # noqa: E402,F401
 

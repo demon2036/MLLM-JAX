@@ -1,5 +1,5 @@
-"""Training runners (phase orchestration)."""
+"""DEPRECATED: use `plugins.training.rl.runner`."""
 
-from plugins.training.runner.grpo_gsm8k import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig, run_grpo_gsm8k
+from plugins.training.rl.runner import *  # noqa: F403
+from plugins.training.rl.runner import __all__  # type: ignore  # noqa: E402,F401
 
-__all__ = ["GRPOGsm8kConfig", "GRPORolloutConfig", "GRPOTrainConfig", "run_grpo_gsm8k"]

@@ -13,7 +13,7 @@ from jax.experimental.shard_map import shard_map
 from jax.sharding import PartitionSpec as P
 from transformers import AutoConfig, AutoTokenizer
 
-from plugins.common.hf_safetensors import load_hf_safetensors_state_dict
+from plugins.training.core.io.hf_safetensors import load_hf_safetensors_state_dict
 
 from MLLM_JAX.language.llama.llama import LlamaForCausalLM, LlamaJaxConfig, convert_torch_to_flax_llama
 from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache_right

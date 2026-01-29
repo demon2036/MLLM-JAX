@@ -1,7 +1,5 @@
-"""Shared abstractions used across plugin modules.
+"""DEPRECATED: use `plugins.training.core`.
 
-This package is intentionally small: it hosts utilities shared between
-project-scoped pipelines (e.g., `projects/sid_sft/`) and reusable training
-plugins so we don't have to merge those folders.
+`plugins.common` is kept temporarily as an import-compatibility shim.
+New code should import from `plugins.training.core.*` instead.
 """
-

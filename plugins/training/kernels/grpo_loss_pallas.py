@@ -375,11 +375,10 @@ def _grpo_pallas_bwd(
         unclipped = loss2 >= loss1
 
         dlogp = -loss1 * unclipped.astype(jnp.float32)
+        dlogp = dlogp * dloss_ref[0, :, 0].astype(jnp.float32)
         if use_bf16_softmax:
-            dlogp = dlogp.astype(jnp.bfloat16) * dloss_ref[0, :, 0].astype(jnp.bfloat16)
             scale_bf16 = (dlogp / temperature).astype(jnp.bfloat16)
         else:
-            dlogp = dlogp * dloss_ref[0, :, 0].astype(jnp.float32)
             scale = dlogp / temperature
         lane_ids = jnp.arange(index_subblock, dtype=jnp.int32)[None, :]
         for sb in range(num_index_subblocks):

@@ -230,3 +230,40 @@ def test_grpo_pallas_kernel_tpu_lowering_batch_gt1():
     grad_k = jax.grad(loss_k_fn)(logits).astype(jnp.float32)
 
     assert jnp.max(jnp.abs(grad_ref - grad_k)) < 1e-4
+
+
+@pytest.mark.skipif(jax.default_backend() != "tpu", reason="requires TPU mosaic lowering")
+def test_grpo_pallas_kernel_tpu_lowering_block2048_time128_bf16_on_policy():
+    key = jax.random.PRNGKey(0)
+
+    batch = 1
+    time = 128
+    vocab = 2048
+
+    logits = jax.random.normal(key, (batch, time, vocab), dtype=jnp.bfloat16)
+    chosen_ids = jax.random.randint(key, (batch, time), 0, vocab, dtype=jnp.int32)
+    advantages = jax.random.normal(key, (batch,), dtype=jnp.float32)
+
+    cfg = GRPOKernelConfig(
+        block_size=2048,
+        time_block=128,
+        epsilon_low=0.2,
+        epsilon_high=0.2,
+        temperature=1.0,
+        compute_dtype="bf16",
+    )
+
+    def loss_k_fn(l):
+        per_loss, _ = grpo_per_token_loss_pallas_on_policy(
+            logits=l,
+            chosen_ids=chosen_ids,
+            advantages=advantages,
+            cfg=cfg,
+            interpret=False,
+            debug=False,
+        )
+        return jnp.sum(per_loss)
+
+    # Forward + backward should both lower via Mosaic (no interpret mode).
+    _ = loss_k_fn(logits)
+    _ = jax.grad(loss_k_fn)(logits)

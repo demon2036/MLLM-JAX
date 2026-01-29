@@ -36,6 +36,20 @@ def _ceil_div(a: int, b: int) -> int:
     return (int(a) + int(b) - 1) // int(b)
 
 
+def _choose_index_subblock(block_size: int) -> int:
+    """Pick a small static sub-block for dynamic-index patterns on TPU Mosaic.
+
+    Mosaic has limitations for some dynamic offset patterns on very wide
+    vectors. We implement chosen-token extraction (and the corresponding
+    gradient update) using smaller static sub-blocks to avoid those paths.
+    """
+    block_size = int(block_size)
+    for cand in (128, 64, 32, 16, 8):
+        if block_size % cand == 0:
+            return cand
+    return block_size
+
+
 def _pad_vocab(logits: Any, *, block_size: int):
     import jax.numpy as jnp
 
@@ -154,6 +168,10 @@ def _grpo_pallas_fwd(
     time_blocks = int(time // time_block)
     block_size = int(cfg.block_size)
     blocks = _ceil_div(vocab, block_size)
+    index_subblock = _choose_index_subblock(block_size)
+    num_index_subblocks = int(block_size // index_subblock)
+    index_subblock = _choose_index_subblock(block_size)
+    num_index_subblocks = int(block_size // index_subblock)
 
     chosen_ids3 = chosen_ids[..., None]
     old_logps3 = old_per_token_logps[..., None]
@@ -196,12 +214,15 @@ def _grpo_pallas_fwd(
 
         idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
         block_start = pid_k * block_size
-        offset = idx - block_start
-        in_range = (offset >= 0) & (offset < block_size)
-        lane_ids = jnp.arange(block_size, dtype=jnp.int32)[None, :]
-        onehot = lane_ids == offset[:, None]
-        chosen_val = jnp.sum(jnp.where(onehot, logits_tile, zero_v), axis=-1)
-        chosen_ref[:] = jnp.where(in_range, chosen_val, chosen_ref[:])
+        lane_ids = jnp.arange(index_subblock, dtype=jnp.int32)[None, :]
+        for sb in range(num_index_subblocks):
+            sb_start = block_start + sb * index_subblock
+            offset = idx - sb_start
+            in_range = (offset >= 0) & (offset < index_subblock)
+            logits_sub = logits_tile[:, sb * index_subblock : (sb + 1) * index_subblock]
+            onehot = lane_ids == offset[:, None]
+            chosen_val = jnp.sum(jnp.where(onehot, logits_sub, zero_v), axis=-1)
+            chosen_ref[:] = jnp.where(in_range, chosen_val, chosen_ref[:])
 
         prev_max = max_ref[:]
         prev_sum = sum_ref[:]
@@ -335,16 +356,10 @@ def _grpo_pallas_bwd(
         pid_b = pl.program_id(0)
         pid_k = pl.program_id(2)
 
-        logits_tile = logits_ref[0, :, :].astype(compute_dtype)
-
         idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
         block_start = pid_k * block_size
-        offset = idx - block_start
-        lane_ids = jnp.arange(block_size, dtype=jnp.int32)[None, :]
-        onehot = (lane_ids == offset[:, None]).astype(jnp.float32)
 
         lse_val = lse_ref[0, :, 0].astype(compute_dtype)
-        probs = jnp.exp(logits_tile - lse_val[:, None]).astype(jnp.float32)
 
         logp = logps_ref[0, :, 0].astype(compute_dtype)
         old_logp = old_logps_ref[0, :, 0].astype(compute_dtype)
@@ -360,8 +375,17 @@ def _grpo_pallas_bwd(
         dlogp = dlogp * dloss_ref[0, :, 0].astype(jnp.float32)
 
         scale = dlogp / temperature
-        dlogits = (onehot - probs) * scale[:, None]
-        dlogits_ref[0, :, :] = dlogits.astype(dlogits_ref.dtype)
+        lane_ids = jnp.arange(index_subblock, dtype=jnp.int32)[None, :]
+        for sb in range(num_index_subblocks):
+            logits_sub = logits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock].astype(compute_dtype)
+            probs_sub = jnp.exp(logits_sub - lse_val[:, None]).astype(jnp.float32)
+            dlogits_sub = (-probs_sub) * scale[:, None]
+
+            sb_start = block_start + sb * index_subblock
+            offset = idx - sb_start
+            onehot = (lane_ids == offset[:, None]).astype(jnp.float32)
+            dlogits_sub = dlogits_sub + onehot * scale[:, None]
+            dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = dlogits_sub.astype(dlogits_ref.dtype)
 
     call = pl.pallas_call(
         functools.partial(kernel),

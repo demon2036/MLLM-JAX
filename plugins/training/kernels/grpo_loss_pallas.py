@@ -11,17 +11,12 @@ class GRPOKernelConfig:
     epsilon_low: float = 0.2
     epsilon_high: float = 0.2
     temperature: float = 1.0
-    # Controls logp rounding behavior in the kernel.
+    # Controls numerical behavior of logp and softmax gradient inside the kernel.
     #
-    # - "f32": keep logp in float32 (matches float32 reference impl)
-    # - "bf16": emulate legacy TrainGRPOModule rounding for bf16 logits by:
-    #     logp_raw = (chosen_logit - logsumexp(logits))
-    #     logp_raw = bf16(logp_raw) -> f32
-    #     logp = logp_raw / temperature
-    #
-    # Note: gradients are still computed from float32 exp/logsumexp (to match
-    # TPU XLA log_softmax behavior on large vocabs); only the returned logps are
-    # optionally bf16-rounded.
+    # - "f32": match the float32 reference implementation (tests/bench)
+    # - "bf16": emulate legacy TrainGRPOModule bf16 log_softmax rounding:
+    #     - logp is bf16-rounded before temperature scaling
+    #     - exp/softmax path in the backward pass uses bf16 math
     compute_dtype: str = "f32"
 
 
@@ -322,6 +317,8 @@ def _grpo_pallas_bwd(
         raise ValueError("time_block must be divisible by 8")
     original_time = int(dloss.shape[1])
     compute_dtype = jnp.float32
+    softmax_dtype = _resolve_compute_dtype(cfg.compute_dtype)
+    use_bf16_softmax = softmax_dtype == jnp.bfloat16
 
     logits, _ = _pad_vocab(logits, block_size=cfg.block_size)
     logits, _ = _pad_time(logits, time_block=time_block, pad_value=0.0)
@@ -381,19 +378,30 @@ def _grpo_pallas_bwd(
 
         dlogp = -loss1 * unclipped.astype(jnp.float32)
         dlogp = dlogp * dloss_ref[0, :, 0].astype(jnp.float32)
-        scale = dlogp / temperature
+        if use_bf16_softmax:
+            scale_bf16 = (dlogp / temperature).astype(jnp.bfloat16)
+        else:
+            scale = dlogp / temperature
         lane_ids = jnp.arange(index_subblock, dtype=jnp.int32)[None, :]
         for sb in range(num_index_subblocks):
             logits_sub = logits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock].astype(compute_dtype)
             log_softmax_sub = logits_sub - lse_val[:, None]
-            probs_sub = jnp.exp(log_softmax_sub).astype(jnp.float32)
-            dlogits_sub = (-probs_sub) * scale[:, None]
+            if use_bf16_softmax:
+                probs_sub = jnp.exp(log_softmax_sub.astype(jnp.bfloat16))
+                dlogits_sub = (-probs_sub) * scale_bf16[:, None]
+            else:
+                probs_sub = jnp.exp(log_softmax_sub).astype(jnp.float32)
+                dlogits_sub = (-probs_sub) * scale[:, None]
 
             sb_start = block_start + sb * index_subblock
             offset = idx - sb_start
             onehot = (lane_ids == offset[:, None]).astype(jnp.float32)
-            dlogits_sub = dlogits_sub + onehot * scale[:, None]
-            dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = dlogits_sub.astype(dlogits_ref.dtype)
+            if use_bf16_softmax:
+                dlogits_sub = dlogits_sub + onehot.astype(jnp.bfloat16) * scale_bf16[:, None]
+                dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = dlogits_sub.astype(dlogits_ref.dtype)
+            else:
+                dlogits_sub = dlogits_sub + onehot * scale[:, None]
+                dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = dlogits_sub.astype(dlogits_ref.dtype)
 
     call = pl.pallas_call(
         functools.partial(kernel),

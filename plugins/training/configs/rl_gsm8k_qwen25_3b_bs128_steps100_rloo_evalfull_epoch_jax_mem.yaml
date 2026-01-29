@@ -1,0 +1,49 @@
+# RL/GSM8K config (Qwen2.5-3B-Instruct) — RLOO, full-eval each epoch, JAX loss (+ TPU mem logging)
+#
+# - Full eval is config-driven (no env vars), with deterministic greedy decoding:
+#   - `eval_full_every_epochs: 1`
+#   - `eval_full_greedy: true`
+# - Epoch length is explicitly set to 100 steps for this run (`train_steps_per_epoch: 100`).
+
+model_path: Qwen/Qwen2.5-3B-Instruct
+
+steps: 100
+
+rollout:
+  backend: naive
+  batch_size: 16
+  n: 8
+  global_length: 512
+  max_length_sample: 1024
+
+train:
+  micro_batch_size: null
+  micro_batch_size_per_device: 4
+  ppo_epochs: 1
+  beta: 0.0
+  policy_loss_impl: jax
+  log_tpu_memory: true
+
+algo:
+  name: rloo
+  estimator:
+    name: rloo
+  update:
+    name: policy_gradient
+
+mesh_shape: auto
+
+wandb_project: mllm-jax-grpo-gsm8k
+wandb_mode: online
+wandb_name: null
+
+reward_weights: [1.0, 0.5, 0.5]
+
+eval_every_steps: 0
+eval_batches_per_process: 1
+eval_split: test
+
+train_steps_per_epoch: 100
+eval_full_every_epochs: 1
+eval_full_num_pre_q: 1
+eval_full_greedy: true

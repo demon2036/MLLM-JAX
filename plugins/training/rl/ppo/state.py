@@ -57,6 +57,9 @@ def get_ppo_state(
     tx: Any | None = None,
 ) -> tuple[PPOTrainState, Any, PPOActorCriticModule]:
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+    from plugins.training.core.io.hf_config import ensure_rope_theta
+
+    ensure_rope_theta(config)
     if getattr(config, "model_type", None) not in {"qwen2"}:
         raise ValueError(f"PPO value head currently supports Qwen2 only, got model_type={config.model_type!r}")
 

@@ -242,6 +242,9 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
     # Model config must reflect the resized vocab (tokenizer + optional padding).
     base_config = AutoConfig.from_pretrained(cfg.base_model, trust_remote_code=True)
+    from plugins.training.core.io.hf_config import ensure_rope_theta
+
+    ensure_rope_theta(base_config)
     base_config.vocab_size = int(padded_vocab_size)
 
     # Avoid TPU-only fused attention kernels on CPU/GPU backends.

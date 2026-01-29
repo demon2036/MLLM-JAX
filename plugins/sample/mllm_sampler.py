@@ -14,6 +14,7 @@ from jax.sharding import PartitionSpec as P
 from transformers import AutoConfig, AutoTokenizer
 
 from plugins.training.core.io.hf_safetensors import load_hf_safetensors_state_dict
+from plugins.training.core.io.hf_config import ensure_rope_theta
 
 from MLLM_JAX.language.llama.llama import LlamaForCausalLM, LlamaJaxConfig, convert_torch_to_flax_llama
 from MLLM_JAX.language.qwen2.configuration_qwen2 import init_cache, pad_cache_right
@@ -93,6 +94,7 @@ def get_params(model_path: str, *, allow_torch_fallback: bool = True):
 
 def get_model(mesh: Any, model_path: str = "Qwen/Qwen2.5-14B", *, only_model: bool = False):
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+    ensure_rope_theta(config)
 
     jax_config = LlamaJaxConfig(mesh=mesh)
     model_type = str(getattr(config, "model_type", "") or "")

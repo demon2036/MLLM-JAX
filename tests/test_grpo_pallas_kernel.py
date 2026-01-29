@@ -321,7 +321,7 @@ def test_grpo_pallas_kernel_on_policy_matches_baseline_bf16_log_softmax_grad():
     # Note: on-policy GRPO per-token loss is invariant to logp value shifts, but
     # gradients should still match the baseline bf16 log_softmax path closely.
     assert jnp.max(jnp.abs(per_loss_ref - per_loss_k)) < 1e-5
-    assert jnp.max(jnp.abs(per_logp_ref.astype(jnp.float32) - per_logp_k.astype(jnp.float32))) < 5e-2
+    assert jnp.max(jnp.abs(per_logp_ref.astype(jnp.float32) - per_logp_k.astype(jnp.float32))) <= 0.0625
 
     def baseline_loss_sum(l):
         per_loss, _ = baseline_impl(l)

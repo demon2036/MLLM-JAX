@@ -375,16 +375,18 @@ def _grpo_pallas_bwd(
         unclipped = loss2 >= loss1
 
         dlogp = -loss1 * unclipped.astype(jnp.float32)
-        dlogp = dlogp * dloss_ref[0, :, 0].astype(jnp.float32)
-
-        scale = dlogp / temperature
+        if use_bf16_softmax:
+            dlogp = dlogp.astype(jnp.bfloat16) * dloss_ref[0, :, 0].astype(jnp.bfloat16)
+            scale_bf16 = (dlogp / temperature).astype(jnp.bfloat16)
+        else:
+            dlogp = dlogp * dloss_ref[0, :, 0].astype(jnp.float32)
+            scale = dlogp / temperature
         lane_ids = jnp.arange(index_subblock, dtype=jnp.int32)[None, :]
         for sb in range(num_index_subblocks):
             logits_sub = logits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock].astype(compute_dtype)
             log_softmax_sub = logits_sub - lse_val[:, None]
             if use_bf16_softmax:
                 probs_sub = jnp.exp(log_softmax_sub.astype(jnp.bfloat16))
-                scale_bf16 = scale.astype(jnp.bfloat16)
                 dlogits_sub = (-probs_sub) * scale_bf16[:, None]
             else:
                 probs_sub = jnp.exp(log_softmax_sub).astype(jnp.float32)

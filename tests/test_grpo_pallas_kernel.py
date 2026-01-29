@@ -267,3 +267,77 @@ def test_grpo_pallas_kernel_tpu_lowering_block2048_time128_bf16_on_policy():
     # Forward + backward should both lower via Mosaic (no interpret mode).
     _ = loss_k_fn(logits)
     _ = jax.grad(loss_k_fn)(logits)
+
+
+@pytest.mark.skipif(jax.default_backend() != "tpu", reason="requires TPU mosaic lowering")
+def test_grpo_pallas_kernel_on_policy_matches_baseline_bf16_log_softmax_grad():
+    key = jax.random.PRNGKey(0)
+
+    batch = 1
+    time = 128
+    vocab = 2048
+
+    eps_low = 0.2
+    eps_high = 0.2
+    temperature = 1.0
+
+    logits = jax.random.normal(key, (batch, time, vocab), dtype=jnp.bfloat16)
+    chosen_ids = jax.random.randint(key, (batch, time), 0, vocab, dtype=jnp.int32)
+    advantages = jax.random.normal(key, (batch,), dtype=jnp.float32)
+
+    def baseline_impl(l):
+        logps = jnp.take_along_axis(
+            jax.nn.log_softmax(l, axis=-1),
+            chosen_ids[..., None],
+            axis=-1,
+        )[..., 0] / float(temperature)
+        old = jax.lax.stop_gradient(logps)
+        ratio = jnp.exp(logps - old)
+        clipped_ratio = jnp.clip(ratio, 1.0 - float(eps_low), 1.0 + float(eps_high))
+        loss1 = ratio * advantages[..., None]
+        loss2 = clipped_ratio * advantages[..., None]
+        loss = (-jnp.minimum(loss1, loss2)).astype(jnp.float32)
+        return loss, logps
+
+    per_loss_ref, per_logp_ref = baseline_impl(logits)
+
+    cfg = GRPOKernelConfig(
+        block_size=2048,
+        time_block=128,
+        epsilon_low=eps_low,
+        epsilon_high=eps_high,
+        temperature=temperature,
+        compute_dtype="bf16",
+    )
+    per_loss_k, per_logp_k = grpo_per_token_loss_pallas_on_policy(
+        logits=logits,
+        chosen_ids=chosen_ids,
+        advantages=advantages,
+        cfg=cfg,
+        interpret=False,
+        debug=False,
+    )
+
+    # Note: on-policy GRPO per-token loss is invariant to logp value shifts, but
+    # gradients should still match the baseline bf16 log_softmax path closely.
+    assert jnp.max(jnp.abs(per_loss_ref - per_loss_k)) < 1e-5
+    assert jnp.max(jnp.abs(per_logp_ref.astype(jnp.float32) - per_logp_k.astype(jnp.float32))) < 5e-2
+
+    def baseline_loss_sum(l):
+        per_loss, _ = baseline_impl(l)
+        return jnp.sum(per_loss)
+
+    def pallas_loss_sum(l):
+        per_loss, _ = grpo_per_token_loss_pallas_on_policy(
+            logits=l,
+            chosen_ids=chosen_ids,
+            advantages=advantages,
+            cfg=cfg,
+            interpret=False,
+            debug=False,
+        )
+        return jnp.sum(per_loss)
+
+    grad_ref = jax.grad(baseline_loss_sum)(logits).astype(jnp.float32)
+    grad_k = jax.grad(pallas_loss_sum)(logits).astype(jnp.float32)
+    assert jnp.max(jnp.abs(grad_ref - grad_k)) < 1e-4

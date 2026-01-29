@@ -161,7 +161,7 @@ def _scale_by_muon(
                 return MaskedNode()
             return jnp.zeros_like(p, dtype=mu_dtype)
 
-        return _MuonState(momentum=jax.tree_util.tree_map(init_leaf, params))
+        return _MuonState(momentum=jax.tree_util.tree_map(init_leaf, params, is_leaf=is_masked))
 
     def update_fn(updates, state, params=None):
         def update_leaf(g, m, p):
@@ -180,8 +180,8 @@ def _scale_by_muon(
             u = _muon_newton_schulz_5(g=g_eff, steps=int(ns_steps), eps=float(eps))
             return u, m_new
 
-        pairs = jax.tree_util.tree_map(update_leaf, updates, state.momentum, params)
-        is_pair = lambda x: isinstance(x, tuple)
+        pairs = jax.tree_util.tree_map(update_leaf, updates, state.momentum, params, is_leaf=is_masked)
+        is_pair = lambda x: isinstance(x, tuple) and len(x) == 2
         new_updates = jax.tree_util.tree_map(lambda x: x[0], pairs, is_leaf=is_pair)
         new_momentum = jax.tree_util.tree_map(lambda x: x[1], pairs, is_leaf=is_pair)
         return new_updates, _MuonState(momentum=new_momentum)

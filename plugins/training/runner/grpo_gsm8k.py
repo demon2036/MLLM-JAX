@@ -48,6 +48,12 @@ class GRPOTrainConfig:
     # - "jax": use the legacy pure-JAX loss inside TrainGRPOModule
     # - "pallas": use the Pallas GRPO kernel (plugins/training/kernels)
     policy_loss_impl: str = "jax"
+    # Pallas GRPO kernel tuning / numerics (only used when policy_loss_impl=="pallas").
+    pallas_block_size: int = 2048
+    pallas_time_block: int = 128
+    pallas_compute_dtype: str = "bf16"
+    # Optional: log TPU memory stats (jax.devices()[0].memory_stats()) to W&B.
+    log_tpu_memory: bool = False
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
 
 
@@ -470,6 +476,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             max_lengths=cfg.train.max_length_total,
             beta=cfg.train.beta,
             policy_loss_impl=cfg.train.policy_loss_impl,
+            pallas_block_size=cfg.train.pallas_block_size,
+            pallas_time_block=cfg.train.pallas_time_block,
+            pallas_compute_dtype=cfg.train.pallas_compute_dtype,
             create_sampler=True,
             tx=tx,
         )
@@ -1032,6 +1041,31 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             "time/train/update_s": float(t_update),
             "time/train/step_s": float(t_step),
         }
+        if bool(getattr(cfg.train, "log_tpu_memory", False)) and jax.process_index() == 0:
+            try:
+                mem_stats = jax.devices()[0].memory_stats()
+            except Exception:
+                mem_stats = None
+            if isinstance(mem_stats, dict):
+                # Log the most useful stable keys across TPU backends.
+                for k in [
+                    "bytes_in_use",
+                    "peak_bytes_in_use",
+                    "bytes_reserved",
+                    "peak_bytes_reserved",
+                    "bytes_limit",
+                    "bytes_reservable_limit",
+                    "largest_alloc_size",
+                    "largest_free_block_bytes",
+                    "num_allocs",
+                ]:
+                    v = mem_stats.get(k)
+                    if v is None:
+                        continue
+                    try:
+                        train_log[f"tpu/mem/{k}"] = int(v)
+                    except Exception:
+                        train_log[f"tpu/mem/{k}"] = str(v)
         if "policy_loss" in last_meta:
             train_log["train-ppo/policy_loss"] = _as_float(last_meta["policy_loss"])
         if "value_loss" in last_meta:

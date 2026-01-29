@@ -215,6 +215,26 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         policy_loss_impl_raw = cfg.get("policy_loss_impl")
     policy_loss_impl = str(policy_loss_impl_raw or "jax").strip().lower()
 
+    pallas_block_size_raw = _get_by_path(cfg, "train.pallas_block_size")
+    if pallas_block_size_raw is None:
+        pallas_block_size_raw = cfg.get("pallas_block_size")
+    pallas_block_size = int(pallas_block_size_raw) if pallas_block_size_raw is not None else 2048
+
+    pallas_time_block_raw = _get_by_path(cfg, "train.pallas_time_block")
+    if pallas_time_block_raw is None:
+        pallas_time_block_raw = cfg.get("pallas_time_block")
+    pallas_time_block = int(pallas_time_block_raw) if pallas_time_block_raw is not None else 128
+
+    pallas_compute_dtype_raw = _get_by_path(cfg, "train.pallas_compute_dtype")
+    if pallas_compute_dtype_raw is None:
+        pallas_compute_dtype_raw = cfg.get("pallas_compute_dtype")
+    pallas_compute_dtype = str(pallas_compute_dtype_raw or "bf16")
+
+    log_tpu_memory_raw = _get_by_path(cfg, "train.log_tpu_memory")
+    if log_tpu_memory_raw is None:
+        log_tpu_memory_raw = cfg.get("log_tpu_memory")
+    log_tpu_memory = bool(log_tpu_memory_raw) if log_tpu_memory_raw is not None else False
+
     from plugins.training.update.optimizer import LRScheduleConfig, OptimizerConfig
 
     optimizer_raw = _get_by_path(cfg, "train.optimizer")
@@ -428,6 +448,10 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             grad_accum_steps=grad_accum_steps,
             beta=beta,
             policy_loss_impl=policy_loss_impl,
+            pallas_block_size=pallas_block_size,
+            pallas_time_block=pallas_time_block,
+            pallas_compute_dtype=pallas_compute_dtype,
+            log_tpu_memory=log_tpu_memory,
             optimizer=optimizer_cfg,
         ),
         mesh_shape=mesh_shape,

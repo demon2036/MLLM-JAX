@@ -11,6 +11,25 @@ class GRPOKernelConfig:
     epsilon_low: float = 0.2
     epsilon_high: float = 0.2
     temperature: float = 1.0
+    # Controls numerical behavior of logsumexp / logp inside the kernel.
+    #
+    # - "f32": match the float32 reference implementation (tests/bench)
+    # - "bf16": match legacy TrainGRPOModule behavior (bf16 log_softmax path)
+    #
+    # Note: this only affects the kernel's internal reductions / exp / log;
+    # the returned per-token loss remains float32.
+    compute_dtype: str = "f32"
+
+
+def _resolve_compute_dtype(value: str):
+    import jax.numpy as jnp
+
+    v = str(value or "f32").strip().lower()
+    if v in {"f32", "float32"}:
+        return jnp.float32
+    if v in {"bf16", "bfloat16"}:
+        return jnp.bfloat16
+    raise ValueError(f"Unsupported compute_dtype={value!r} (expected f32/bf16).")
 
 
 def _ceil_div(a: int, b: int) -> int:
@@ -124,6 +143,7 @@ def _grpo_pallas_fwd(
         raise ValueError("time_block must be > 0")
     if time_block % 8 != 0:
         raise ValueError("time_block must be divisible by 8")
+    compute_dtype = _resolve_compute_dtype(cfg.compute_dtype)
 
     logits, original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
     logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
@@ -140,12 +160,15 @@ def _grpo_pallas_fwd(
     advantages2 = advantages[:, None]
 
     out_loss = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_logp = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_lse = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
+    out_logp = jax.ShapeDtypeStruct((batch, time, 1), compute_dtype)
+    out_lse = jax.ShapeDtypeStruct((batch, time, 1), compute_dtype)
 
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
     temperature = float(cfg.temperature)
+    eps_low_v = jnp.asarray(1.0 - eps_low, dtype=compute_dtype)
+    eps_high_v = jnp.asarray(1.0 + eps_high, dtype=compute_dtype)
+    zero_v = jnp.asarray(0.0, dtype=compute_dtype)
 
     def kernel(
         logits_ref,
@@ -164,14 +187,14 @@ def _grpo_pallas_fwd(
 
         @pl.when(pid_k == 0)
         def init():
-            max_ref[:] = jnp.full((time_block,), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
-            sum_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
-            chosen_ref[:] = jnp.zeros((time_block,), dtype=jnp.float32)
+            max_ref[:] = jnp.full((time_block,), jnp.finfo(compute_dtype).min, dtype=compute_dtype)
+            sum_ref[:] = jnp.zeros((time_block,), dtype=compute_dtype)
+            chosen_ref[:] = jnp.zeros((time_block,), dtype=compute_dtype)
             out_loss_ref[...] = jnp.zeros_like(out_loss_ref)
             out_logp_ref[...] = jnp.zeros_like(out_logp_ref)
             out_lse_ref[...] = jnp.zeros_like(out_lse_ref)
 
-        logits_tile = logits_ref[0, :, :].astype(jnp.float32)
+        logits_tile = logits_ref[0, :, :].astype(compute_dtype)
 
         idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
         block_start = pid_k * block_size
@@ -179,7 +202,7 @@ def _grpo_pallas_fwd(
         in_range = (offset >= 0) & (offset < block_size)
         lane_ids = jnp.arange(block_size, dtype=jnp.int32)[None, :]
         onehot = lane_ids == offset[:, None]
-        chosen_val = jnp.sum(jnp.where(onehot, logits_tile, 0.0), axis=-1)
+        chosen_val = jnp.sum(jnp.where(onehot, logits_tile, zero_v), axis=-1)
         chosen_ref[:] = jnp.where(in_range, chosen_val, chosen_ref[:])
 
         prev_max = max_ref[:]
@@ -200,9 +223,9 @@ def _grpo_pallas_fwd(
             logp = (chosen_ref[:] - lse) / temperature
             out_logp_ref[0, :, 0] = logp.astype(out_logp_ref.dtype)
 
-            old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
+            old_logp = old_logps_ref[0, :, 0].astype(compute_dtype)
             ratio = jnp.exp(logp - old_logp)
-            clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
+            clipped_ratio = jnp.clip(ratio, eps_low_v, eps_high_v)
             advantage = advantages_ref[pid_b, 0].astype(jnp.float32)
             loss1 = ratio * advantage
             loss2 = clipped_ratio * advantage
@@ -227,9 +250,9 @@ def _grpo_pallas_fwd(
             ],
             grid=(batch, time_blocks, blocks),
             scratch_shapes=[
-                pltpu.VMEM((time_block,), jnp.float32),
-                pltpu.VMEM((time_block,), jnp.float32),
-                pltpu.VMEM((time_block,), jnp.float32),
+                pltpu.VMEM((time_block,), compute_dtype),
+                pltpu.VMEM((time_block,), compute_dtype),
+                pltpu.VMEM((time_block,), compute_dtype),
             ],
         ),
         compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "arbitrary")),
@@ -271,6 +294,7 @@ def _grpo_pallas_bwd(
     if time_block % 8 != 0:
         raise ValueError("time_block must be divisible by 8")
     original_time = int(dloss.shape[1])
+    compute_dtype = _resolve_compute_dtype(cfg.compute_dtype)
 
     logits, _ = _pad_vocab(logits, block_size=cfg.block_size)
     logits, _ = _pad_time(logits, time_block=time_block, pad_value=0.0)
@@ -311,7 +335,7 @@ def _grpo_pallas_bwd(
         pid_b = pl.program_id(0)
         pid_k = pl.program_id(2)
 
-        logits_tile = logits_ref[0, :, :].astype(jnp.float32)
+        logits_tile = logits_ref[0, :, :].astype(compute_dtype)
 
         idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
         block_start = pid_k * block_size
@@ -319,12 +343,12 @@ def _grpo_pallas_bwd(
         lane_ids = jnp.arange(block_size, dtype=jnp.int32)[None, :]
         onehot = (lane_ids == offset[:, None]).astype(jnp.float32)
 
-        lse_val = lse_ref[0, :, 0].astype(jnp.float32)
-        probs = jnp.exp(logits_tile - lse_val[:, None])
+        lse_val = lse_ref[0, :, 0].astype(compute_dtype)
+        probs = jnp.exp(logits_tile - lse_val[:, None]).astype(jnp.float32)
 
-        logp = logps_ref[0, :, 0].astype(jnp.float32)
-        old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
-        ratio = jnp.exp(logp - old_logp)
+        logp = logps_ref[0, :, 0].astype(compute_dtype)
+        old_logp = old_logps_ref[0, :, 0].astype(compute_dtype)
+        ratio = jnp.exp(logp - old_logp).astype(jnp.float32)
         clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
 
         advantage = advantages_ref[pid_b, 0].astype(jnp.float32)
@@ -387,6 +411,7 @@ def build_grpo_per_token_loss_pallas(
         epsilon_low=float(cfg.epsilon_low),
         epsilon_high=float(cfg.epsilon_high),
         temperature=float(cfg.temperature),
+        compute_dtype=str(getattr(cfg, "compute_dtype", "f32")),
     )
 
     @jax.custom_vjp
@@ -460,13 +485,19 @@ def build_grpo_per_token_loss_pallas_on_policy(
         epsilon_low=float(cfg.epsilon_low),
         epsilon_high=float(cfg.epsilon_high),
         temperature=float(cfg.temperature),
+        compute_dtype=str(getattr(cfg, "compute_dtype", "f32")),
     )
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
+    compute_dtype = _resolve_compute_dtype(cfg.compute_dtype)
+    eps_low_v = jnp.asarray(1.0 - eps_low, dtype=compute_dtype)
+    eps_high_v = jnp.asarray(1.0 + eps_high, dtype=compute_dtype)
 
     def _compute_loss_from_logps(*, per_token_logps, old_per_token_logps, advantages):
-        ratio = jnp.exp(per_token_logps - old_per_token_logps)
-        clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
+        ratio = jnp.exp(per_token_logps.astype(compute_dtype) - old_per_token_logps.astype(compute_dtype)).astype(
+            compute_dtype
+        )
+        clipped_ratio = jnp.clip(ratio, eps_low_v, eps_high_v).astype(compute_dtype)
         advantages = advantages.astype(jnp.float32)
         loss1 = ratio * advantages[..., None]
         loss2 = clipped_ratio * advantages[..., None]

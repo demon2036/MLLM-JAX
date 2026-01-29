@@ -52,6 +52,9 @@ def get_state(
     max_lengths=None,
     beta: float = 0.04,
     policy_loss_impl: str = "jax",
+    pallas_block_size: int = 2048,
+    pallas_time_block: int = 8,
+    pallas_compute_dtype: str = "f32",
     create_sampler: bool = True,
     tx: Any | None = None,
 ):
@@ -78,6 +81,9 @@ def get_state(
     }
     if policy_loss_impl_norm == "pallas":
         train_module_kwargs["mesh"] = mesh
+        train_module_kwargs["pallas_block_size"] = int(pallas_block_size)
+        train_module_kwargs["pallas_time_block"] = int(pallas_time_block)
+        train_module_kwargs["pallas_compute_dtype"] = str(pallas_compute_dtype)
 
     train_module = flax.linen.remat(
         train_module_cls, policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims

@@ -10,11 +10,8 @@ import jax.numpy as jnp
 class TrainGRPOModuleJax(nn.Module):
     """TrainGRPOModule variant that keeps numerics aligned with the Pallas kernel.
 
-    Key differences vs the legacy upstream module:
-    - Compute selective log-softmax via a float32, vocab-blocked logsumexp update.
-      This matches the Pallas kernel's reduction order more closely than a single
-      `jax.nn.logsumexp(..., axis=-1)` over the full vocab, improving parity for
-      RL runs that are sensitive to tiny numerical drift.
+    Key difference vs legacy upstream:
+    - Compute selective log-softmax in float32 (avoid bf16/f16 logp drift on large vocabs).
     """
 
     model: Any
@@ -27,7 +24,6 @@ class TrainGRPOModuleJax(nn.Module):
     epsilon_low: float = 0.2
     epsilon_high: float = 0.3
     entropy_threshold: float = 0.3
-    vocab_block_size: int = 2048
 
     def __call__(self, inputs):
         input_ids = inputs["input_ids"]
@@ -46,45 +42,12 @@ class TrainGRPOModuleJax(nn.Module):
         mask_loss = labels[:, 1:]
 
         logits_time = logits[:, :-1, :]
-        block_size = int(self.vocab_block_size)
-        if block_size <= 0:
-            raise ValueError("vocab_block_size must be > 0")
-
-        vocab = int(logits_time.shape[-1])
-        full_blocks = int(vocab // block_size)
-        remainder = int(vocab % block_size)
-
-        max_acc = jnp.full(logits_time.shape[:2], jnp.finfo(jnp.float32).min, dtype=jnp.float32)
-        sum_acc = jnp.zeros(logits_time.shape[:2], dtype=jnp.float32)
-
-        def _update_block(max_sum, logits_block):
-            block_f32 = logits_block.astype(jnp.float32)
-            block_max = jnp.max(block_f32, axis=-1)
-            max_prev, sum_prev = max_sum
-            max_new = jnp.maximum(max_prev, block_max)
-            sum_prev = sum_prev * jnp.exp(max_prev - max_new)
-            block_sum = jnp.sum(jnp.exp(block_f32 - max_new[..., None]), axis=-1)
-            sum_new = sum_prev + block_sum
-            return max_new, sum_new
-
-        def _scan_body(i, max_sum):
-            start = i * block_size
-            logits_block = jax.lax.dynamic_slice_in_dim(logits_time, start, block_size, axis=-1)
-            return _update_block(max_sum, logits_block)
-
-        if full_blocks > 0:
-            max_acc, sum_acc = jax.lax.fori_loop(0, full_blocks, _scan_body, (max_acc, sum_acc))
-        if remainder > 0:
-            start = full_blocks * block_size
-            logits_block = jax.lax.dynamic_slice_in_dim(logits_time, start, remainder, axis=-1)
-            max_acc, sum_acc = _update_block((max_acc, sum_acc), logits_block)
-
-        lse = max_acc + jnp.log(sum_acc)
         chosen_logits = jnp.take_along_axis(
             logits_time,
             chosen_ids.astype(jnp.int32)[..., None],
             axis=-1,
         )[..., 0].astype(jnp.float32)
+        lse = jax.nn.logsumexp(logits_time.astype(jnp.float32), axis=-1)
         per_token_logps = (chosen_logits - lse) / float(self.temperature)
 
         if "old_per_token_logps" in inputs:

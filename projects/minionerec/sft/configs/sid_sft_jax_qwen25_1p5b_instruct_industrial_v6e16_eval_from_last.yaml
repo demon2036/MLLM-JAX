@@ -8,7 +8,7 @@ jax:
   mesh_shape: "auto"
   param_dtype: bfloat16
   compute_dtype: bfloat16
-  max_cache_length: 128
+  max_cache_length: 512
 
 data:
   category: Industrial_and_Scientific
@@ -65,4 +65,3 @@ wandb:
   project: minionerec-sid-sft
   mode: online
   name: null
-

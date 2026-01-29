@@ -10,7 +10,11 @@ import torch
 
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-from plugins.minionerec.rl.datasets import MiniOneRecNextItemRlDataset
+from plugins.minionerec.rl.datasets import (
+    MiniOneRecNextItemRlDataset,
+    MiniOneRecSeqTitle2SidRlDataset,
+    MiniOneRecTitle2SidRlDataset,
+)
 from plugins.minionerec.rl.grpo_module import MiniOneRecGrpoModule
 from plugins.minionerec.rl.reward import build_rank_penalties, compute_ranking_rewards
 from plugins.sft.jax.checkpoint import load_checkpoint
@@ -30,10 +34,21 @@ class MiniOneRecRlDataConfig:
     test_file: str
     info_file: str
     sid_index_path: str
+    item_meta_path: str
     max_len: int = 512
     sample_train: int = -1
     sample_eval: int = -1
     sample_test: int = -1
+    sample_seq_title: int = 10000
+    sample_item_alignment: int = -1
+
+
+@dataclass(frozen=True)
+class MiniOneRecRlTasksConfig:
+    sid_next_item: bool = True
+    title2sid: bool = True
+    description2sid: bool = True
+    seq_title2sid: bool = True
 
 
 @dataclass(frozen=True)
@@ -58,7 +73,7 @@ class MiniOneRecRlTrainConfig:
     max_steps: int = -1
     grad_accum_steps: int = 1
     ppo_steps: int = 1
-    beta: float = 1e-3
+    beta: float = 0.04
     logging_steps: int = 10
     save_last: bool = True
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
@@ -89,6 +104,7 @@ class MiniOneRecRlConfig:
     seed: int
     device: str
     data: MiniOneRecRlDataConfig
+    tasks: MiniOneRecRlTasksConfig = field(default_factory=MiniOneRecRlTasksConfig)
     jax: MiniOneRecRlJaxConfig = field(default_factory=MiniOneRecRlJaxConfig)
     rollout: MiniOneRecRlRolloutConfig = field(default_factory=MiniOneRecRlRolloutConfig)
     train: MiniOneRecRlTrainConfig = field(default_factory=MiniOneRecRlTrainConfig)
@@ -136,6 +152,8 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     from MLLM_JAX.language.llama.llama import LlamaJaxConfig, convert_torch_to_flax_llama
     from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
     from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
+    from projects.minionerec.sft.datasets.concat_dataset import ConcatDataset
+    from projects.minionerec.sft.tokens import maybe_extend_tokenizer
 
     from plugins.sample.decoding.sid3_constrained_beam_search import constrained_beam_search_sid3_prefill
     from plugins.training.mesh import create_mesh
@@ -151,7 +169,44 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             return jnp.float16
         raise ValueError(f"Unsupported dtype: {name!r}")
 
+    require_multihost = str(os.environ.get("REQUIRE_MULTIHOST", "")).strip().lower() in {"1", "true", "yes"}
+    require_process_count_raw = str(os.environ.get("REQUIRE_JAX_PROCESS_COUNT", "")).strip()
+    require_process_count = int(require_process_count_raw) if require_process_count_raw else 0
+
+    # Avoid calling `jax.distributed.initialize()` unless multi-host is required.
+    #
+    # On multi-host TPU VMs, calling `jax.distributed.initialize()` from only one
+    # worker can hang waiting for missing workers. Prefer an explicit opt-in via
+    # `REQUIRE_MULTIHOST=1` or `REQUIRE_JAX_PROCESS_COUNT=<N>` (set by our
+    # multi-host launch wrappers).
+    if require_multihost or require_process_count > 0:
+        try:
+            jax.distributed.initialize()
+        except Exception as e:
+            raise RuntimeError(
+                "jax.distributed.initialize() failed but a multi-host runtime is required "
+                "(REQUIRE_MULTIHOST=1 or REQUIRE_JAX_PROCESS_COUNT is set). "
+                "Start the job on all workers (`gcloud ... tpu-vm ssh --worker=all`)."
+            ) from e
+
+    if require_multihost and int(jax.process_count()) <= 1:
+        raise RuntimeError(
+            "Expected multi-host JAX runtime (REQUIRE_MULTIHOST=1), but got jax.process_count()==1. "
+            "Launch with --worker=all on multi-host TPUs."
+        )
+    if require_process_count > 0 and int(jax.process_count()) != int(require_process_count):
+        raise RuntimeError(
+            f"Expected jax.process_count()=={int(require_process_count)} (REQUIRE_JAX_PROCESS_COUNT), "
+            f"got {int(jax.process_count())}."
+        )
+
+    if int(jax.process_index()) == 0:
+        print(f"backend={jax.default_backend()} process={jax.process_index()}/{jax.process_count()}")
+        print(f"device_count={jax.device_count()} local_device_count={jax.local_device_count()}")
+
     mesh = create_mesh(str(cfg.jax.mesh_shape))
+    if int(jax.process_index()) == 0:
+        print(f"mesh_shape={cfg.jax.mesh_shape} resolved_mesh={dict(mesh.shape)}")
     compute_dtype = parse_dtype(cfg.jax.compute_dtype)
     param_dtype = parse_dtype(cfg.jax.param_dtype)
 
@@ -162,6 +217,10 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
     tokenizer.padding_side = "right"
+
+    token_ext = maybe_extend_tokenizer(tokenizer=tokenizer, sid_index_path=cfg.data.sid_index_path)
+    if int(jax.process_index()) == 0 and token_ext.added_tokens:
+        print(f"[rl] tokenizer extended: +{len(token_ext.added_tokens)} tokens (vocab={token_ext.original_vocab_size}->{token_ext.new_vocab_size})")
 
     trie = build_sid_trie_from_index(
         tokenizer=tokenizer,
@@ -193,7 +252,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     rng = jax.random.PRNGKey(int(cfg.seed))
 
     # Load params (torch HF -> flax) unless resuming from a msgpack checkpoint.
-    if run_mode_norm in {"eval"} and cfg.resume_from_checkpoint:
+    if cfg.resume_from_checkpoint:
         payload = load_checkpoint(str(cfg.resume_from_checkpoint))
         params = payload.get("params")
         if params is None:
@@ -225,12 +284,39 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
         if prompt_batch <= 0 or k <= 0:
             raise ValueError("rollout.prompt_batch_size and rollout.num_generations must be > 0")
 
-        # RL dataset: next-item only (SID space).
-        train_dataset = MiniOneRecNextItemRlDataset(
-            csv_path=cfg.data.train_file,
-            sample=cfg.data.sample_train,
-            seed=cfg.seed,
-        )
+        datasets = []
+        if cfg.tasks.sid_next_item:
+            datasets.append(
+                MiniOneRecNextItemRlDataset(
+                    csv_path=cfg.data.train_file,
+                    sample=cfg.data.sample_train,
+                    seed=cfg.seed,
+                )
+            )
+        if cfg.tasks.title2sid or cfg.tasks.description2sid:
+            datasets.append(
+                MiniOneRecTitle2SidRlDataset(
+                    item_meta_path=cfg.data.item_meta_path,
+                    sid_index_path=cfg.data.sid_index_path,
+                    include_title=cfg.tasks.title2sid,
+                    include_description=cfg.tasks.description2sid,
+                    sample=cfg.data.sample_item_alignment,
+                    seed=cfg.seed,
+                )
+            )
+        if cfg.tasks.seq_title2sid:
+            datasets.append(
+                MiniOneRecSeqTitle2SidRlDataset(
+                    csv_path=cfg.data.train_file,
+                    sample=cfg.data.sample_seq_title,
+                    seed=cfg.seed,
+                )
+            )
+
+        if not datasets:
+            raise ValueError("No RL tasks enabled under cfg.tasks.*")
+
+        train_dataset = datasets[0] if len(datasets) == 1 else ConcatDataset(datasets)
         if len(train_dataset) <= 0:
             raise ValueError("Empty train_dataset")
 

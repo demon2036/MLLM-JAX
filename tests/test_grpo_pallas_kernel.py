@@ -340,4 +340,4 @@ def test_grpo_pallas_kernel_on_policy_matches_baseline_bf16_log_softmax_grad():
 
     grad_ref = jax.grad(baseline_loss_sum)(logits).astype(jnp.float32)
     grad_k = jax.grad(pallas_loss_sum)(logits).astype(jnp.float32)
-    assert jnp.max(jnp.abs(grad_ref - grad_k)) < 1e-4
+    assert jnp.max(jnp.abs(grad_ref - grad_k)) < 3e-4

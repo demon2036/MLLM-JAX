@@ -1,0 +1,43 @@
+seed: 1337
+output_dir: runs/nano_gpt_tinyshakespeare_v6e_8_refactor_regression_1500steps
+
+data:
+  cache_dir: workdir/nano_gpt_data
+  url: https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
+  train_ratio: 0.9
+
+model:
+  # nanoGPT "shakespeare_char" style baseline.
+  block_size: 256
+  n_layer: 6
+  n_head: 6
+  n_embd: 384
+  dropout: 0.2
+  bias: false
+  param_dtype: float32
+  compute_dtype: bfloat16
+
+train:
+  max_steps: 1500
+  global_batch_size: 64
+  learning_rate: 0.001
+  min_lr: 0.0001
+  warmup_steps: 100
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.99
+  grad_clip_norm: 1.0
+  log_every: 10
+  eval_every: 250
+  eval_iters: 200
+  sample_every: 250
+  sample_tokens: 256
+  temperature: 1.0
+  top_k: 50
+  ckpt_every: 500
+  keep_ckpts: 20
+
+wandb:
+  project: nano-gpt-jax
+  mode: online
+  name: null

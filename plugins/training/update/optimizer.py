@@ -225,51 +225,35 @@ def build_tx(*, training_steps: int, cfg: OptimizerConfig, params: Any | None = 
         )
         aux_lr_schedule = build_lr_schedule(training_steps=training_steps, cfg=aux_lr_cfg)
 
-        if getattr(optax, "contrib", None) is not None and hasattr(optax.contrib, "muon"):
-            weight_dim_nums = jax.tree_util.tree_map(
-                lambda p: optax.contrib.MuonDimensionNumbers()  # type: ignore[attr-defined]
-                if getattr(p, "ndim", 0) == 2 and max(int(p.shape[0]), int(p.shape[1])) <= int(muon_max_dim)
-                else None,
-                params,
-            )
-            base = optax.contrib.muon(  # type: ignore[attr-defined]
-                learning_rate=lr_schedule,
+        # NOTE: We intentionally use a custom Muon + auxiliary AdamW split via
+        # `optax.multi_transform` so we can tune the auxiliary LR separately.
+        # Some Optax versions ship `optax.contrib.muon`, but its signature does
+        # not consistently expose an auxiliary learning-rate knob.
+        muon_tx = optax.chain(
+            _scale_by_muon(
+                momentum=float(cfg.muon_momentum),
+                nesterov=bool(cfg.muon_nesterov),
                 ns_steps=int(cfg.muon_ns_steps),
-                beta=float(cfg.muon_momentum),
                 eps=float(cfg.muon_eps),
                 weight_decay=float(weight_decay),
                 mu_dtype=jnp.float32,
-                nesterov=bool(cfg.muon_nesterov),
-                adam_learning_rate=aux_lr_schedule,
-                adam_weight_decay=float(weight_decay),
-                muon_weight_dimension_numbers=weight_dim_nums,
-            )
-        else:
-            muon_tx = optax.chain(
-                _scale_by_muon(
-                    momentum=float(cfg.muon_momentum),
-                    nesterov=bool(cfg.muon_nesterov),
-                    ns_steps=int(cfg.muon_ns_steps),
-                    eps=float(cfg.muon_eps),
-                    weight_decay=float(weight_decay),
-                    mu_dtype=jnp.float32,
-                ),
-                optax.scale_by_schedule(lr_schedule),
-                optax.scale(-1.0),
-            )
-            aux_tx = optax.adamw(aux_lr_schedule, weight_decay=weight_decay, mu_dtype=jnp.float32)
+            ),
+            optax.scale_by_schedule(lr_schedule),
+            optax.scale(-1.0),
+        )
+        aux_tx = optax.adamw(aux_lr_schedule, weight_decay=weight_decay, mu_dtype=jnp.float32)
 
-            def label(p):
-                if getattr(p, "ndim", 0) != 2:
-                    return "adamw"
-                m = int(p.shape[0])
-                n = int(p.shape[1])
-                if max(m, n) > int(muon_max_dim):
-                    return "adamw"
-                return "muon"
+        def label(p):
+            if getattr(p, "ndim", 0) != 2:
+                return "adamw"
+            m = int(p.shape[0])
+            n = int(p.shape[1])
+            if max(m, n) > int(muon_max_dim):
+                return "adamw"
+            return "muon"
 
-            param_labels = jax.tree_util.tree_map(label, params)
-            base = optax.multi_transform({"muon": muon_tx, "adamw": aux_tx}, param_labels)
+        param_labels = jax.tree_util.tree_map(label, params)
+        base = optax.multi_transform({"muon": muon_tx, "adamw": aux_tx}, param_labels)
     else:
         raise ValueError(f"Unsupported optimizer.name={cfg.name!r} (expected lion|adamw|sgd|muon)")
 

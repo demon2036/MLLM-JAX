@@ -144,6 +144,44 @@ Same shape `B=1,T=4096,V=151643`:
 
 Interpretation (as of `ee03e1d`): the kernel is currently **slower** and uses **higher peak reserved HBM** than the legacy JAX path on this benchmark.
 
+### 5c) Re-run (2026-01-30, v6e-8, W&B online, commit `498e293`)
+
+TPU VM (spot):
+- Name: `grpo-pallas-kernel-opt-v6e8-spot-260130080500`
+- Zone: `us-east5-b`
+- Repo: branch `test_rl`, commit `498e293`
+
+W&B:
+- Mode: `online` (via `/root/.env`)
+- Project: `mllm-jax-grpo-kernel`
+
+Legacy JAX:
+
+```bash
+scripts/ssh_tpu_vm_root.sh --name grpo-pallas-kernel-opt-v6e8-spot-260130080500 --zone us-east5-b --env-file /root/.env --command \
+  'source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; \
+   python -u scripts/grpo_kernel_bench.py --impl jax --mode off_policy --batch 1 --time 4096 --vocab 151643 --dtype bf16 \
+     --iters 2 --warmup 1 --old_logp_noise_scale 0.3 --epsilon_low 0.2 --epsilon_high 0.2 --temperature 1.0 \
+     --block_size 2048 --time_block 512 --compute_dtype bf16 --wandb_mode online --wandb_name grpo_kernel_bench_jax_off_policy_b1_t4096_v151643_head498e293'
+```
+
+Kernel:
+
+```bash
+scripts/ssh_tpu_vm_root.sh --name grpo-pallas-kernel-opt-v6e8-spot-260130080500 --zone us-east5-b --env-file /root/.env --command \
+  'source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; \
+   python -u scripts/grpo_kernel_bench.py --impl kernel --mode off_policy --batch 1 --time 4096 --vocab 151643 --dtype bf16 \
+     --iters 2 --warmup 1 --old_logp_noise_scale 0.3 --epsilon_low 0.2 --epsilon_high 0.2 --temperature 1.0 \
+     --block_size 2048 --time_block 512 --compute_dtype bf16 --wandb_mode online --wandb_name grpo_kernel_bench_kernel_off_policy_b1_t4096_v151643_head498e293'
+```
+
+Observed results (from JSON):
+
+- **Legacy JAX** (run `jlvc5hlq`): `avg_step_ms=11.8582`, `mem_after_run.peak_bytes_reserved=1242415104`
+- **Kernel** (run `avj7ns0s`): `avg_step_ms=7.5042`, `mem_after_run.peak_bytes_reserved=2485223424`
+
+Interpretation (as of `498e293`): the kernel is now **faster**, but still reports **higher peak reserved HBM** than the legacy JAX path on this benchmark.
+
 ### 6) Delete TPU VM (stop billing)
 
 ```powershell

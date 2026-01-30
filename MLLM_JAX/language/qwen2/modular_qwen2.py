@@ -185,6 +185,10 @@ class Qwen2ForCausalLM(nn.Module):
         if true_length is not None:
             hidden_states = hidden_states[:, true_length]
 
-        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
-        logits = self.lm_head(hidden_states)
+        # Weight tying (HF-compatible): reuse the input embedding matrix as lm_head when enabled.
+        # This is important when adding new SID tokens during SFT/RL.
+        if bool(getattr(self.config, "tie_word_embeddings", False)):
+            logits = self.model.embed_tokens.attend(hidden_states)
+        else:
+            logits = self.lm_head(hidden_states)
         return logits, cache

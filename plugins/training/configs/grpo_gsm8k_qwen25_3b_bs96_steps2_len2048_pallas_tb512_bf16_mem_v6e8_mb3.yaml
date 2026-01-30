@@ -1,4 +1,4 @@
-# GRPO/GSM8K config (Qwen2.5-3B-Instruct) — max_length_sample=2048, Pallas fused loss, v6e-8 probe (mb=3/dev) (+ TPU mem logging)
+# GRPO/GSM8K config (Qwen2.5-3B-Instruct) — max_length_sample=2048, Pallas fused loss, v6e-8 probe (bs=96, mb=3/dev) (+ TPU mem logging)
 #
 # Purpose:
 # - Find the memory cliff where the legacy JAX TrainGRPOModule OOMs at len=2048.
@@ -10,7 +10,7 @@ steps: 2
 
 rollout:
   backend: naive
-  batch_size: 16
+  batch_size: 12
   n: 8
   global_length: 512
   max_length_sample: 2048
@@ -36,7 +36,7 @@ mesh_shape: auto
 
 wandb_project: mllm-jax-grpo-gsm8k
 wandb_mode: online
-wandb_name: grpo_gsm8k_qwen25_3b_bs128_steps2_len2048_pallas_tb512_bf16_mem_v6e8_mb3
+wandb_name: grpo_gsm8k_qwen25_3b_bs96_steps2_len2048_pallas_tb512_bf16_mem_v6e8_mb3
 
 reward_weights: [1.0, 0.5, 0.5]
 
@@ -48,4 +48,3 @@ train_steps_per_epoch: 0
 eval_full_every_epochs: 0
 eval_full_num_pre_q: 1
 eval_full_greedy: true
-

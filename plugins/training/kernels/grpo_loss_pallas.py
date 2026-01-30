@@ -134,16 +134,23 @@ def grpo_per_token_loss_reference(
     return per_token_loss.astype(jnp.float32), per_token_logps.astype(jnp.float32)
 
 
-def _grpo_pallas_fwd(
+def _logsumexp_stats_pallas_full_vocab(
     *,
     logits: Any,
-    chosen_ids: Any,
-    old_per_token_logps: Any,
-    advantages: Any,
     cfg: GRPOKernelConfig,
     interpret: bool,
     debug: bool,
-) -> tuple[Any, Any, Any, Any, int]:
+):
+    """Compute per-(B,T) logsumexp stats over a vocab-multiple slice using Pallas.
+
+    Expects:
+      - logits: [B, T, V_full] with V_full % block_size == 0
+
+    Returns:
+      - max_val: [B, T] float32
+      - sum_exp: [B, T] float32, where sum_exp = sum_v exp(logits_v - max_val)
+      - sum_exp_logits: [B, T] float32, where sum_exp_logits = sum_v exp(logits_v - max_val) * logits_v
+    """
     import functools
 
     import jax
@@ -156,142 +163,88 @@ def _grpo_pallas_fwd(
         raise ValueError("time_block must be > 0")
     if time_block % 8 != 0:
         raise ValueError("time_block must be divisible by 8")
+
     softmax_dtype = _resolve_compute_dtype(cfg.compute_dtype)
-    quantize_logp = softmax_dtype == jnp.bfloat16
     compute_dtype = softmax_dtype
 
-    logits, original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
     logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
-    chosen_ids, _ = _pad_time(chosen_ids, time_block=time_block, pad_value=0)
-    old_per_token_logps, _ = _pad_time(old_per_token_logps, time_block=time_block, pad_value=0.0)
 
     batch, time, vocab = (int(logits.shape[0]), int(logits.shape[1]), int(logits.shape[2]))
-    time_blocks = int(time // time_block)
     block_size = int(cfg.block_size)
-    blocks = _ceil_div(vocab, block_size)
-    index_subblock = _choose_index_subblock(block_size)
-    num_index_subblocks = int(block_size // index_subblock)
+    if vocab % block_size != 0:
+        raise ValueError("logits vocab must be a multiple of block_size for the full-vocab stats kernel")
 
-    chosen_ids3 = chosen_ids[..., None]
-    old_logps3 = old_per_token_logps[..., None]
-    advantages2 = advantages[:, None]
+    time_blocks = int(time // time_block)
+    blocks = int(vocab // block_size)
+    if blocks <= 0:
+        raise ValueError("stats kernel requires at least 1 full vocab block")
 
-    out_loss = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_logp = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_lse = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_entropy = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-
-    eps_low = float(cfg.epsilon_low)
-    eps_high = float(cfg.epsilon_high)
-    temperature = float(cfg.temperature)
+    out_max = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
+    out_sum = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
+    out_sum_logits = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
 
     def kernel(
         logits_ref,
-        chosen_ids_ref,
-        old_logps_ref,
-        advantages_ref,
-        out_loss_ref,
-        out_logp_ref,
-        out_lse_ref,
-        out_entropy_ref,
+        out_max_ref,
+        out_sum_ref,
+        out_sum_logits_ref,
         max_ref,
         sum_ref,
         sum_logits_ref,
-        chosen_ref,
     ):
-        pid_b = pl.program_id(0)
         pid_k = pl.program_id(2)
-        zero_v = jnp.asarray(0.0, dtype=compute_dtype)
 
         @pl.when(pid_k == 0)
         def init():
             max_ref[:] = jnp.full((time_block,), jnp.finfo(compute_dtype).min, dtype=compute_dtype)
             sum_ref[:] = jnp.zeros((time_block,), dtype=compute_dtype)
             sum_logits_ref[:] = jnp.zeros((time_block,), dtype=compute_dtype)
-            chosen_ref[:] = jnp.zeros((time_block,), dtype=compute_dtype)
-            out_loss_ref[...] = jnp.zeros_like(out_loss_ref)
-            out_logp_ref[...] = jnp.zeros_like(out_logp_ref)
-            out_lse_ref[...] = jnp.zeros_like(out_lse_ref)
-            out_entropy_ref[...] = jnp.zeros_like(out_entropy_ref)
+            out_max_ref[...] = jnp.zeros_like(out_max_ref)
+            out_sum_ref[...] = jnp.zeros_like(out_sum_ref)
+            out_sum_logits_ref[...] = jnp.zeros_like(out_sum_logits_ref)
 
         logits_tile = logits_ref[0, :, :]
         if compute_dtype == jnp.float32 and logits_tile.dtype != jnp.float32:
             logits_tile = logits_tile.astype(jnp.float32)
 
-        idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
-        block_start = pid_k * block_size
-        lane_ids = jnp.arange(index_subblock, dtype=jnp.int32)[None, :]
-        for sb in range(num_index_subblocks):
-            sb_start = block_start + sb * index_subblock
-            offset = idx - sb_start
-            in_range = (offset >= 0) & (offset < index_subblock)
-            logits_sub = logits_tile[:, sb * index_subblock : (sb + 1) * index_subblock]
-            onehot = lane_ids == offset[:, None]
-            chosen_val = jnp.sum(jnp.where(onehot, logits_sub, zero_v), axis=-1)
-            chosen_ref[:] = jnp.where(in_range, chosen_val, chosen_ref[:])
-
         prev_max = max_ref[:]
         prev_sum = sum_ref[:]
         prev_sum_logits = sum_logits_ref[:]
+
         tile_max = jnp.max(logits_tile, axis=-1)
         new_max = jnp.maximum(prev_max, tile_max)
-        prev_sum = prev_sum * jnp.exp(prev_max - new_max)
-        prev_sum_logits = prev_sum_logits * jnp.exp(prev_max - new_max)
+
+        prev_scale = jnp.exp(prev_max - new_max)
+        prev_sum = prev_sum * prev_scale
+        prev_sum_logits = prev_sum_logits * prev_scale
+
         tile_exp = jnp.exp(logits_tile - new_max[:, None])
         tile_sum = jnp.sum(tile_exp, axis=-1).astype(compute_dtype)
         tile_sum_logits = jnp.sum(tile_exp * logits_tile, axis=-1).astype(compute_dtype)
-        new_sum = prev_sum + tile_sum
-        new_sum_logits = prev_sum_logits + tile_sum_logits
+
         max_ref[:] = new_max
-        sum_ref[:] = new_sum
-        sum_logits_ref[:] = new_sum_logits
+        sum_ref[:] = prev_sum + tile_sum
+        sum_logits_ref[:] = prev_sum_logits + tile_sum_logits
 
         @pl.when(pid_k == blocks - 1)
         def out():
-            lse = max_ref[:].astype(jnp.float32) + jnp.log(sum_ref[:].astype(jnp.float32))
-            out_lse_ref[0, :, 0] = lse.astype(out_lse_ref.dtype)
-
-            logp_raw = chosen_ref[:].astype(jnp.float32) - lse
-            if quantize_logp:
-                logp_raw = logp_raw.astype(jnp.bfloat16).astype(jnp.float32)
-            logp = logp_raw / temperature
-            out_logp_ref[0, :, 0] = logp.astype(out_logp_ref.dtype)
-
-            mean_logit = sum_logits_ref[:].astype(jnp.float32) / sum_ref[:].astype(jnp.float32)
-            entropy = lse - mean_logit
-            out_entropy_ref[0, :, 0] = entropy.astype(out_entropy_ref.dtype)
-
-            eps_low_v = jnp.asarray(1.0 - eps_low, dtype=jnp.float32)
-            eps_high_v = jnp.asarray(1.0 + eps_high, dtype=jnp.float32)
-            old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
-            ratio = jnp.exp(logp - old_logp)
-            clipped_ratio = jnp.clip(ratio, eps_low_v, eps_high_v)
-            advantage = advantages_ref[pid_b, 0].astype(jnp.float32)
-            loss1 = ratio * advantage
-            loss2 = clipped_ratio * advantage
-            per_token_loss = -jnp.minimum(loss1, loss2)
-            out_loss_ref[0, :, 0] = per_token_loss.astype(out_loss_ref.dtype)
+            out_max_ref[0, :, 0] = max_ref[:].astype(out_max_ref.dtype)
+            out_sum_ref[0, :, 0] = sum_ref[:].astype(out_sum_ref.dtype)
+            out_sum_logits_ref[0, :, 0] = sum_logits_ref[:].astype(out_sum_logits_ref.dtype)
 
     call = pl.pallas_call(
         functools.partial(kernel),
-        out_shape=(out_loss, out_logp, out_lse, out_entropy),
+        out_shape=(out_max, out_sum, out_sum_logits),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
-            in_specs=[
-                pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((batch, 1), lambda b, t, k: (0, 0)),
-            ],
+            in_specs=[pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k))],
             out_specs=[
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
             ],
             grid=(batch, time_blocks, blocks),
             scratch_shapes=[
-                pltpu.VMEM((time_block,), compute_dtype),
                 pltpu.VMEM((time_block,), compute_dtype),
                 pltpu.VMEM((time_block,), compute_dtype),
                 pltpu.VMEM((time_block,), compute_dtype),
@@ -302,12 +255,134 @@ def _grpo_pallas_fwd(
         debug=bool(debug),
     )
 
-    per_token_loss3, per_token_logps3, lse3, entropy3 = call(logits, chosen_ids3, old_logps3, advantages2)
-    per_token_loss = per_token_loss3[:, :original_time, 0]
-    per_token_logps = per_token_logps3[:, :original_time, 0]
-    lse = lse3[:, :original_time, 0]
-    entropy = entropy3[:, :original_time, 0]
-    return per_token_loss, per_token_logps, lse, entropy, original_vocab
+    max3, sum3, sum_logits3 = call(logits)
+    max_val = max3[:, :original_time, 0]
+    sum_exp = sum3[:, :original_time, 0]
+    sum_exp_logits = sum_logits3[:, :original_time, 0]
+    return max_val, sum_exp, sum_exp_logits
+
+
+def _logsumexp_stats(
+    *,
+    logits: Any,
+    cfg: GRPOKernelConfig,
+    interpret: bool,
+    debug: bool,
+):
+    """Compute per-(B,T) logsumexp stats without vocab padding.
+
+    This avoids materializing a padded [B,T,V_pad] copy of `logits` (which can be
+    ~1+ GiB for Qwen2.5-3B), by:
+      1) running Pallas on the largest vocab-multiple prefix, and
+      2) handling the small remainder ("tail") with JAX ops, then combining.
+    """
+    import jax.numpy as jnp
+
+    softmax_dtype = _resolve_compute_dtype(cfg.compute_dtype)
+    compute_dtype = softmax_dtype
+
+    vocab = int(logits.shape[-1])
+    block_size = int(cfg.block_size)
+    if block_size <= 0:
+        raise ValueError("block_size must be > 0")
+
+    full_blocks = int(vocab // block_size)
+    full_vocab = int(full_blocks * block_size)
+    tail_vocab = int(vocab - full_vocab)
+
+    if full_blocks > 0:
+        max_full, sum_full, sum_logits_full = _logsumexp_stats_pallas_full_vocab(
+            logits=logits[:, :, :full_vocab],
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+        )
+    else:
+        max_full = jnp.full(logits.shape[:2], jnp.finfo(compute_dtype).min, dtype=jnp.float32)
+        sum_full = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
+        sum_logits_full = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
+
+    if tail_vocab > 0:
+        tail = logits[:, :, full_vocab:]
+        tail_compute = tail.astype(compute_dtype)
+        max_tail = jnp.max(tail_compute, axis=-1).astype(jnp.float32)
+        exp_tail = jnp.exp(tail_compute - max_tail.astype(compute_dtype)[..., None])
+        sum_tail = jnp.sum(exp_tail, axis=-1).astype(jnp.float32)
+        sum_logits_tail = jnp.sum(exp_tail * tail_compute, axis=-1).astype(jnp.float32)
+    else:
+        max_tail = jnp.full(logits.shape[:2], jnp.finfo(compute_dtype).min, dtype=jnp.float32)
+        sum_tail = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
+        sum_logits_tail = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
+
+    max_full_c = max_full.astype(compute_dtype)
+    max_tail_c = max_tail.astype(compute_dtype)
+    sum_full_c = sum_full.astype(compute_dtype)
+    sum_tail_c = sum_tail.astype(compute_dtype)
+    sum_logits_full_c = sum_logits_full.astype(compute_dtype)
+    sum_logits_tail_c = sum_logits_tail.astype(compute_dtype)
+
+    max_all = jnp.maximum(max_full_c, max_tail_c)
+    scale_full = jnp.exp(max_full_c - max_all)
+    scale_tail = jnp.exp(max_tail_c - max_all)
+    sum_all = (sum_full_c * scale_full + sum_tail_c * scale_tail).astype(jnp.float32)
+    sum_logits_all = (sum_logits_full_c * scale_full + sum_logits_tail_c * scale_tail).astype(jnp.float32)
+    return max_all.astype(jnp.float32), sum_all, sum_logits_all
+
+
+def _grpo_pallas_fwd(
+    *,
+    logits: Any,
+    chosen_ids: Any,
+    old_per_token_logps: Any,
+    advantages: Any,
+    cfg: GRPOKernelConfig,
+    interpret: bool,
+    debug: bool,
+) -> tuple[Any, Any, Any, Any, int]:
+    import jax.numpy as jnp
+
+    time_block = int(cfg.time_block)
+    if time_block <= 0:
+        raise ValueError("time_block must be > 0")
+    if time_block % 8 != 0:
+        raise ValueError("time_block must be divisible by 8")
+    softmax_dtype = _resolve_compute_dtype(cfg.compute_dtype)
+    quantize_logp = softmax_dtype == jnp.bfloat16
+    compute_dtype = softmax_dtype
+
+    original_vocab = int(logits.shape[-1])
+    eps_low = float(cfg.epsilon_low)
+    eps_high = float(cfg.epsilon_high)
+    temperature = float(cfg.temperature)
+
+    max_val, sum_exp, sum_exp_logits = _logsumexp_stats(logits=logits, cfg=cfg, interpret=interpret, debug=debug)
+    lse = max_val + jnp.log(sum_exp)
+
+    chosen = jnp.take_along_axis(logits, chosen_ids[..., None], axis=-1)[..., 0].astype(compute_dtype)
+    logp_raw = chosen.astype(jnp.float32) - lse.astype(jnp.float32)
+    if quantize_logp:
+        logp_raw = logp_raw.astype(jnp.bfloat16).astype(jnp.float32)
+    per_token_logps = logp_raw / temperature
+
+    mean_logit = sum_exp_logits.astype(jnp.float32) / sum_exp.astype(jnp.float32)
+    entropy = lse.astype(jnp.float32) - mean_logit
+
+    old_logp = old_per_token_logps.astype(jnp.float32)
+    ratio = jnp.exp(per_token_logps.astype(jnp.float32) - old_logp)
+    clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
+
+    advantages = advantages.astype(jnp.float32)
+    loss1 = ratio * advantages[..., None]
+    loss2 = clipped_ratio * advantages[..., None]
+    per_token_loss = -jnp.minimum(loss1, loss2)
+
+    return (
+        per_token_loss.astype(jnp.float32),
+        per_token_logps.astype(jnp.float32),
+        lse.astype(jnp.float32),
+        entropy.astype(jnp.float32),
+        original_vocab,
+    )
 
 
 def _grpo_pallas_bwd(
@@ -341,26 +416,19 @@ def _grpo_pallas_bwd(
     softmax_dtype = _resolve_compute_dtype(cfg.compute_dtype)
     use_bf16_softmax = softmax_dtype == jnp.bfloat16
 
-    logits, _ = _pad_vocab(logits, block_size=cfg.block_size)
-    logits, _ = _pad_time(logits, time_block=time_block, pad_value=0.0)
     chosen_ids, _ = _pad_time(chosen_ids, time_block=time_block, pad_value=0)
     old_per_token_logps, _ = _pad_time(old_per_token_logps, time_block=time_block, pad_value=0.0)
     per_token_logps, _ = _pad_time(per_token_logps, time_block=time_block, pad_value=0.0)
     lse, _ = _pad_time(lse, time_block=time_block, pad_value=0.0)
     dloss, _ = _pad_time(dloss, time_block=time_block, pad_value=0.0)
 
-    batch, time, vocab = (int(logits.shape[0]), int(logits.shape[1]), int(logits.shape[2]))
-    time_blocks = int(time // time_block)
     block_size = int(cfg.block_size)
-    blocks = _ceil_div(vocab, block_size)
     index_subblock = _choose_index_subblock(block_size)
     num_index_subblocks = int(block_size // index_subblock)
 
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
     temperature = float(cfg.temperature)
-
-    out_dlogits = jax.ShapeDtypeStruct((batch, time, vocab), logits.dtype)
 
     chosen_ids3 = chosen_ids[..., None]
     old_logps3 = old_per_token_logps[..., None]
@@ -428,38 +496,105 @@ def _grpo_pallas_bwd(
                 dlogits_sub = dlogits_sub + onehot * scale[:, None]
                 dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = dlogits_sub.astype(dlogits_ref.dtype)
 
-    call = pl.pallas_call(
-        functools.partial(kernel),
-        out_shape=out_dlogits,
-        grid_spec=pltpu.PrefetchScalarGridSpec(
-            num_scalar_prefetch=0,
-            in_specs=[
-                pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((batch, 1), lambda b, t, k: (0, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-            ],
-            out_specs=pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
-            grid=(batch, time_blocks, blocks),
-        ),
-        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "parallel")),
-        interpret=interpret,
-        debug=bool(debug),
-    )
+    vocab = int(original_vocab)
+    full_blocks = int(vocab // block_size)
+    full_vocab = int(full_blocks * block_size)
+    tail_vocab = int(vocab - full_vocab)
 
-    dlogits = call(
-        logits,
-        chosen_ids3,
-        old_logps3,
-        advantages2,
-        logps3,
-        lse3,
-        dloss3,
-    )
-    return dlogits[:, :original_time, : int(original_vocab)]
+    dlogits_full = None
+    if full_blocks > 0:
+        logits_full, _ = _pad_time(logits[:, :, :full_vocab], time_block=time_block, pad_value=0.0)
+        batch, time, _ = (int(logits_full.shape[0]), int(logits_full.shape[1]), int(logits_full.shape[2]))
+        time_blocks = int(time // time_block)
+        out_dlogits_full = jax.ShapeDtypeStruct((batch, time, full_vocab), logits.dtype)
+
+        call = pl.pallas_call(
+            functools.partial(kernel),
+            out_shape=out_dlogits_full,
+            grid_spec=pltpu.PrefetchScalarGridSpec(
+                num_scalar_prefetch=0,
+                in_specs=[
+                    pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
+                    pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+                    pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+                    pl.BlockSpec((batch, 1), lambda b, t, k: (0, 0)),
+                    pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+                    pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+                    pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+                ],
+                out_specs=pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
+                grid=(batch, time_blocks, full_blocks),
+            ),
+            compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "parallel")),
+            interpret=interpret,
+            debug=bool(debug),
+        )
+
+        dlogits_full = call(
+            logits_full,
+            chosen_ids3,
+            old_logps3,
+            advantages2,
+            logps3,
+            lse3,
+            dloss3,
+        )
+
+    dlogits_tail = None
+    if tail_vocab > 0:
+        logits_tail, _ = _pad_time(logits[:, :, full_vocab:], time_block=time_block, pad_value=0.0)
+
+        lse_val = lse.astype(jnp.float32)
+        logp = per_token_logps.astype(jnp.float32)
+        old_logp = old_per_token_logps.astype(jnp.float32)
+        ratio = jnp.exp(logp - old_logp).astype(jnp.float32)
+        clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
+
+        advantage = advantages.astype(jnp.float32)[:, None]
+        loss1 = ratio * advantage
+        loss2 = clipped_ratio * advantage
+        unclipped = loss2 >= loss1
+
+        dlogp = (-loss1) * unclipped.astype(jnp.float32)
+        dlogp = dlogp * dloss.astype(jnp.float32)
+        scale = dlogp / temperature
+
+        if use_bf16_softmax:
+            scale_c = scale.astype(jnp.bfloat16)
+            lse_c = lse_val.astype(jnp.bfloat16)
+            logits_c = logits_tail.astype(jnp.bfloat16)
+            log_softmax = logits_c - lse_c[..., None]
+            probs = jnp.exp(log_softmax)
+            dlogits_tail = (-probs) * scale_c[..., None]
+        else:
+            scale_c = scale
+            logits_c = logits_tail.astype(jnp.float32)
+            log_softmax = logits_c - lse_val[..., None]
+            probs = jnp.exp(log_softmax).astype(jnp.float32)
+            dlogits_tail = (-probs) * scale_c[..., None]
+
+        idx_tail = (chosen_ids.astype(jnp.int32) - int(full_vocab)).astype(jnp.int32)
+        mask = (idx_tail >= 0) & (idx_tail < int(tail_vocab))
+        bt = int(dlogits_tail.shape[0] * dlogits_tail.shape[1])
+        rows = jnp.arange(bt, dtype=jnp.int32)
+        cols = idx_tail.reshape((bt,))
+        updates = scale_c.reshape((bt,))
+        mask_flat = mask.reshape((bt,))
+        cols = jnp.where(mask_flat, cols, 0)
+        updates = jnp.where(mask_flat, updates, jnp.asarray(0, dtype=updates.dtype))
+        dlogits_tail = dlogits_tail.reshape((bt, int(tail_vocab))).at[rows, cols].add(updates).reshape(
+            dlogits_tail.shape
+        )
+        dlogits_tail = dlogits_tail.astype(logits.dtype)
+
+    if dlogits_full is None:
+        dlogits = dlogits_tail
+    elif dlogits_tail is None:
+        dlogits = dlogits_full
+    else:
+        dlogits = jnp.concatenate([dlogits_full, dlogits_tail], axis=-1)
+
+    return dlogits[:, :original_time, :vocab]
 
 def build_grpo_per_token_loss_pallas(
     cfg: GRPOKernelConfig,

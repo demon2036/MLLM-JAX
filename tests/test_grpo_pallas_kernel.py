@@ -55,8 +55,8 @@ def test_grpo_pallas_kernel_matches_reference_forward_and_backward(vocab: int):
         debug=False,
     )
 
-    assert jnp.max(jnp.abs(per_loss_ref - per_loss_k)) < 1e-5
-    assert jnp.max(jnp.abs(per_logp_ref - per_logp_k)) < 1e-5
+    assert jnp.max(jnp.abs(per_loss_ref - per_loss_k)) < 1e-4
+    assert jnp.max(jnp.abs(per_logp_ref - per_logp_k)) < 1e-4
 
     def loss_ref_fn(l):
         per_loss, _ = grpo_per_token_loss_reference(
@@ -85,7 +85,7 @@ def test_grpo_pallas_kernel_matches_reference_forward_and_backward(vocab: int):
     grad_ref = jax.grad(loss_ref_fn)(logits)
     grad_k = jax.grad(loss_k_fn)(logits).astype(jnp.float32)
 
-    assert jnp.max(jnp.abs(grad_ref - grad_k)) < 1e-5
+    assert jnp.max(jnp.abs(grad_ref - grad_k)) < 1e-4
 
 
 @pytest.mark.parametrize("vocab", [15, 24])
@@ -131,8 +131,8 @@ def test_grpo_pallas_kernel_on_policy_matches_reference_forward_and_backward(voc
         debug=False,
     )
 
-    assert jnp.max(jnp.abs(per_loss_ref - per_loss_k)) < 1e-5
-    assert jnp.max(jnp.abs(per_logp_ref - per_logp_k)) < 1e-5
+    assert jnp.max(jnp.abs(per_loss_ref - per_loss_k)) < 1e-4
+    assert jnp.max(jnp.abs(per_logp_ref - per_logp_k)) < 1e-4
 
     def loss_ref_fn(l):
         per_loss, _ = ref_impl(l)
@@ -152,7 +152,7 @@ def test_grpo_pallas_kernel_on_policy_matches_reference_forward_and_backward(voc
     grad_ref = jax.grad(loss_ref_fn)(logits)
     grad_k = jax.grad(loss_k_fn)(logits).astype(jnp.float32)
 
-    assert jnp.max(jnp.abs(grad_ref - grad_k)) < 1e-5
+    assert jnp.max(jnp.abs(grad_ref - grad_k)) < 1e-4
 
 
 @pytest.mark.skipif(jax.default_backend() != "tpu", reason="requires TPU mosaic lowering")

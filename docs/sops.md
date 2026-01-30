@@ -39,6 +39,7 @@
 - TPU v6e-8 nanoGPT Tiny Shakespeare Muon vs AdamW (W&B online): `docs/sops/tpu-vm-v6e-8-nanogpt-muon-official-compare.md`
 - TPU v6e-8 unified-api-refactor SFT + nanoGPT regression (W&B online): `docs/sops/tpu-vm-v6e-8-unified-api-refactor-sft-nanogpt-regression.md`
 - TPU v4-8 GRPO runner smoke (`rollout.backend=naive`): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
+- TPU v4-8 GRPO full test-set eval sweep (Qwen2.5-3B, W&B): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-full-test-eval-sweep.md`
 - TPU v4-8 RL/GSM8K `reinforce++` (100 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
 - TPU v4-8 RL/GSM8K bs128 `reinforce++` (100 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-reinforcepp-wandb-100steps.md`
 - TPU v4-8 RL/GSM8K bs128 algtest (20 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-algtest-20steps.md`
@@ -90,6 +91,7 @@
 - `docs/sops/tpu-vm-v6e-8-nanogpt-tinyshakespeare-standard.md`
 - `docs/sops/tpu-vm-v6e-8-unified-api-refactor-sft-nanogpt-regression.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
+- `docs/sops/tpu-vm-v4-8-grpo-gsm8k-full-test-eval-sweep.md`
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-reinforcepp-wandb-100steps.md`
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-algtest-20steps.md`

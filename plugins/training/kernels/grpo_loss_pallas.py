@@ -183,6 +183,42 @@ def _logsumexp_stats_pallas_full_vocab(
     out_sum = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
     out_sum_logits = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
 
+    if blocks == 1:
+        def kernel_single_block(logits_ref, out_max_ref, out_sum_ref, out_sum_logits_ref):
+            logits_tile = logits_ref[0, :, :]
+            if compute_dtype == jnp.float32 and logits_tile.dtype != jnp.float32:
+                logits_tile = logits_tile.astype(jnp.float32)
+            tile_max = jnp.max(logits_tile, axis=-1)
+            tile_exp = jnp.exp(logits_tile - tile_max[:, None])
+            tile_sum = jnp.sum(tile_exp, axis=-1).astype(compute_dtype)
+            tile_sum_logits = jnp.sum(tile_exp * logits_tile, axis=-1).astype(compute_dtype)
+            out_max_ref[0, :, 0] = tile_max.astype(out_max_ref.dtype)
+            out_sum_ref[0, :, 0] = tile_sum.astype(out_sum_ref.dtype)
+            out_sum_logits_ref[0, :, 0] = tile_sum_logits.astype(out_sum_logits_ref.dtype)
+
+        call = pl.pallas_call(
+            functools.partial(kernel_single_block),
+            out_shape=(out_max, out_sum, out_sum_logits),
+            grid_spec=pltpu.PrefetchScalarGridSpec(
+                num_scalar_prefetch=0,
+                in_specs=[pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k))],
+                out_specs=[
+                    pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+                    pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+                    pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+                ],
+                grid=(batch, time_blocks, 1),
+            ),
+            compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "parallel")),
+            interpret=interpret,
+            debug=bool(debug),
+        )
+        max3, sum3, sum_logits3 = call(logits)
+        max_val = max3[:, :original_time, 0]
+        sum_exp = sum3[:, :original_time, 0]
+        sum_exp_logits = sum_logits3[:, :original_time, 0]
+        return max_val, sum_exp, sum_exp_logits
+
     def kernel(
         logits_ref,
         out_max_ref,

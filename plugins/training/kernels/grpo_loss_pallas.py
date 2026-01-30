@@ -144,7 +144,7 @@ def _logsumexp_stats_pallas_full_vocab(
     """Compute per-(B,T) logsumexp stats (max + sum_exp) using Pallas.
 
     Expects:
-      - logits: [B, T, V_full] with V_full % block_size == 0
+      - logits: [B, T, V]
 
     Returns:
       - max_val: [B, T] float32
@@ -200,13 +200,11 @@ def _logsumexp_stats_pallas_full_vocab(
     logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
 
     batch, time, vocab = (int(logits.shape[0]), int(logits.shape[1]), int(logits.shape[2]))
-    if vocab % block_size != 0:
-        raise ValueError("logits vocab must be a multiple of block_size for the full-vocab stats kernel")
 
     time_blocks = int(time // time_block)
-    blocks = int(vocab // block_size)
+    blocks = int(_ceil_div(vocab, block_size))
     if blocks <= 0:
-        raise ValueError("stats kernel requires at least 1 full vocab block")
+        raise ValueError("stats kernel requires at least 1 vocab block")
 
     out_max = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
     out_sum = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
@@ -216,6 +214,10 @@ def _logsumexp_stats_pallas_full_vocab(
             logits_tile = logits_ref[0, :, :]
             if compute_dtype == jnp.float32 and logits_tile.dtype != jnp.float32:
                 logits_tile = logits_tile.astype(jnp.float32)
+            if vocab != block_size:
+                lanes = jnp.arange(block_size, dtype=jnp.int32)
+                mask = lanes < vocab
+                logits_tile = jnp.where(mask[None, :], logits_tile, jnp.finfo(logits_tile.dtype).min)
 
             if use_manual_reduction:
                 tile_max = _reduce_max_pow2(logits_tile).astype(compute_dtype)
@@ -264,6 +266,9 @@ def _logsumexp_stats_pallas_full_vocab(
         logits_tile = logits_ref[0, :, :]
         if compute_dtype == jnp.float32 and logits_tile.dtype != jnp.float32:
             logits_tile = logits_tile.astype(jnp.float32)
+        lanes = pid_k * block_size + jnp.arange(block_size, dtype=jnp.int32)
+        mask = lanes < vocab
+        logits_tile = jnp.where(mask[None, :], logits_tile, jnp.finfo(logits_tile.dtype).min)
 
         prev_max = max_ref[:]
         prev_sum = sum_ref[:]
@@ -325,10 +330,10 @@ def _logsumexp_stats_pallas_full_vocab_with_logits(
     interpret: bool,
     debug: bool,
 ):
-    """Compute per-(B,T) logsumexp stats over a vocab-multiple slice using Pallas.
+    """Compute per-(B,T) logsumexp stats (+ entropy numerator) using Pallas.
 
     Expects:
-      - logits: [B, T, V_full] with V_full % block_size == 0
+      - logits: [B, T, V]
 
     Returns:
       - max_val: [B, T] float32
@@ -385,13 +390,11 @@ def _logsumexp_stats_pallas_full_vocab_with_logits(
     logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
 
     batch, time, vocab = (int(logits.shape[0]), int(logits.shape[1]), int(logits.shape[2]))
-    if vocab % block_size != 0:
-        raise ValueError("logits vocab must be a multiple of block_size for the full-vocab stats kernel")
 
     time_blocks = int(time // time_block)
-    blocks = int(vocab // block_size)
+    blocks = int(_ceil_div(vocab, block_size))
     if blocks <= 0:
-        raise ValueError("stats kernel requires at least 1 full vocab block")
+        raise ValueError("stats kernel requires at least 1 vocab block")
 
     out_max = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
     out_sum = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
@@ -402,6 +405,10 @@ def _logsumexp_stats_pallas_full_vocab_with_logits(
             logits_tile = logits_ref[0, :, :]
             if compute_dtype == jnp.float32 and logits_tile.dtype != jnp.float32:
                 logits_tile = logits_tile.astype(jnp.float32)
+            if vocab != block_size:
+                lanes = jnp.arange(block_size, dtype=jnp.int32)
+                mask = lanes < vocab
+                logits_tile = jnp.where(mask[None, :], logits_tile, jnp.finfo(logits_tile.dtype).min)
 
             if use_manual_reduction:
                 tile_max = _reduce_max_pow2(logits_tile).astype(compute_dtype)
@@ -467,6 +474,9 @@ def _logsumexp_stats_pallas_full_vocab_with_logits(
         logits_tile = logits_ref[0, :, :]
         if compute_dtype == jnp.float32 and logits_tile.dtype != jnp.float32:
             logits_tile = logits_tile.astype(jnp.float32)
+        lanes = pid_k * block_size + jnp.arange(block_size, dtype=jnp.int32)
+        mask = lanes < vocab
+        logits_tile = jnp.where(mask[None, :], logits_tile, jnp.finfo(logits_tile.dtype).min)
 
         prev_max = max_ref[:]
         prev_sum = sum_ref[:]
@@ -541,9 +551,8 @@ def _logsumexp_stats_with_logits(
     """Compute per-(B,T) logsumexp stats (+ entropy numerator) without vocab padding.
 
     This avoids materializing a padded [B,T,V_pad] copy of `logits` (which can be
-    ~1+ GiB for Qwen2.5-3B), by:
-      1) running Pallas on the largest vocab-multiple prefix, and
-      2) handling the small remainder ("tail") with JAX ops, then combining.
+    ~1+ GiB for Qwen2.5-3B), by running a tail-masked Pallas reduction over the
+    full vocab.
     """
     import jax.numpy as jnp
 
@@ -555,14 +564,10 @@ def _logsumexp_stats_with_logits(
     if block_size <= 0:
         raise ValueError("block_size must be > 0")
 
-    full_blocks = int(vocab // block_size)
-    full_vocab = int(full_blocks * block_size)
-    tail_vocab = int(vocab - full_vocab)
-
     # TPU bf16 log_softmax in JAX tends to use higher-precision internal math.
     # For the degenerate single-block case (V <= block_size), use a small JAX
     # float32 reduction to keep bf16-gradient parity tests stable.
-    if full_blocks == 1 and tail_vocab == 0 and compute_dtype == jnp.bfloat16:
+    if vocab == block_size and compute_dtype == jnp.bfloat16:
         logits_f32 = logits.astype(jnp.float32)
         max_val = jnp.max(logits_f32, axis=-1)
         exp = jnp.exp(logits_f32 - max_val[..., None])
@@ -570,43 +575,7 @@ def _logsumexp_stats_with_logits(
         sum_logits = jnp.sum(exp * logits_f32, axis=-1)
         return max_val.astype(jnp.float32), sum_exp.astype(jnp.float32), sum_logits.astype(jnp.float32)
 
-    if full_blocks > 0:
-        max_full, sum_full, sum_logits_full = _logsumexp_stats_pallas_full_vocab_with_logits(
-            logits=logits[:, :, :full_vocab],
-            cfg=cfg,
-            interpret=interpret,
-            debug=debug,
-        )
-    else:
-        max_full = jnp.full(logits.shape[:2], jnp.finfo(compute_dtype).min, dtype=jnp.float32)
-        sum_full = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
-        sum_logits_full = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
-
-    if tail_vocab > 0:
-        tail = logits[:, :, full_vocab:]
-        tail_compute = tail.astype(compute_dtype)
-        max_tail = jnp.max(tail_compute, axis=-1).astype(jnp.float32)
-        exp_tail = jnp.exp(tail_compute - max_tail.astype(compute_dtype)[..., None])
-        sum_tail = jnp.sum(exp_tail, axis=-1).astype(jnp.float32)
-        sum_logits_tail = jnp.sum(exp_tail * tail_compute, axis=-1).astype(jnp.float32)
-    else:
-        max_tail = jnp.full(logits.shape[:2], jnp.finfo(compute_dtype).min, dtype=jnp.float32)
-        sum_tail = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
-        sum_logits_tail = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
-
-    max_full_c = max_full.astype(compute_dtype)
-    max_tail_c = max_tail.astype(compute_dtype)
-    sum_full_c = sum_full.astype(compute_dtype)
-    sum_tail_c = sum_tail.astype(compute_dtype)
-    sum_logits_full_c = sum_logits_full.astype(compute_dtype)
-    sum_logits_tail_c = sum_logits_tail.astype(compute_dtype)
-
-    max_all = jnp.maximum(max_full_c, max_tail_c)
-    scale_full = jnp.exp(max_full_c - max_all)
-    scale_tail = jnp.exp(max_tail_c - max_all)
-    sum_all = (sum_full_c * scale_full + sum_tail_c * scale_tail).astype(jnp.float32)
-    sum_logits_all = (sum_logits_full_c * scale_full + sum_logits_tail_c * scale_tail).astype(jnp.float32)
-    return max_all.astype(jnp.float32), sum_all, sum_logits_all
+    return _logsumexp_stats_pallas_full_vocab_with_logits(logits=logits, cfg=cfg, interpret=interpret, debug=debug)
 
 
 def _logsumexp_stats(
@@ -622,46 +591,11 @@ def _logsumexp_stats(
     softmax_dtype = _resolve_compute_dtype(cfg.compute_dtype)
     compute_dtype = softmax_dtype
 
-    vocab = int(logits.shape[-1])
     block_size = int(cfg.block_size)
     if block_size <= 0:
         raise ValueError("block_size must be > 0")
 
-    full_blocks = int(vocab // block_size)
-    full_vocab = int(full_blocks * block_size)
-    tail_vocab = int(vocab - full_vocab)
-
-    if full_blocks > 0:
-        max_full, sum_full = _logsumexp_stats_pallas_full_vocab(
-            logits=logits[:, :, :full_vocab],
-            cfg=cfg,
-            interpret=interpret,
-            debug=debug,
-        )
-    else:
-        max_full = jnp.full(logits.shape[:2], jnp.finfo(compute_dtype).min, dtype=jnp.float32)
-        sum_full = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
-
-    if tail_vocab > 0:
-        tail = logits[:, :, full_vocab:]
-        tail_compute = tail.astype(compute_dtype)
-        max_tail = jnp.max(tail_compute, axis=-1).astype(jnp.float32)
-        exp_tail = jnp.exp(tail_compute - max_tail.astype(compute_dtype)[..., None])
-        sum_tail = jnp.sum(exp_tail, axis=-1).astype(jnp.float32)
-    else:
-        max_tail = jnp.full(logits.shape[:2], jnp.finfo(compute_dtype).min, dtype=jnp.float32)
-        sum_tail = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
-
-    max_full_c = max_full.astype(compute_dtype)
-    max_tail_c = max_tail.astype(compute_dtype)
-    sum_full_c = sum_full.astype(compute_dtype)
-    sum_tail_c = sum_tail.astype(compute_dtype)
-
-    max_all = jnp.maximum(max_full_c, max_tail_c)
-    scale_full = jnp.exp(max_full_c - max_all)
-    scale_tail = jnp.exp(max_tail_c - max_all)
-    sum_all = (sum_full_c * scale_full + sum_tail_c * scale_tail).astype(jnp.float32)
-    return max_all.astype(jnp.float32), sum_all
+    return _logsumexp_stats_pallas_full_vocab(logits=logits, cfg=cfg, interpret=interpret, debug=debug)
 
 
 def _grpo_pallas_fwd(

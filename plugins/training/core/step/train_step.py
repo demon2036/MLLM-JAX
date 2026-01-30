@@ -19,11 +19,14 @@ def training_step(state: Any, inputs: Any):
         decay = getattr(st, "ema_decay", None)
         if decay is None:
             raise ValueError("ema_params is set but ema_decay is missing on the TrainState")
-        decay_f = float(decay)
-        if not (0.0 < decay_f < 1.0):
-            raise ValueError(f"ema_decay must be in (0, 1), got {decay_f}")
+        # NOTE: this runs inside jitted training loops, so `decay` may be a tracer
+        # (e.g. a 0-d array). Avoid `float(decay)` which would trigger a
+        # ConcretizationTypeError.
+        #
+        # Range validation is performed when building the TrainState (EMA-enabled
+        # configs validate decay in Python).
         new_ema = jax.tree_util.tree_map(
-            lambda ema, p: ema * decay_f + (1.0 - decay_f) * p,
+            lambda ema, p: ema * jnp.asarray(decay, dtype=ema.dtype) + (1.0 - jnp.asarray(decay, dtype=ema.dtype)) * p,
             ema_params,
             st.params,
         )

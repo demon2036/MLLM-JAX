@@ -331,6 +331,17 @@ def _logsumexp_stats(
     full_vocab = int(full_blocks * block_size)
     tail_vocab = int(vocab - full_vocab)
 
+    # TPU bf16 log_softmax in JAX tends to use higher-precision internal math.
+    # For the degenerate single-block case (V <= block_size), use a small JAX
+    # float32 reduction to keep bf16-gradient parity tests stable.
+    if full_blocks == 1 and tail_vocab == 0 and compute_dtype == jnp.bfloat16:
+        logits_f32 = logits.astype(jnp.float32)
+        max_val = jnp.max(logits_f32, axis=-1)
+        exp = jnp.exp(logits_f32 - max_val[..., None])
+        sum_exp = jnp.sum(exp, axis=-1)
+        sum_logits = jnp.sum(exp * logits_f32, axis=-1)
+        return max_val.astype(jnp.float32), sum_exp.astype(jnp.float32), sum_logits.astype(jnp.float32)
+
     if full_blocks > 0:
         max_full, sum_full, sum_logits_full = _logsumexp_stats_pallas_full_vocab(
             logits=logits[:, :, :full_vocab],

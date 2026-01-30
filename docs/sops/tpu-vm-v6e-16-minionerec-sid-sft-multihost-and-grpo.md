@@ -46,9 +46,9 @@
 
 ### 8) Start **multi-host SFT** via nohup (launch on all workers)
 
-- Config: `projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_full.yaml` (`mesh_shape: auto`, effective BS=1024, `num_train_epochs: 10`)
+- Config: `projects/minionerec/sft/configs/train/v6e-16/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_full.yaml` (`mesh_shape: auto`, effective BS=1024, `num_train_epochs: 10`)
 - Start (multi-host guards enabled):
-  - `./scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone us-east1-d --worker all --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_sid_sft_from_config_multihost_nohup.sh --env-name mllm-jax --config projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_full.yaml --run-mode train --require-jax-process-count 4'`
+  - `./scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone us-east1-d --worker all --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_sid_sft_from_config_multihost_nohup.sh --env-name mllm-jax --config projects/minionerec/sft/configs/train/v6e-16/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_full.yaml --run-mode train --require-jax-process-count 4'`
 
 ### 9) Monitor SFT logs + exit code
 
@@ -95,6 +95,6 @@
 ## References
 
 - SFT runner: `projects/minionerec/sft/runner.py`
-- SFT config: `projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_full.yaml`
+- SFT config: `projects/minionerec/sft/configs/train/v6e-16/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_full.yaml`
 - GRPO config: `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps20_v6e16_bench.yaml`
 - Multi-host launchers: `scripts/tpu_vm_start_sid_sft_from_config_multihost_nohup.sh`, `scripts/tpu_vm_start_grpo_gsm8k_from_config_multihost_nohup.sh`

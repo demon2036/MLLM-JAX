@@ -47,9 +47,9 @@
 
 #### 8) Start **multi-host SFT train** via nohup (launch on all workers)
 
-- Config: `projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_full.yaml`
+- Config: `projects/minionerec/sft/configs/train/v6e-16/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_full.yaml`
 - Start (multi-host guards enabled):
-  - `./scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone us-east5-b --worker all --env-file /root/.env --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_sid_sft_from_config_multihost_nohup.sh --env-name mllm-jax --config projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_full.yaml --run-mode train --require-jax-process-count 4'`
+  - `./scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone us-east5-b --worker all --env-file /root/.env --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_sid_sft_from_config_multihost_nohup.sh --env-name mllm-jax --config projects/minionerec/sft/configs/train/v6e-16/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_full.yaml --run-mode train --require-jax-process-count 4'`
 
 #### 9) Check exit codes (all workers)
 
@@ -90,9 +90,9 @@
 
 #### 4) Run eval (single-host TPU) to produce predictions JSON
 
-- Config: `projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_eval_from_last.yaml` (requires `jax.max_cache_length>=132`; set to `512` in this repo)
+- Config: `projects/minionerec/sft/configs/eval/v6e-16/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_eval_from_last.yaml` (requires `jax.max_cache_length>=132`; set to `512` in this repo)
 - Start:
-  - `./scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone us-east5-b --worker 0 --env-file /root/.env --command 'cd /root/MLLM-JAX; bash scripts/tpu_vm_start_sid_sft_from_config_nohup.sh --env-name mllm-jax --config projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_eval_from_last.yaml --run-mode eval'`
+  - `./scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone us-east5-b --worker 0 --env-file /root/.env --command 'cd /root/MLLM-JAX; bash scripts/tpu_vm_start_sid_sft_from_config_nohup.sh --env-name mllm-jax --config projects/minionerec/sft/configs/eval/v6e-16/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_eval_from_last.yaml --run-mode eval'`
 - Confirm exit:
   - `./scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone us-east5-b --worker 0 --command 'cd /root/MLLM-JAX; cat logs/nohup_sid_sft_*eval_from_last*latest.exit'`  # expect `0`
 
@@ -145,8 +145,8 @@
 
 - SFT runner: `projects/minionerec/sft/runner.py`
 - SFT configs:
-  - Train: `projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_full.yaml`
-  - Eval: `projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_eval_from_last.yaml`
+  - Train: `projects/minionerec/sft/configs/train/v6e-16/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_full.yaml`
+  - Eval: `projects/minionerec/sft/configs/eval/v6e-16/sid_sft_jax_qwen25_1p5b_instruct_industrial_v6e16_eval_from_last.yaml`
 - Multi-host launcher: `scripts/tpu_vm_start_sid_sft_from_config_multihost_nohup.sh`
 - Upstream cross-check: `workdir/MiniOneRec/calc.py`
 

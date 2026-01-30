@@ -20,7 +20,7 @@ usage() {
 Start MiniOneRec SID SFT via nohup on a multi-host TPU VM.
 
 Usage:
-  bash scripts/tpu_vm_start_sid_sft_from_config_multihost_nohup.sh --config projects/minionerec/sft/configs/<file>.yaml
+  bash scripts/tpu_vm_start_sid_sft_from_config_multihost_nohup.sh --config projects/minionerec/sft/configs/<group>/<file>.yaml
 
 Optional:
   --env-name NAME               Conda env name (default: mllm-jax)
@@ -74,4 +74,3 @@ exec bash scripts/tpu_vm_start_sid_sft_from_config_nohup.sh \
   --env-name "$ENV_NAME" \
   --config "$CONFIG_PATH" \
   --run-mode "$RUN_MODE"
-

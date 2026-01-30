@@ -40,10 +40,10 @@
 ### E) v6e-8 (eval): run constrained-decoding eval (W&B online)
 
 - Office eval from best:
-  - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v6e-8-sft-eval-match-official-260129055649 --zone europe-west4-a --worker 0 --env-file /root/.env --command 'set -euo pipefail; export PYTHONUNBUFFERED=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; ./scripts/run_sid_sft.sh --config projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_base_office_v6e16_eval_from_best_rightpad_mu_fp32.yaml --run-mode eval'`
+  - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v6e-8-sft-eval-match-official-260129055649 --zone europe-west4-a --worker 0 --env-file /root/.env --command 'set -euo pipefail; export PYTHONUNBUFFERED=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; ./scripts/run_sid_sft.sh --config projects/minionerec/sft/configs/eval/v6e-16/sid_sft_jax_qwen25_1p5b_base_office_v6e16_eval_from_best_rightpad_mu_fp32.yaml --run-mode eval'`
 
 - Industrial eval from last:
-  - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v6e-8-sft-eval-match-official-260129055649 --zone europe-west4-a --worker 0 --env-file /root/.env --command 'set -euo pipefail; export PYTHONUNBUFFERED=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; ./scripts/run_sid_sft.sh --config projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_base_industrial_v6e16_eval_from_last_rightpad_mu_fp32.yaml --run-mode eval'`
+  - `scripts/ssh_tpu_vm_root.sh --name mllm-jax-v6e-8-sft-eval-match-official-260129055649 --zone europe-west4-a --worker 0 --env-file /root/.env --command 'set -euo pipefail; export PYTHONUNBUFFERED=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; ./scripts/run_sid_sft.sh --config projects/minionerec/sft/configs/eval/v6e-16/sid_sft_jax_qwen25_1p5b_base_industrial_v6e16_eval_from_last_rightpad_mu_fp32.yaml --run-mode eval'`
 
 ### F) v6e-8 (eval): cross-check with upstream `calc.py`
 

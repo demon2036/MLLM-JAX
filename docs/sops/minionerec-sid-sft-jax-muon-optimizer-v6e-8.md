@@ -15,12 +15,12 @@
 ### 2) Run Muon SFT train (best config)
 
 - Start Muon SFT training (nohup, W&B online):
-  - `scripts/ssh_tpu_vm_root.sh --name sft-muon-v6e-8-260129145924 --zone europe-west4-a --env-file /root/.env --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_sid_sft_from_config_nohup.sh --config projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_base_industrial_v6e8_e3_muon_lr3e3_aux3e3_train.yaml --run-mode train'`
+  - `scripts/ssh_tpu_vm_root.sh --name sft-muon-v6e-8-260129145924 --zone europe-west4-a --env-file /root/.env --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_sid_sft_from_config_nohup.sh --config projects/minionerec/sft/configs/train/v6e-8/sid_sft_jax_qwen25_1p5b_base_industrial_v6e8_e3_muon_lr3e3_aux3e3_train.yaml --run-mode train'`
 
 ### 3) Run constrained-decoding eval from the last checkpoint (dp=8, bs=8)
 
 - Start eval (nohup, W&B online):
-  - `scripts/ssh_tpu_vm_root.sh --name sft-muon-v6e-8-260129145924 --zone europe-west4-a --env-file /root/.env --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_sid_sft_from_config_nohup.sh --config projects/minionerec/sft/configs/sid_sft_jax_qwen25_1p5b_base_industrial_v6e8_e3_muon_lr3e3_aux3e3_last_eval_dp8_bs8.yaml --run-mode eval'`
+  - `scripts/ssh_tpu_vm_root.sh --name sft-muon-v6e-8-260129145924 --zone europe-west4-a --env-file /root/.env --command 'set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_sid_sft_from_config_nohup.sh --config projects/minionerec/sft/configs/eval/v6e-8/sid_sft_jax_qwen25_1p5b_base_industrial_v6e8_e3_muon_lr3e3_aux3e3_last_eval_dp8_bs8.yaml --run-mode eval'`
 
 ### 4) Cross-check metrics with upstream `calc.py`
 

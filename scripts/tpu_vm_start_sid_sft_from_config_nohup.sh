@@ -17,7 +17,7 @@ usage() {
 Start MiniOneRec SID SFT via nohup from an explicit YAML config.
 
 Usage:
-  bash scripts/tpu_vm_start_sid_sft_from_config_nohup.sh --config projects/minionerec/sft/configs/<file>.yaml
+  bash scripts/tpu_vm_start_sid_sft_from_config_nohup.sh --config projects/minionerec/sft/configs/<group>/<file>.yaml
 
 Optional:
   --env-name NAME   Conda env name (default: mllm-jax)
@@ -124,4 +124,3 @@ echo "EXIT_FILE=$EXIT_FILE"
 echo "LATEST_LOG=$LATEST_LOG"
 echo "LATEST_EXIT=$LATEST_EXIT"
 echo "LATEST_PID=$LATEST_PID"
-

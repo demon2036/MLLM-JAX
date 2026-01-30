@@ -466,9 +466,7 @@ def _grpo_pallas_bwd(
     original_time = int(dloss.shape[1])
     compute_dtype = jnp.float32
     softmax_dtype = _resolve_compute_dtype(cfg.compute_dtype)
-    # Match JAX bf16 `log_softmax` gradient more closely by using float32 softmax
-    # math in the backward pass, even when forward logp is bf16-quantized.
-    use_bf16_softmax = False
+    use_bf16_softmax = softmax_dtype == jnp.bfloat16
 
     chosen_ids, _ = _pad_time(chosen_ids, time_block=time_block, pad_value=0)
     old_per_token_logps, _ = _pad_time(old_per_token_logps, time_block=time_block, pad_value=0.0)
@@ -523,17 +521,14 @@ def _grpo_pallas_bwd(
 
         dlogp = -loss1 * unclipped.astype(jnp.float32)
         dlogp = dlogp * dloss_ref[0, :, 0].astype(jnp.float32)
-        if use_bf16_softmax:
-            scale_bf16 = (dlogp / temperature).astype(jnp.bfloat16)
-        else:
-            scale = dlogp / temperature
+        scale = dlogp / temperature
         lane_ids = jnp.arange(index_subblock, dtype=jnp.int32)[None, :]
         for sb in range(num_index_subblocks):
             if use_bf16_softmax:
                 logits_sub = logits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock].astype(jnp.bfloat16)
                 log_softmax_sub = logits_sub - lse_bf16[:, None]
-                probs_sub = jnp.exp(log_softmax_sub)
-                dlogits_sub = (-probs_sub) * scale_bf16[:, None]
+                probs_sub = jnp.exp(log_softmax_sub).astype(jnp.float32)
+                dlogits_sub = (-probs_sub) * scale[:, None]
             else:
                 logits_sub = logits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock].astype(jnp.float32)
                 log_softmax_sub = logits_sub - lse_val[:, None]
@@ -544,7 +539,7 @@ def _grpo_pallas_bwd(
             offset = idx - sb_start
             onehot = (lane_ids == offset[:, None]).astype(jnp.float32)
             if use_bf16_softmax:
-                dlogits_sub = dlogits_sub + onehot.astype(jnp.bfloat16) * scale_bf16[:, None]
+                dlogits_sub = dlogits_sub + onehot * scale[:, None]
                 dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = dlogits_sub.astype(dlogits_ref.dtype)
             else:
                 dlogits_sub = dlogits_sub + onehot * scale[:, None]
@@ -614,11 +609,11 @@ def _grpo_pallas_bwd(
         scale = dlogp / temperature
 
         if use_bf16_softmax:
-            scale_c = scale.astype(jnp.bfloat16)
+            scale_c = scale
             lse_c = lse_val.astype(jnp.bfloat16)
             logits_c = logits_tail.astype(jnp.bfloat16)
             log_softmax = logits_c - lse_c[..., None]
-            probs = jnp.exp(log_softmax)
+            probs = jnp.exp(log_softmax).astype(jnp.float32)
             dlogits_tail = (-probs) * scale_c[..., None]
         else:
             scale_c = scale

@@ -235,6 +235,13 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         pallas_compute_dtype_raw = cfg.get("pallas_compute_dtype")
     pallas_compute_dtype = str(pallas_compute_dtype_raw or "bf16")
 
+    pallas_bwd_output_alias_logits_raw = _get_by_path(cfg, "train.pallas_bwd_output_alias_logits")
+    if pallas_bwd_output_alias_logits_raw is None:
+        pallas_bwd_output_alias_logits_raw = cfg.get("pallas_bwd_output_alias_logits")
+    pallas_bwd_output_alias_logits = (
+        bool(pallas_bwd_output_alias_logits_raw) if pallas_bwd_output_alias_logits_raw is not None else False
+    )
+
     log_tpu_memory_raw = _get_by_path(cfg, "train.log_tpu_memory")
     if log_tpu_memory_raw is None:
         log_tpu_memory_raw = cfg.get("log_tpu_memory")
@@ -457,6 +464,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             pallas_block_size=pallas_block_size,
             pallas_time_block=pallas_time_block,
             pallas_compute_dtype=pallas_compute_dtype,
+            pallas_bwd_output_alias_logits=pallas_bwd_output_alias_logits,
             log_tpu_memory=log_tpu_memory,
             optimizer=optimizer_cfg,
         ),

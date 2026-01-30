@@ -804,7 +804,7 @@ def _grpo_pallas_bwd(
         ratio = jnp.exp(logp - old_logp).astype(jnp.float32)
         clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
 
-        advantage = advantages_ref[0, 0].astype(jnp.float32)
+        advantage = advantages_ref[pid_b, 0].astype(jnp.float32)
         loss1 = ratio * advantage
         loss2 = clipped_ratio * advantage
         unclipped = loss2 >= loss1
@@ -863,7 +863,7 @@ def _grpo_pallas_bwd(
                         pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
                         pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                         pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                        pl.BlockSpec((1, 1), lambda b, t, k: (b, 0)),
+                        pl.BlockSpec((batch, 1), lambda b, t, k: (0, 0)),
                         pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                         pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                         pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
@@ -905,7 +905,7 @@ def _grpo_pallas_bwd(
                             pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
                             pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                             pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                            pl.BlockSpec((1, 1), lambda b, t, k: (b, 0)),
+                            pl.BlockSpec((batch, 1), lambda b, t, k: (0, 0)),
                             pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                             pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                             pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
@@ -1014,7 +1014,8 @@ def _grpo_pallas_bwd(
                 ratio = jnp.exp(logp - old_logp).astype(jnp.float32)
                 clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
 
-                advantage = advantages_ref[0, 0].astype(jnp.float32)
+                pid_b = pl.program_id(0)
+                advantage = advantages_ref[pid_b, 0].astype(jnp.float32)
                 loss1 = ratio * advantage
                 loss2 = clipped_ratio * advantage
                 unclipped = loss2 >= loss1
@@ -1106,7 +1107,7 @@ def _grpo_pallas_bwd(
                 pl.BlockSpec((1, time_block, tail_tile_vocab), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                pl.BlockSpec((1, 1), lambda b, t, k: (b, 0)),
+                pl.BlockSpec((batch, 1), lambda b, t, k: (0, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),

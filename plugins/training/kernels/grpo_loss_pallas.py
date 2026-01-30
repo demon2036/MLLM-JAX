@@ -529,8 +529,8 @@ def _grpo_pallas_bwd(
         for sb in range(num_index_subblocks):
             if use_bf16_softmax:
                 logits_sub = logits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock].astype(jnp.bfloat16)
-                log_softmax_sub = logits_sub - lse_bf16[:, None]
-                probs_sub = jnp.exp(log_softmax_sub)
+                log_softmax_sub = logits_sub.astype(jnp.float32) - lse_val[:, None]
+                probs_sub = jnp.exp(log_softmax_sub).astype(jnp.bfloat16)
                 dlogits_sub = (-probs_sub) * scale_bf16[:, None]
             else:
                 logits_sub = logits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock].astype(jnp.float32)
@@ -613,10 +613,9 @@ def _grpo_pallas_bwd(
 
         if use_bf16_softmax:
             scale_c = scale.astype(jnp.bfloat16)
-            lse_c = lse_val.astype(jnp.bfloat16)
             logits_c = logits_tail.astype(jnp.bfloat16)
-            log_softmax = logits_c - lse_c[..., None]
-            probs = jnp.exp(log_softmax)
+            log_softmax = logits_c.astype(jnp.float32) - lse_val[..., None]
+            probs = jnp.exp(log_softmax).astype(jnp.bfloat16)
             dlogits_tail = (-probs) * scale_c[..., None]
         else:
             scale_c = scale

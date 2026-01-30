@@ -14,6 +14,7 @@ from plugins.common.wandb_utils import maybe_init_wandb
 from plugins.training.kernels.grpo_loss_pallas import (
     GRPOKernelConfig,
     grpo_per_token_loss_pallas,
+    grpo_per_token_loss_pallas_on_policy,
     grpo_per_token_loss_reference,
 )
 
@@ -36,6 +37,7 @@ def _jsonable_memory_stats(stats):
 @dataclass(frozen=True)
 class GRPOKernelBenchWandbConfig:
     impl: str
+    mode: str
     batch: int
     time: int
     vocab: int
@@ -54,7 +56,8 @@ class GRPOKernelBenchWandbConfig:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--impl", choices=["ref", "kernel"], required=True)
+    p.add_argument("--impl", choices=["jax", "ref", "kernel"], required=True)
+    p.add_argument("--mode", choices=["off_policy", "on_policy"], default="off_policy")
     p.add_argument("--batch", type=int, default=1)
     p.add_argument("--time", type=int, default=2048)
     p.add_argument("--vocab", type=int, default=151643)
@@ -91,6 +94,7 @@ def main():
 
     cfg_wandb = GRPOKernelBenchWandbConfig(
         impl=str(args.impl),
+        mode=str(args.mode),
         batch=int(args.batch),
         time=int(args.time),
         vocab=int(args.vocab),
@@ -109,7 +113,10 @@ def main():
 
     wandb_name = args.wandb_name
     if wandb_name is None:
-        wandb_name = f"grpo_kernel_bench_{cfg_wandb.impl}_b{cfg_wandb.batch}_t{cfg_wandb.time}_v{cfg_wandb.vocab}"
+        wandb_name = (
+            f"grpo_kernel_bench_{cfg_wandb.impl}_{cfg_wandb.mode}"
+            f"_b{cfg_wandb.batch}_t{cfg_wandb.time}_v{cfg_wandb.vocab}"
+        )
 
     wandb = maybe_init_wandb(
         cfg=cfg_wandb,
@@ -155,11 +162,56 @@ def main():
         compute_dtype=str(args.compute_dtype),
     )
 
+    mode = str(args.mode).strip().lower()
+    if mode not in {"off_policy", "on_policy"}:
+        raise ValueError(f"Unsupported mode={args.mode!r}")
+
+    def scalar_loss_jax(l):
+        import jax
+        import jax.numpy as jnp
+
+        # Match legacy TrainGRPOModule semantics:
+        # - log_softmax keeps input dtype (bf16/f16), then gather chosen token
+        # - divide by temperature after gather
+        per_token_logps = jnp.take_along_axis(
+            jax.nn.log_softmax(l, axis=-1),
+            chosen_ids[..., None],
+            axis=-1,
+        )[..., 0] / float(args.temperature)
+
+        if mode == "on_policy":
+            old = jax.lax.stop_gradient(per_token_logps)
+        else:
+            old = old_per_token_logps.astype(per_token_logps.dtype)
+
+        ratio = jnp.exp(per_token_logps - old)
+        clipped_ratio = jnp.clip(ratio, 1.0 - float(args.epsilon_low), 1.0 + float(args.epsilon_high))
+
+        adv = advantages.astype(jnp.float32)
+        loss1 = ratio * adv[..., None]
+        loss2 = clipped_ratio * adv[..., None]
+        per_token_loss = -jnp.minimum(loss1, loss2)
+        return per_token_loss.mean()
+
     def scalar_loss_ref(l):
         per_loss, _per_logp = grpo_per_token_loss_reference(
             logits=l,
             chosen_ids=chosen_ids,
-            old_per_token_logps=old_per_token_logps,
+            old_per_token_logps=(
+                old_per_token_logps
+                if mode == "off_policy"
+                else jax.lax.stop_gradient(
+                    grpo_per_token_loss_reference(
+                        logits=l,
+                        chosen_ids=chosen_ids,
+                        old_per_token_logps=jnp.zeros(chosen_ids.shape, dtype=jnp.float32),
+                        advantages=advantages,
+                        epsilon_low=float(args.epsilon_low),
+                        epsilon_high=float(args.epsilon_high),
+                        temperature=float(args.temperature),
+                    )[1]
+                )
+            ),
             advantages=advantages,
             epsilon_low=float(args.epsilon_low),
             epsilon_high=float(args.epsilon_high),
@@ -168,6 +220,16 @@ def main():
         return per_loss.mean()
 
     def scalar_loss_kernel(l):
+        if mode == "on_policy":
+            per_loss, _per_logp = grpo_per_token_loss_pallas_on_policy(
+                logits=l,
+                chosen_ids=chosen_ids,
+                advantages=advantages,
+                cfg=kernel_cfg,
+                interpret=False,
+                debug=False,
+            )
+            return per_loss.mean()
         per_loss, _per_logp = grpo_per_token_loss_pallas(
             logits=l,
             chosen_ids=chosen_ids,
@@ -179,7 +241,12 @@ def main():
         )
         return per_loss.mean()
 
-    loss_fn = scalar_loss_ref if args.impl == "ref" else scalar_loss_kernel
+    loss_fn_by_impl = {
+        "jax": scalar_loss_jax,
+        "ref": scalar_loss_ref,
+        "kernel": scalar_loss_kernel,
+    }
+    loss_fn = loss_fn_by_impl[str(args.impl)]
     loss_and_grad = jax.jit(jax.value_and_grad(loss_fn))
 
     # Baseline HBM after data residency.
@@ -206,6 +273,7 @@ def main():
 
     out = {
         "impl": args.impl,
+        "mode": mode,
         "device": str(device),
         "shape": {"batch": int(args.batch), "time": int(args.time), "vocab": int(args.vocab)},
         "dtype": str(dtype),

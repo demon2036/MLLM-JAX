@@ -924,7 +924,7 @@ def test_vicuna(prompt="I'm a language model called Vicuna"):
 
     device = 'cuda'
     device = 'cpu'
-    inputs = tokenizer(prompt, return_tensors="jax")
+    inputs = tokenizer(prompt, return_tensors="np")
     # inputs = tokenizer(prompt, return_tensors="pt").to(device)
     # # print(inputs.device)
     # out=model.generate(**inputs,do_sample=False,temperature=1.0,top_k=1,top_p=1.0)
@@ -936,8 +936,8 @@ def test_vicuna(prompt="I'm a language model called Vicuna"):
     # print('\n'*10)
     # while True:
 
-    input_ids = inputs['input_ids']
-    attention_mask = inputs['attention_mask']
+    input_ids = jnp.asarray(inputs['input_ids'])
+    attention_mask = jnp.asarray(inputs['attention_mask'])
 
     state_dict = model.state_dict()
     params = convert_torch_to_flax_llama(state_dict)

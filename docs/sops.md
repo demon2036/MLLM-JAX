@@ -21,6 +21,7 @@
 - Extract SID3 beam search into `plugins/sample/`: `docs/sops/plugins-sample-decoding-sid3-beam-search.md`
 - SID3 beam search mixed-length prefill buckets: `docs/sops/sid3-beam-search-true-length-prefill.md`
 - MiniOneRec SID SFT on TPU (JAX): `docs/sops/minionerec-sid-sft-jax-tpu.md`
+- MiniOneRec official ckpt eval (pure beam vs constrained): `docs/sops/minionerec-official-ckpt-eval-beam-vs-constrained.md`
 - MiniOneRec SID SFT Muon optimizer (v6e-8): `docs/sops/minionerec-sid-sft-jax-muon-optimizer-v6e-8.md`
 - Network checks: `docs/sops/network-checks.md`
 - Update repo via `git pull`: `docs/sops/git-pull-update.md`

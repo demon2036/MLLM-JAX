@@ -1095,7 +1095,14 @@ def _grpo_pallas_bwd(
                             )
 
             blocks = int(full_blocks + 1)
-            out_dlogits = jax.ShapeDtypeStruct((batch, time, blocks * block_size), logits.dtype)
+            # Important: keep the output shape at the original vocab size.
+            #
+            # For the last block, Pallas will present an out-of-bounds-padded
+            # view of shape (block_size), and out-of-bounds stores will be
+            # discarded. This avoids materializing a padded `[B,T,blocks*block]`
+            # buffer and then slicing it down to `[B,T,vocab]` (which can double
+            # peak HBM in some benchmarks).
+            out_dlogits = jax.ShapeDtypeStruct((batch, time, vocab), logits.dtype)
 
             in_specs = [
                 pl.BlockSpec(

@@ -1,0 +1,47 @@
+seed: 1337
+output_dir: runs/nano_gpt_tinyshakespeare_v6e_8_adamw_muon_official_baseline
+
+data:
+  cache_dir: workdir/nano_gpt_data
+  url: https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
+  train_ratio: 0.9
+
+model:
+  block_size: 256
+  n_layer: 6
+  n_head: 6
+  n_embd: 384
+  dropout: 0.2
+  bias: false
+  param_dtype: float32
+  compute_dtype: bfloat16
+
+train:
+  # Muon reference baseline:
+  # AdamW lr=3e-4, betas=(0.9,0.95), wd=1e-2. (No Muon.)
+  optimizer: adamw
+
+  max_steps: 5000
+  global_batch_size: 64
+  learning_rate: 0.0003
+  min_lr: 0.0003
+  warmup_steps: 100
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip_norm: 1.0
+  log_every: 10
+  eval_every: 250
+  eval_iters: 200
+  sample_every: 250
+  sample_tokens: 256
+  temperature: 1.0
+  top_k: 50
+  ckpt_every: 500
+  keep_ckpts: 20
+
+wandb:
+  project: nano-gpt-jax
+  mode: online
+  name: null
+

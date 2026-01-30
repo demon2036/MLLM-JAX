@@ -30,6 +30,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "learning_rate": 3e-4,
         "min_lr": 3e-5,
         "warmup_steps": 20,
+        # Optimizer: "adamw" | "muon"
+        "optimizer": "adamw",
+        "muon": {
+            # Muon LR is `train.learning_rate`; this is the auxiliary AdamW LR.
+            "aux_learning_rate": 3e-4,
+            "momentum": 0.95,
+            "nesterov": True,
+            "ns_steps": 5,
+            "eps": 1e-7,
+            "max_dim": 10_000,
+            # Match Muon reference: keep embeddings on AdamW.
+            "exclude_embeddings": True,
+        },
         "weight_decay": 0.1,
         "beta1": 0.9,
         "beta2": 0.95,

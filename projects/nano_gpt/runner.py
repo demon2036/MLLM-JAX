@@ -17,6 +17,7 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
     from flax.training import checkpoints, train_state
 
     from projects.nano_gpt.data import prepare_tinyshakespeare_char, sample_batch
+    from plugins.training.core.optim.optimizer import _scale_by_muon
     from plugins.nano_gpt.model import GPT, GPTConfig, parse_dtype
 
     seed = int(cfg.get("seed", 1337))
@@ -73,6 +74,16 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
     beta2 = float(train_cfg.get("beta2") if train_cfg.get("beta2") is not None else 0.95)
     grad_clip_norm = float(train_cfg.get("grad_clip_norm") if train_cfg.get("grad_clip_norm") is not None else 1.0)
 
+    optimizer_name = str(train_cfg.get("optimizer") or "adamw").strip().lower()
+    muon_cfg = dict(train_cfg.get("muon") or {})
+    muon_aux_learning_rate = float(muon_cfg.get("aux_learning_rate") if muon_cfg.get("aux_learning_rate") is not None else 3e-4)
+    muon_momentum = float(muon_cfg.get("momentum") if muon_cfg.get("momentum") is not None else 0.95)
+    muon_nesterov = bool(muon_cfg.get("nesterov") if muon_cfg.get("nesterov") is not None else True)
+    muon_ns_steps = int(muon_cfg.get("ns_steps") if muon_cfg.get("ns_steps") is not None else 5)
+    muon_eps = float(muon_cfg.get("eps") if muon_cfg.get("eps") is not None else 1e-7)
+    muon_max_dim = int(muon_cfg.get("max_dim") if muon_cfg.get("max_dim") is not None else 10_000)
+    muon_exclude_embeddings = bool(muon_cfg.get("exclude_embeddings") if muon_cfg.get("exclude_embeddings") is not None else True)
+
     log_every = int(train_cfg.get("log_every") or 10)
     eval_every = int(train_cfg.get("eval_every") or 0)
     eval_iters = int(train_cfg.get("eval_iters") or 0)
@@ -83,18 +94,34 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
     ckpt_every = int(train_cfg.get("ckpt_every") or 0)
     keep_ckpts = int(train_cfg.get("keep_ckpts") or 2)
 
-    def lr_schedule(step: jnp.ndarray) -> jnp.ndarray:
-        stepf = step.astype(jnp.float32)
-        if warmup_steps > 0:
-            warmup = learning_rate * stepf / jnp.maximum(1.0, float(warmup_steps))
-        else:
-            warmup = jnp.asarray(learning_rate, dtype=jnp.float32)
+    def make_lr_schedule(*, peak_lr: float, min_lr_val: float):
+        peak_lr = float(peak_lr)
+        min_lr_val = float(min_lr_val)
 
-        denom = max(1, max_steps - warmup_steps)
-        progress = (stepf - float(warmup_steps)) / float(denom)
-        progress = jnp.clip(progress, 0.0, 1.0)
-        cosine = min_lr + 0.5 * (learning_rate - min_lr) * (1.0 + jnp.cos(jnp.pi * progress))
-        return jnp.where(stepf < float(warmup_steps), warmup, cosine)
+        def schedule(step: jnp.ndarray) -> jnp.ndarray:
+            stepf = step.astype(jnp.float32)
+            if warmup_steps > 0:
+                warmup = jnp.asarray(peak_lr, dtype=jnp.float32) * stepf / jnp.maximum(1.0, float(warmup_steps))
+            else:
+                warmup = jnp.asarray(peak_lr, dtype=jnp.float32)
+
+            denom = max(1, max_steps - warmup_steps)
+            progress = (stepf - float(warmup_steps)) / float(denom)
+            progress = jnp.clip(progress, 0.0, 1.0)
+            cosine = jnp.asarray(min_lr_val, dtype=jnp.float32) + 0.5 * (jnp.asarray(peak_lr, dtype=jnp.float32) - jnp.asarray(min_lr_val, dtype=jnp.float32)) * (
+                1.0 + jnp.cos(jnp.pi * progress)
+            )
+            return jnp.where(stepf < float(warmup_steps), warmup, cosine)
+
+        return schedule
+
+    lr_schedule = make_lr_schedule(peak_lr=learning_rate, min_lr_val=min_lr)
+    aux_min_lr = 0.0
+    if optimizer_name == "muon":
+        if learning_rate <= 0.0:
+            raise ValueError(f"train.learning_rate must be > 0 for optimizer='muon', got: {learning_rate}")
+        aux_min_lr = float(muon_aux_learning_rate) * float(min_lr) / float(learning_rate)
+    aux_lr_schedule = make_lr_schedule(peak_lr=muon_aux_learning_rate, min_lr_val=aux_min_lr)
 
     model = GPT(model_cfg)
 
@@ -107,16 +134,77 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
     # and exclude biases / LayerNorm scale/bias (ndim == 1).
     decay_mask = jax.tree_util.tree_map(lambda x: getattr(x, "ndim", 0) >= 2, params)
 
-    tx = optax.chain(
-        optax.clip_by_global_norm(grad_clip_norm),
-        optax.adamw(
+    if optimizer_name == "adamw":
+        tx_base = optax.adamw(
             learning_rate=lr_schedule,
             b1=beta1,
             b2=beta2,
             weight_decay=weight_decay,
             mask=decay_mask,
-        ),
-    )
+        )
+    elif optimizer_name == "muon":
+        if muon_max_dim <= 0:
+            raise ValueError(f"train.muon.max_dim must be > 0, got: {muon_max_dim}")
+
+        def is_embedding_path(path) -> bool:
+            if not muon_exclude_embeddings:
+                return False
+            for k in path:
+                if getattr(k, "key", None) in {"wte", "wpe"}:
+                    return True
+            return False
+
+        def label_leaf(path, p):
+            if getattr(p, "ndim", 0) != 2:
+                return "adamw_nodecay"
+            if int(max(p.shape[0], p.shape[1])) > int(muon_max_dim):
+                return "adamw_decay"
+            if is_embedding_path(path):
+                return "adamw_decay"
+            return "muon"
+
+        leaves_with_path, treedef = jax.tree_util.tree_flatten_with_path(params)
+        param_labels = jax.tree_util.tree_unflatten(treedef, [label_leaf(path, p) for path, p in leaves_with_path])
+
+        muon_tx = optax.chain(
+            _scale_by_muon(
+                momentum=float(muon_momentum),
+                nesterov=bool(muon_nesterov),
+                ns_steps=int(muon_ns_steps),
+                eps=float(muon_eps),
+                weight_decay=float(weight_decay),
+                mu_dtype=jnp.float32,
+            ),
+            optax.scale_by_schedule(lr_schedule),
+            optax.scale(-1.0),
+        )
+        adamw_decay_tx = optax.adamw(
+            learning_rate=aux_lr_schedule,
+            b1=beta1,
+            b2=beta2,
+            weight_decay=weight_decay,
+        )
+        adamw_nodecay_tx = optax.adamw(
+            learning_rate=aux_lr_schedule,
+            b1=beta1,
+            b2=beta2,
+            weight_decay=0.0,
+        )
+        tx_base = optax.multi_transform(
+            {
+                "muon": muon_tx,
+                "adamw_decay": adamw_decay_tx,
+                "adamw_nodecay": adamw_nodecay_tx,
+            },
+            param_labels,
+        )
+    else:
+        raise ValueError(f"Unsupported train.optimizer={optimizer_name!r} (expected 'adamw'|'muon')")
+
+    if grad_clip_norm > 0.0:
+        tx = optax.chain(optax.clip_by_global_norm(grad_clip_norm), tx_base)
+    else:
+        tx = tx_base
     state = train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
     state = jax.device_put_replicated(state, devices)
 
@@ -151,6 +239,8 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
             "train/grad_norm": grad_norm,
             "train/lr": lr_schedule(state.step),
         }
+        if optimizer_name == "muon":
+            metrics["train/aux_lr"] = aux_lr_schedule(state.step)
         return state, metrics, rng_key
 
     p_train_step = jax.pmap(train_step, axis_name="data", donate_argnums=(0,))
@@ -226,6 +316,8 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
             overwrite=True,
         )
 
+    best_val_loss = float("inf")
+    best_val_step = 0
     for _ in range(max_steps):
         x, y = sample_batch(
             rng=rng,
@@ -274,6 +366,9 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
 
             val_loss = float(np.mean(losses)) if losses else float("nan")
             print(f"[eval] step={step} val_loss={val_loss:.4f}")
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_val_step = step
             if wandb_obj is not None:
                 wandb_obj.log({"eval/loss": val_loss}, step=step)
 
@@ -292,12 +387,16 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
         if ckpt_every > 0 and (step % ckpt_every == 0 or step == max_steps):
             save_checkpoint(step)
 
+    final_metrics = host_metrics(metrics)
     summary = {
         "config_path": config_path,
         "output_dir": output_dir,
         "resolved_config_json": resolved_cfg_path,
         "final_step": int(state.step[0]),
         "wandb_run_url": wandb_run_url,
+        "final_train_loss": float(final_metrics.get("train/loss", float("nan"))),
+        "best_eval_loss": float(best_val_loss) if best_val_step > 0 else None,
+        "best_eval_step": int(best_val_step) if best_val_step > 0 else None,
     }
 
     if wandb_obj is not None:

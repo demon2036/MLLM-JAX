@@ -571,6 +571,7 @@ def _logsumexp_stats_with_logits(
     block_size = int(cfg.block_size)
     if block_size <= 0:
         raise ValueError("block_size must be > 0")
+    is_interpret = interpret is not False and interpret is not None
 
     # TPU bf16 log_softmax in JAX tends to use higher-precision internal math.
     # For the degenerate single-block case (V <= block_size), use a small JAX
@@ -583,7 +584,52 @@ def _logsumexp_stats_with_logits(
         sum_logits = jnp.sum(exp * logits_f32, axis=-1)
         return max_val.astype(jnp.float32), sum_exp.astype(jnp.float32), sum_logits.astype(jnp.float32)
 
-    return _logsumexp_stats_pallas_full_vocab_with_logits(logits=logits, cfg=cfg, interpret=interpret, debug=debug)
+    if not is_interpret:
+        return _logsumexp_stats_pallas_full_vocab_with_logits(logits=logits, cfg=cfg, interpret=interpret, debug=debug)
+
+    # Interpret-mode Pallas runs on host and can drift vs TPU numerics; keep the
+    # tail path in JAX ops to match the reference implementation more tightly.
+    full_blocks = int(vocab // block_size)
+    full_vocab = int(full_blocks * block_size)
+    tail_vocab = int(vocab - full_vocab)
+
+    if full_blocks > 0:
+        max_full, sum_full, sum_logits_full = _logsumexp_stats_pallas_full_vocab_with_logits(
+            logits=logits[:, :, :full_vocab],
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+        )
+    else:
+        max_full = jnp.full(logits.shape[:2], jnp.finfo(compute_dtype).min, dtype=jnp.float32)
+        sum_full = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
+        sum_logits_full = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
+
+    if tail_vocab > 0:
+        tail = logits[:, :, full_vocab:]
+        tail_compute = tail.astype(compute_dtype)
+        max_tail = jnp.max(tail_compute, axis=-1).astype(jnp.float32)
+        exp_tail = jnp.exp(tail_compute - max_tail.astype(compute_dtype)[..., None])
+        sum_tail = jnp.sum(exp_tail, axis=-1).astype(jnp.float32)
+        sum_logits_tail = jnp.sum(exp_tail * tail_compute, axis=-1).astype(jnp.float32)
+    else:
+        max_tail = jnp.full(logits.shape[:2], jnp.finfo(compute_dtype).min, dtype=jnp.float32)
+        sum_tail = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
+        sum_logits_tail = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
+
+    max_full_c = max_full.astype(compute_dtype)
+    max_tail_c = max_tail.astype(compute_dtype)
+    sum_full_c = sum_full.astype(compute_dtype)
+    sum_tail_c = sum_tail.astype(compute_dtype)
+    sum_logits_full_c = sum_logits_full.astype(compute_dtype)
+    sum_logits_tail_c = sum_logits_tail.astype(compute_dtype)
+
+    max_all = jnp.maximum(max_full_c, max_tail_c)
+    scale_full = jnp.exp(max_full_c - max_all)
+    scale_tail = jnp.exp(max_tail_c - max_all)
+    sum_all = (sum_full_c * scale_full + sum_tail_c * scale_tail).astype(jnp.float32)
+    sum_logits_all = (sum_logits_full_c * scale_full + sum_logits_tail_c * scale_tail).astype(jnp.float32)
+    return max_all.astype(jnp.float32), sum_all, sum_logits_all
 
 
 def _logsumexp_stats(
@@ -599,11 +645,52 @@ def _logsumexp_stats(
     softmax_dtype = _resolve_compute_dtype(cfg.compute_dtype)
     compute_dtype = softmax_dtype
 
+    vocab = int(logits.shape[-1])
     block_size = int(cfg.block_size)
     if block_size <= 0:
         raise ValueError("block_size must be > 0")
 
-    return _logsumexp_stats_pallas_full_vocab(logits=logits, cfg=cfg, interpret=interpret, debug=debug)
+    is_interpret = interpret is not False and interpret is not None
+    if not is_interpret:
+        return _logsumexp_stats_pallas_full_vocab(logits=logits, cfg=cfg, interpret=interpret, debug=debug)
+
+    # Interpret-mode Pallas runs on host and can drift vs TPU numerics; keep the
+    # tail path in JAX ops to match the reference implementation more tightly.
+    full_blocks = int(vocab // block_size)
+    full_vocab = int(full_blocks * block_size)
+    tail_vocab = int(vocab - full_vocab)
+
+    if full_blocks > 0:
+        max_full, sum_full = _logsumexp_stats_pallas_full_vocab(
+            logits=logits[:, :, :full_vocab],
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+        )
+    else:
+        max_full = jnp.full(logits.shape[:2], jnp.finfo(compute_dtype).min, dtype=jnp.float32)
+        sum_full = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
+
+    if tail_vocab > 0:
+        tail = logits[:, :, full_vocab:]
+        tail_compute = tail.astype(compute_dtype)
+        max_tail = jnp.max(tail_compute, axis=-1).astype(jnp.float32)
+        exp_tail = jnp.exp(tail_compute - max_tail.astype(compute_dtype)[..., None])
+        sum_tail = jnp.sum(exp_tail, axis=-1).astype(jnp.float32)
+    else:
+        max_tail = jnp.full(logits.shape[:2], jnp.finfo(compute_dtype).min, dtype=jnp.float32)
+        sum_tail = jnp.zeros(logits.shape[:2], dtype=jnp.float32)
+
+    max_full_c = max_full.astype(compute_dtype)
+    max_tail_c = max_tail.astype(compute_dtype)
+    sum_full_c = sum_full.astype(compute_dtype)
+    sum_tail_c = sum_tail.astype(compute_dtype)
+
+    max_all = jnp.maximum(max_full_c, max_tail_c)
+    scale_full = jnp.exp(max_full_c - max_all)
+    scale_tail = jnp.exp(max_tail_c - max_all)
+    sum_all = (sum_full_c * scale_full + sum_tail_c * scale_tail).astype(jnp.float32)
+    return max_all.astype(jnp.float32), sum_all
 
 
 def _grpo_pallas_fwd(

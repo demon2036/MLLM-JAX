@@ -191,6 +191,7 @@ def _logsumexp_stats_pallas_full_vocab(
         max_ref,
         sum_ref,
         sum_logits_ref,
+        _dummy_ref,
     ):
         pid_k = pl.program_id(2)
 
@@ -199,6 +200,7 @@ def _logsumexp_stats_pallas_full_vocab(
             max_ref[:] = jnp.full((time_block,), jnp.finfo(compute_dtype).min, dtype=compute_dtype)
             sum_ref[:] = jnp.zeros((time_block,), dtype=compute_dtype)
             sum_logits_ref[:] = jnp.zeros((time_block,), dtype=compute_dtype)
+            _dummy_ref[:] = jnp.zeros((time_block,), dtype=compute_dtype)
             out_max_ref[...] = jnp.zeros_like(out_max_ref)
             out_sum_ref[...] = jnp.zeros_like(out_sum_ref)
             out_sum_logits_ref[...] = jnp.zeros_like(out_sum_logits_ref)
@@ -245,6 +247,7 @@ def _logsumexp_stats_pallas_full_vocab(
             ],
             grid=(batch, time_blocks, blocks),
             scratch_shapes=[
+                pltpu.VMEM((time_block,), compute_dtype),
                 pltpu.VMEM((time_block,), compute_dtype),
                 pltpu.VMEM((time_block,), compute_dtype),
                 pltpu.VMEM((time_block,), compute_dtype),

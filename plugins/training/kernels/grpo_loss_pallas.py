@@ -466,7 +466,9 @@ def _grpo_pallas_bwd(
     original_time = int(dloss.shape[1])
     compute_dtype = jnp.float32
     softmax_dtype = _resolve_compute_dtype(cfg.compute_dtype)
-    use_bf16_softmax = softmax_dtype == jnp.bfloat16
+    # Match JAX bf16 `log_softmax` gradient more closely by using float32 softmax
+    # math in the backward pass, even when forward logp is bf16-quantized.
+    use_bf16_softmax = False
 
     chosen_ids, _ = _pad_time(chosen_ids, time_block=time_block, pad_value=0)
     old_per_token_logps, _ = _pad_time(old_per_token_logps, time_block=time_block, pad_value=0.0)

@@ -724,10 +724,15 @@ def _grpo_pallas_fwd(
         max_val, sum_exp, sum_exp_logits = _logsumexp_stats_with_logits(
             logits=logits, cfg=cfg, interpret=interpret, debug=debug
         )
+        lse = max_val + jnp.log(sum_exp)
     else:
-        max_val, sum_exp = _logsumexp_stats(logits=logits, cfg=cfg, interpret=interpret, debug=debug)
+        # For the non-entropy path, use JAX's float32 logsumexp to avoid an extra
+        # Pallas call (which tends to increase `memory_stats().peak_bytes_reserved`
+        # on TPU for large-vocab logits).
+        import jax
+
+        lse = jax.nn.logsumexp(logits.astype(jnp.float32), axis=-1).astype(jnp.float32)
         sum_exp_logits = None
-    lse = max_val + jnp.log(sum_exp)
 
     chosen = jnp.take_along_axis(logits, chosen_ids[..., None], axis=-1)[..., 0].astype(compute_dtype)
     logp_raw = chosen.astype(jnp.float32) - lse.astype(jnp.float32)

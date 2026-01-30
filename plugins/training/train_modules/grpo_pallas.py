@@ -49,7 +49,13 @@ class TrainGRPOModulePallas(nn.Module):
         elif self.beta != 0 and self.ref_model is None:
             print("Warning: beta is non-zero but ref_model not provided. KL penalty calculation will be skipped.")
 
+        # NOTE: We keep the external contract (and `old_per_token_logps`) as
+        # length `L-1` aligned with `input_ids[:, 1:]`, but we call the kernel
+        # on the full `L` logits to avoid padding/copying `logits[:, :-1, :]`
+        # back to a multiple of `time_block` inside the kernel.
         chosen_ids = input_ids[:, 1:]
+        chosen_ids_full = jnp.pad(chosen_ids, ((0, 0), (0, 1)), constant_values=int(self.pad_token_id))
+
         mask_loss = labels[:, 1:]
 
         kernel_cfg = GRPOKernelConfig(
@@ -108,6 +114,7 @@ class TrainGRPOModulePallas(nn.Module):
 
         if "old_per_token_logps" in inputs:
             old_per_token_logps = inputs["old_per_token_logps"]
+            old_per_token_logps_full = jnp.pad(old_per_token_logps, ((0, 0), (0, 1)), constant_values=0.0)
             if fuse_entropy_metrics:
                 per_token_loss, per_token_logps, token_entropy = shard_map(
                     _call_kernel_with_entropy,
@@ -125,9 +132,9 @@ class TrainGRPOModulePallas(nn.Module):
                     ),
                     check_rep=False,
                 )(
-                    logits[..., :-1, :],
-                    chosen_ids,
-                    old_per_token_logps,
+                    logits,
+                    chosen_ids_full,
+                    old_per_token_logps_full,
                     advantages,
                 )
             else:
@@ -146,9 +153,9 @@ class TrainGRPOModulePallas(nn.Module):
                     ),
                     check_rep=False,
                 )(
-                    logits[..., :-1, :],
-                    chosen_ids,
-                    old_per_token_logps,
+                    logits,
+                    chosen_ids_full,
+                    old_per_token_logps_full,
                     advantages,
                 )
         else:
@@ -168,8 +175,8 @@ class TrainGRPOModulePallas(nn.Module):
                     ),
                     check_rep=False,
                 )(
-                    logits[..., :-1, :],
-                    chosen_ids,
+                    logits,
+                    chosen_ids_full,
                     advantages,
                 )
             else:
@@ -187,10 +194,15 @@ class TrainGRPOModulePallas(nn.Module):
                     ),
                     check_rep=False,
                 )(
-                    logits[..., :-1, :],
-                    chosen_ids,
+                    logits,
+                    chosen_ids_full,
                     advantages,
                 )
+
+        per_token_loss = per_token_loss[:, :-1]
+        per_token_logps = per_token_logps[:, :-1]
+        if fuse_entropy_metrics:
+            token_entropy = token_entropy[:, :-1]
 
         if not fuse_entropy_metrics:
             probs = jax.nn.softmax(logits[..., :-1, :] / self.temperature, axis=-1)

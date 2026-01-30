@@ -210,6 +210,11 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     beta = float(beta or 0.0)
     mesh_shape = str(cfg.get("mesh_shape") or "1,-1,1")
 
+    remat_policy_raw = _get_by_path(cfg, "train.remat_policy")
+    if remat_policy_raw is None:
+        remat_policy_raw = cfg.get("remat_policy")
+    remat_policy = str(remat_policy_raw or "dots_with_no_batch_dims")
+
     policy_loss_impl_raw = _get_by_path(cfg, "train.policy_loss_impl")
     if policy_loss_impl_raw is None:
         policy_loss_impl_raw = cfg.get("policy_loss_impl")
@@ -443,6 +448,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         train=GRPOTrainConfig(
             micro_batch_size_per_device=train_micro_batch_size_per_device,
             micro_batch_size=train_micro_batch_size,
+            remat_policy=remat_policy,
             max_length_total=max_length_total,
             ppo_epochs=ppo_epochs,
             grad_accum_steps=grad_accum_steps,

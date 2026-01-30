@@ -40,6 +40,12 @@ class GRPOTrainConfig:
     micro_batch_size: int | None = None
     # Optional: sequences per device per micro-step.
     micro_batch_size_per_device: int | None = None
+    # Remat policy for the training module (memory vs compute trade-off).
+    #
+    # Values:
+    # - "dots_with_no_batch_dims": default transformer heuristic (historical)
+    # - "nothing_saveable": rematerialize everything (lower HBM, more compute)
+    remat_policy: str = "dots_with_no_batch_dims"
     max_length_total: int = 0
     ppo_epochs: int = 1
     grad_accum_steps: int = 1
@@ -475,6 +481,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             num_pre_q=cfg.rollout.n,
             max_lengths=cfg.train.max_length_total,
             beta=cfg.train.beta,
+            remat_policy=cfg.train.remat_policy,
             policy_loss_impl=cfg.train.policy_loss_impl,
             pallas_block_size=cfg.train.pallas_block_size,
             pallas_time_block=cfg.train.pallas_time_block,

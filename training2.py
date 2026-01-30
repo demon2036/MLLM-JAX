@@ -51,6 +51,7 @@ def get_state(
     num_pre_q=16,
     max_lengths=None,
     beta: float = 0.04,
+    remat_policy: str = "dots_with_no_batch_dims",
     policy_loss_impl: str = "jax",
     pallas_block_size: int = 2048,
     pallas_time_block: int = 8,
@@ -85,9 +86,20 @@ def get_state(
         train_module_kwargs["pallas_time_block"] = int(pallas_time_block)
         train_module_kwargs["pallas_compute_dtype"] = str(pallas_compute_dtype)
 
-    train_module = flax.linen.remat(
-        train_module_cls, policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims
-    )(**train_module_kwargs)
+    remat_policy_norm = str(remat_policy or "").strip().lower()
+    if remat_policy_norm in {"", "dots_with_no_batch_dims", "dots-no-batch-dims"}:
+        remat_policy_fn = jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims
+    elif remat_policy_norm in {"nothing_saveable", "none", "default"}:
+        remat_policy_fn = jax.checkpoint_policies.nothing_saveable
+    elif remat_policy_norm in {"everything_saveable"}:
+        remat_policy_fn = jax.checkpoint_policies.everything_saveable
+    else:
+        raise ValueError(
+            f"Unsupported remat_policy={remat_policy!r} "
+            "(expected dots_with_no_batch_dims / nothing_saveable / everything_saveable)"
+        )
+
+    train_module = flax.linen.remat(train_module_cls, policy=remat_policy_fn)(**train_module_kwargs)
 
     # train_module = TrainGRPOModule(
     #     model=model,

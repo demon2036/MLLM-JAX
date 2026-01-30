@@ -143,7 +143,7 @@ def _grpo_pallas_fwd(
     cfg: GRPOKernelConfig,
     interpret: bool,
     debug: bool,
-) -> tuple[Any, Any, Any, int]:
+) -> tuple[Any, Any, Any, Any, int]:
     import functools
 
     import jax
@@ -179,6 +179,7 @@ def _grpo_pallas_fwd(
     out_loss = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
     out_logp = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
     out_lse = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
+    out_entropy = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
 
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
@@ -192,8 +193,10 @@ def _grpo_pallas_fwd(
         out_loss_ref,
         out_logp_ref,
         out_lse_ref,
+        out_entropy_ref,
         max_ref,
         sum_ref,
+        sum_logits_ref,
         chosen_ref,
     ):
         pid_b = pl.program_id(0)
@@ -204,10 +207,12 @@ def _grpo_pallas_fwd(
         def init():
             max_ref[:] = jnp.full((time_block,), jnp.finfo(compute_dtype).min, dtype=compute_dtype)
             sum_ref[:] = jnp.zeros((time_block,), dtype=compute_dtype)
+            sum_logits_ref[:] = jnp.zeros((time_block,), dtype=compute_dtype)
             chosen_ref[:] = jnp.zeros((time_block,), dtype=compute_dtype)
             out_loss_ref[...] = jnp.zeros_like(out_loss_ref)
             out_logp_ref[...] = jnp.zeros_like(out_logp_ref)
             out_lse_ref[...] = jnp.zeros_like(out_lse_ref)
+            out_entropy_ref[...] = jnp.zeros_like(out_entropy_ref)
 
         logits_tile = logits_ref[0, :, :]
         if compute_dtype == jnp.float32 and logits_tile.dtype != jnp.float32:
@@ -227,13 +232,19 @@ def _grpo_pallas_fwd(
 
         prev_max = max_ref[:]
         prev_sum = sum_ref[:]
+        prev_sum_logits = sum_logits_ref[:]
         tile_max = jnp.max(logits_tile, axis=-1)
         new_max = jnp.maximum(prev_max, tile_max)
         prev_sum = prev_sum * jnp.exp(prev_max - new_max)
-        tile_sum = jnp.sum(jnp.exp(logits_tile - new_max[:, None]), axis=-1).astype(compute_dtype)
+        prev_sum_logits = prev_sum_logits * jnp.exp(prev_max - new_max)
+        tile_exp = jnp.exp(logits_tile - new_max[:, None])
+        tile_sum = jnp.sum(tile_exp, axis=-1).astype(compute_dtype)
+        tile_sum_logits = jnp.sum(tile_exp * logits_tile, axis=-1).astype(compute_dtype)
         new_sum = prev_sum + tile_sum
+        new_sum_logits = prev_sum_logits + tile_sum_logits
         max_ref[:] = new_max
         sum_ref[:] = new_sum
+        sum_logits_ref[:] = new_sum_logits
 
         @pl.when(pid_k == blocks - 1)
         def out():
@@ -245,6 +256,10 @@ def _grpo_pallas_fwd(
                 logp_raw = logp_raw.astype(jnp.bfloat16).astype(jnp.float32)
             logp = logp_raw / temperature
             out_logp_ref[0, :, 0] = logp.astype(out_logp_ref.dtype)
+
+            mean_logit = sum_logits_ref[:].astype(jnp.float32) / sum_ref[:].astype(jnp.float32)
+            entropy = lse - mean_logit
+            out_entropy_ref[0, :, 0] = entropy.astype(out_entropy_ref.dtype)
 
             eps_low_v = jnp.asarray(1.0 - eps_low, dtype=jnp.float32)
             eps_high_v = jnp.asarray(1.0 + eps_high, dtype=jnp.float32)
@@ -259,7 +274,7 @@ def _grpo_pallas_fwd(
 
     call = pl.pallas_call(
         functools.partial(kernel),
-        out_shape=(out_loss, out_logp, out_lse),
+        out_shape=(out_loss, out_logp, out_lse, out_entropy),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
@@ -272,9 +287,11 @@ def _grpo_pallas_fwd(
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
+                pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
             ],
             grid=(batch, time_blocks, blocks),
             scratch_shapes=[
+                pltpu.VMEM((time_block,), compute_dtype),
                 pltpu.VMEM((time_block,), compute_dtype),
                 pltpu.VMEM((time_block,), compute_dtype),
                 pltpu.VMEM((time_block,), compute_dtype),
@@ -285,11 +302,12 @@ def _grpo_pallas_fwd(
         debug=bool(debug),
     )
 
-    per_token_loss3, per_token_logps3, lse3 = call(logits, chosen_ids3, old_logps3, advantages2)
+    per_token_loss3, per_token_logps3, lse3, entropy3 = call(logits, chosen_ids3, old_logps3, advantages2)
     per_token_loss = per_token_loss3[:, :original_time, 0]
     per_token_logps = per_token_logps3[:, :original_time, 0]
     lse = lse3[:, :original_time, 0]
-    return per_token_loss, per_token_logps, lse, original_vocab
+    entropy = entropy3[:, :original_time, 0]
+    return per_token_loss, per_token_logps, lse, entropy, original_vocab
 
 
 def _grpo_pallas_bwd(
@@ -463,7 +481,7 @@ def build_grpo_per_token_loss_pallas(
 
     @jax.custom_vjp
     def _kernel(logits, chosen_ids, old_per_token_logps, advantages):
-        per_token_loss, per_token_logps, _lse, _original_vocab = _grpo_pallas_fwd(
+        per_token_loss, per_token_logps, _lse, _entropy, _original_vocab = _grpo_pallas_fwd(
             logits=logits,
             chosen_ids=chosen_ids,
             old_per_token_logps=old_per_token_logps,
@@ -475,7 +493,7 @@ def build_grpo_per_token_loss_pallas(
         return per_token_loss, per_token_logps
 
     def fwd(logits, chosen_ids, old_per_token_logps, advantages):
-        per_token_loss, per_token_logps, lse, original_vocab = _grpo_pallas_fwd(
+        per_token_loss, per_token_logps, lse, _entropy, original_vocab = _grpo_pallas_fwd(
             logits=logits,
             chosen_ids=chosen_ids,
             old_per_token_logps=old_per_token_logps,
@@ -491,6 +509,80 @@ def build_grpo_per_token_loss_pallas(
     def bwd(res, g):
         logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse, original_vocab = res
         dloss, _dlogp = g
+        dlogits = _grpo_pallas_bwd(
+            dloss=dloss.astype(jnp.float32),
+            logits=logits,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+            per_token_logps=per_token_logps,
+            lse=lse,
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+            original_vocab=int(original_vocab),
+        )
+        return (dlogits, None, None, None)
+
+    _kernel.defvjp(fwd, bwd)
+    return _kernel
+
+
+def build_grpo_per_token_loss_pallas_with_entropy(
+    cfg: GRPOKernelConfig,
+    *,
+    interpret: bool = False,
+    debug: bool = False,
+):
+    """GRPO Pallas loss/logps + entropy (forward-only metric).
+
+    Notes:
+      - Entropy output is treated as a metric: its VJP is defined as zero.
+      - Loss/logp numerics are controlled by `cfg.compute_dtype` as in the
+        original kernel.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    cfg = GRPOKernelConfig(
+        block_size=int(cfg.block_size),
+        time_block=int(cfg.time_block),
+        epsilon_low=float(cfg.epsilon_low),
+        epsilon_high=float(cfg.epsilon_high),
+        temperature=float(cfg.temperature),
+        compute_dtype=str(getattr(cfg, "compute_dtype", "f32")),
+    )
+
+    @jax.custom_vjp
+    def _kernel(logits, chosen_ids, old_per_token_logps, advantages):
+        per_token_loss, per_token_logps, _lse, per_token_entropy, _original_vocab = _grpo_pallas_fwd(
+            logits=logits,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+        )
+        return per_token_loss, per_token_logps, jax.lax.stop_gradient(per_token_entropy)
+
+    def fwd(logits, chosen_ids, old_per_token_logps, advantages):
+        per_token_loss, per_token_logps, lse, per_token_entropy, original_vocab = _grpo_pallas_fwd(
+            logits=logits,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+        )
+        outs = (per_token_loss, per_token_logps, per_token_entropy)
+        res = (logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse, original_vocab)
+        return outs, res
+
+    def bwd(res, g):
+        logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse, original_vocab = res
+        dloss, _dlogp, _dentropy = g
         dlogits = _grpo_pallas_bwd(
             dloss=dloss.astype(jnp.float32),
             logits=logits,
@@ -550,7 +642,7 @@ def build_grpo_per_token_loss_pallas_on_policy(
     @jax.custom_vjp
     def _kernel(logits, chosen_ids, advantages):
         dummy_old = jnp.zeros(chosen_ids.shape, dtype=jnp.float32)
-        _loss_unused, per_token_logps, _lse, _original_vocab = _grpo_pallas_fwd(
+        _loss_unused, per_token_logps, _lse, _entropy, _original_vocab = _grpo_pallas_fwd(
             logits=logits,
             chosen_ids=chosen_ids,
             old_per_token_logps=dummy_old,
@@ -569,7 +661,7 @@ def build_grpo_per_token_loss_pallas_on_policy(
 
     def fwd(logits, chosen_ids, advantages):
         dummy_old = jnp.zeros(chosen_ids.shape, dtype=jnp.float32)
-        _loss_unused, per_token_logps, lse, original_vocab = _grpo_pallas_fwd(
+        _loss_unused, per_token_logps, lse, _entropy, original_vocab = _grpo_pallas_fwd(
             logits=logits,
             chosen_ids=chosen_ids,
             old_per_token_logps=dummy_old,
@@ -591,6 +683,100 @@ def build_grpo_per_token_loss_pallas_on_policy(
     def bwd(res, g):
         logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse, original_vocab = res
         dloss, _dlogp = g
+        dlogits = _grpo_pallas_bwd(
+            dloss=dloss.astype(jnp.float32),
+            logits=logits,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+            per_token_logps=per_token_logps,
+            lse=lse,
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+            original_vocab=int(original_vocab),
+        )
+        return (dlogits, None, None)
+
+    _kernel.defvjp(fwd, bwd)
+    return _kernel
+
+
+def build_grpo_per_token_loss_pallas_on_policy_with_entropy(
+    cfg: GRPOKernelConfig,
+    *,
+    interpret: bool = False,
+    debug: bool = False,
+):
+    """On-policy Pallas GRPO loss/logps + entropy (forward-only metric)."""
+    import jax
+    import jax.numpy as jnp
+
+    cfg = GRPOKernelConfig(
+        block_size=int(cfg.block_size),
+        time_block=int(cfg.time_block),
+        epsilon_low=float(cfg.epsilon_low),
+        epsilon_high=float(cfg.epsilon_high),
+        temperature=float(cfg.temperature),
+        compute_dtype=str(getattr(cfg, "compute_dtype", "f32")),
+    )
+    eps_low = float(cfg.epsilon_low)
+    eps_high = float(cfg.epsilon_high)
+
+    def _compute_loss_from_logps(*, per_token_logps, old_per_token_logps, advantages):
+        per_token_logps = per_token_logps.astype(jnp.float32)
+        old_per_token_logps = old_per_token_logps.astype(jnp.float32)
+        ratio = jnp.exp(per_token_logps - old_per_token_logps)
+        clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
+        advantages = advantages.astype(jnp.float32)
+        loss1 = ratio * advantages[..., None]
+        loss2 = clipped_ratio * advantages[..., None]
+        return (-jnp.minimum(loss1, loss2)).astype(jnp.float32)
+
+    @jax.custom_vjp
+    def _kernel(logits, chosen_ids, advantages):
+        dummy_old = jnp.zeros(chosen_ids.shape, dtype=jnp.float32)
+        _loss_unused, per_token_logps, _lse, per_token_entropy, _original_vocab = _grpo_pallas_fwd(
+            logits=logits,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=dummy_old,
+            advantages=advantages,
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+        )
+        old_per_token_logps = jax.lax.stop_gradient(per_token_logps)
+        per_token_loss = _compute_loss_from_logps(
+            per_token_logps=per_token_logps,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+        )
+        return per_token_loss, per_token_logps, jax.lax.stop_gradient(per_token_entropy)
+
+    def fwd(logits, chosen_ids, advantages):
+        dummy_old = jnp.zeros(chosen_ids.shape, dtype=jnp.float32)
+        _loss_unused, per_token_logps, lse, per_token_entropy, original_vocab = _grpo_pallas_fwd(
+            logits=logits,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=dummy_old,
+            advantages=advantages,
+            cfg=cfg,
+            interpret=interpret,
+            debug=debug,
+        )
+        old_per_token_logps = jax.lax.stop_gradient(per_token_logps)
+        per_token_loss = _compute_loss_from_logps(
+            per_token_logps=per_token_logps,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+        )
+        outs = (per_token_loss, per_token_logps, per_token_entropy)
+        res = (logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse, original_vocab)
+        return outs, res
+
+    def bwd(res, g):
+        logits, chosen_ids, old_per_token_logps, advantages, per_token_logps, lse, original_vocab = res
+        dloss, _dlogp, _dentropy = g
         dlogits = _grpo_pallas_bwd(
             dloss=dloss.astype(jnp.float32),
             logits=logits,
@@ -660,6 +846,37 @@ def grpo_per_token_loss_pallas_on_policy(
     return fn(logits, chosen_ids, advantages)
 
 
+def grpo_per_token_loss_pallas_with_entropy(
+    *,
+    logits: Any,
+    chosen_ids: Any,
+    old_per_token_logps: Any,
+    advantages: Any,
+    cfg: GRPOKernelConfig | None = None,
+    interpret: bool = False,
+    debug: bool = False,
+) -> tuple[Any, Any, Any]:
+    if cfg is None:
+        cfg = GRPOKernelConfig()
+    fn = build_grpo_per_token_loss_pallas_with_entropy(cfg, interpret=interpret, debug=debug)
+    return fn(logits, chosen_ids, old_per_token_logps, advantages)
+
+
+def grpo_per_token_loss_pallas_on_policy_with_entropy(
+    *,
+    logits: Any,
+    chosen_ids: Any,
+    advantages: Any,
+    cfg: GRPOKernelConfig | None = None,
+    interpret: bool = False,
+    debug: bool = False,
+) -> tuple[Any, Any, Any]:
+    if cfg is None:
+        cfg = GRPOKernelConfig()
+    fn = build_grpo_per_token_loss_pallas_on_policy_with_entropy(cfg, interpret=interpret, debug=debug)
+    return fn(logits, chosen_ids, advantages)
+
+
 __all__ = [
     "GRPOKernelConfig",
     "grpo_per_token_loss_reference",
@@ -668,4 +885,8 @@ __all__ = [
     "grpo_per_token_loss_pallas_configured",
     "grpo_per_token_loss_pallas_on_policy",
     "build_grpo_per_token_loss_pallas_on_policy",
+    "build_grpo_per_token_loss_pallas_with_entropy",
+    "build_grpo_per_token_loss_pallas_on_policy_with_entropy",
+    "grpo_per_token_loss_pallas_with_entropy",
+    "grpo_per_token_loss_pallas_on_policy_with_entropy",
 ]

@@ -83,6 +83,20 @@ Expected: `3 passed`.
 
 ### 5) Benchmark (B=1, T=4096, V=151643, bf16)
 
+Legacy JAX (matches `MLLM_JAX.train_modules.TrainGRPOModule` log_softmax semantics):
+
+```powershell
+$KEY="$env:USERPROFILE\.ssh\google_compute_engine"
+ssh -i $KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL root@<EXTERNAL_IP> @'
+set -euo pipefail
+cd /root/MLLM-JAX
+source /root/venvs/mllm-jax/bin/activate
+python -u scripts/grpo_kernel_bench.py --impl jax --mode off_policy --batch 1 --time 4096 --vocab 151643 --dtype bf16 \
+  --iters 3 --warmup 1 --old_logp_noise_scale 0.3 --epsilon_low 0.2 --epsilon_high 0.2 --temperature 1.0 \
+  --block_size 2048 --time_block 512 --compute_dtype bf16 --wandb_mode disabled
+'@
+```
+
 Kernel:
 
 ```powershell
@@ -113,8 +127,22 @@ python -u scripts/grpo_kernel_bench.py --impl ref --batch 1 --time 4096 --vocab 
 
 #### Observed results (from JSON output)
 
+- **Legacy JAX (`--impl jax`)**: `avg_step_ms=11.9565`, `mem_after_run.peak_bytes_reserved=1242415104`
 - **Kernel**: `avg_step_ms=11.8517`, `mem_after_run.peak_bytes_reserved=2516631552`
 - **Ref**: `avg_step_ms=41.2104`, `mem_after_run.peak_bytes_reserved=4969938944`
+
+Interpretation:
+- Kernel is much faster than the float32 reference (`--impl ref`) but uses **higher peak reserved HBM** than the legacy JAX implementation (`--impl jax`) on this shape.
+
+### 5b) Re-run (2026-01-30, v6e-8, W&B online, commit `ee03e1d`)
+
+Same shape `B=1,T=4096,V=151643`:
+
+- **Legacy JAX (`--impl jax`)**: `avg_step_ms=12.0699`, `mem_after_run.peak_bytes_reserved=1242415104`
+- **Kernel (`compute_dtype=bf16`)**: `avg_step_ms=16.4314`, `mem_after_run.peak_bytes_reserved=2516631552`
+- **Kernel (`compute_dtype=f32`)**: `avg_step_ms=15.5482`, `mem_after_run.peak_bytes_reserved=2516631552`
+
+Interpretation (as of `ee03e1d`): the kernel is currently **slower** and uses **higher peak reserved HBM** than the legacy JAX path on this benchmark.
 
 ### 6) Delete TPU VM (stop billing)
 
@@ -131,4 +159,3 @@ gcloud alpha compute tpus tpu-vm delete <TPU_NAME> --project civil-rarity-482610
 - If `gcloud ... create` returns “no more capacity”, retry later or switch zones.
 - If the spot VM is `PREEMPTED`, recreate and rerun the steps.
 - If Windows `gcloud tpu-vm ssh` gets stuck on PuTTY host-key prompts, use OpenSSH to the external IP as above.
-

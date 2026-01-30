@@ -12,6 +12,8 @@ from plugins.training.kernels.grpo_loss_pallas import (
     GRPOKernelConfig,
     grpo_per_token_loss_pallas,
     grpo_per_token_loss_pallas_on_policy,
+    grpo_per_token_loss_pallas_on_policy_with_entropy,
+    grpo_per_token_loss_pallas_with_entropy,
 )
 
 
@@ -70,6 +72,16 @@ class TrainGRPOModulePallas(nn.Module):
                 debug=False,
             )
 
+        def _call_kernel_on_policy_with_entropy(local_logits, local_chosen_ids, local_advantages):
+            return grpo_per_token_loss_pallas_on_policy_with_entropy(
+                logits=local_logits,
+                chosen_ids=local_chosen_ids,
+                advantages=local_advantages,
+                cfg=kernel_cfg,
+                interpret=False,
+                debug=False,
+            )
+
         def _call_kernel(local_logits, local_chosen_ids, local_old_logps, local_advantages):
             return grpo_per_token_loss_pallas(
                 logits=local_logits,
@@ -81,50 +93,108 @@ class TrainGRPOModulePallas(nn.Module):
                 debug=False,
             )
 
-        if "old_per_token_logps" in inputs:
-            old_per_token_logps = inputs["old_per_token_logps"]
-            per_token_loss, per_token_logps = shard_map(
-                _call_kernel,
-                mesh=self.mesh,
-                in_specs=(
-                    PS(("dp", "fsdp"), None, "tp"),
-                    PS(("dp", "fsdp"), None),
-                    PS(("dp", "fsdp"), None),
-                    PS(("dp", "fsdp"),),
-                ),
-                out_specs=(
-                    PS(("dp", "fsdp"), None),
-                    PS(("dp", "fsdp"), None),
-                ),
-                check_rep=False,
-            )(
-                logits[..., :-1, :],
-                chosen_ids,
-                old_per_token_logps,
-                advantages,
-            )
-        else:
-            per_token_loss, per_token_logps = shard_map(
-                _call_kernel_on_policy,
-                mesh=self.mesh,
-                in_specs=(
-                    PS(("dp", "fsdp"), None, "tp"),
-                    PS(("dp", "fsdp"), None),
-                    PS(("dp", "fsdp"),),
-                ),
-                out_specs=(
-                    PS(("dp", "fsdp"), None),
-                    PS(("dp", "fsdp"), None),
-                ),
-                check_rep=False,
-            )(
-                logits[..., :-1, :],
-                chosen_ids,
-                advantages,
+        def _call_kernel_with_entropy(local_logits, local_chosen_ids, local_old_logps, local_advantages):
+            return grpo_per_token_loss_pallas_with_entropy(
+                logits=local_logits,
+                chosen_ids=local_chosen_ids,
+                old_per_token_logps=local_old_logps,
+                advantages=local_advantages,
+                cfg=kernel_cfg,
+                interpret=False,
+                debug=False,
             )
 
-        probs = jax.nn.softmax(logits[..., :-1, :] / self.temperature, axis=-1)
-        token_entropy = -jnp.sum(probs * jax.lax.log(probs + 1e-9), axis=-1)
+        fuse_entropy_metrics = float(self.temperature) == 1.0
+
+        if "old_per_token_logps" in inputs:
+            old_per_token_logps = inputs["old_per_token_logps"]
+            if fuse_entropy_metrics:
+                per_token_loss, per_token_logps, token_entropy = shard_map(
+                    _call_kernel_with_entropy,
+                    mesh=self.mesh,
+                    in_specs=(
+                        PS(("dp", "fsdp"), None, "tp"),
+                        PS(("dp", "fsdp"), None),
+                        PS(("dp", "fsdp"), None),
+                        PS(("dp", "fsdp"),),
+                    ),
+                    out_specs=(
+                        PS(("dp", "fsdp"), None),
+                        PS(("dp", "fsdp"), None),
+                        PS(("dp", "fsdp"), None),
+                    ),
+                    check_rep=False,
+                )(
+                    logits[..., :-1, :],
+                    chosen_ids,
+                    old_per_token_logps,
+                    advantages,
+                )
+            else:
+                per_token_loss, per_token_logps = shard_map(
+                    _call_kernel,
+                    mesh=self.mesh,
+                    in_specs=(
+                        PS(("dp", "fsdp"), None, "tp"),
+                        PS(("dp", "fsdp"), None),
+                        PS(("dp", "fsdp"), None),
+                        PS(("dp", "fsdp"),),
+                    ),
+                    out_specs=(
+                        PS(("dp", "fsdp"), None),
+                        PS(("dp", "fsdp"), None),
+                    ),
+                    check_rep=False,
+                )(
+                    logits[..., :-1, :],
+                    chosen_ids,
+                    old_per_token_logps,
+                    advantages,
+                )
+        else:
+            if fuse_entropy_metrics:
+                per_token_loss, per_token_logps, token_entropy = shard_map(
+                    _call_kernel_on_policy_with_entropy,
+                    mesh=self.mesh,
+                    in_specs=(
+                        PS(("dp", "fsdp"), None, "tp"),
+                        PS(("dp", "fsdp"), None),
+                        PS(("dp", "fsdp"),),
+                    ),
+                    out_specs=(
+                        PS(("dp", "fsdp"), None),
+                        PS(("dp", "fsdp"), None),
+                        PS(("dp", "fsdp"), None),
+                    ),
+                    check_rep=False,
+                )(
+                    logits[..., :-1, :],
+                    chosen_ids,
+                    advantages,
+                )
+            else:
+                per_token_loss, per_token_logps = shard_map(
+                    _call_kernel_on_policy,
+                    mesh=self.mesh,
+                    in_specs=(
+                        PS(("dp", "fsdp"), None, "tp"),
+                        PS(("dp", "fsdp"), None),
+                        PS(("dp", "fsdp"),),
+                    ),
+                    out_specs=(
+                        PS(("dp", "fsdp"), None),
+                        PS(("dp", "fsdp"), None),
+                    ),
+                    check_rep=False,
+                )(
+                    logits[..., :-1, :],
+                    chosen_ids,
+                    advantages,
+                )
+
+        if not fuse_entropy_metrics:
+            probs = jax.nn.softmax(logits[..., :-1, :] / self.temperature, axis=-1)
+            token_entropy = -jnp.sum(probs * jax.lax.log(probs + 1e-9), axis=-1)
 
         masked_token_entropy = token_entropy * mask_loss
         sum_entropy_per_sample = masked_token_entropy.sum(axis=-1)

@@ -166,18 +166,19 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
         leaves_with_path, treedef = jax.tree_util.tree_flatten_with_path(params)
         param_labels = jax.tree_util.tree_unflatten(treedef, [label_leaf(path, p) for path, p in leaves_with_path])
 
-        muon_tx = optax.chain(
+        muon_chain = [
             _scale_by_muon(
                 momentum=float(muon_momentum),
                 nesterov=bool(muon_nesterov),
                 ns_steps=int(muon_ns_steps),
                 eps=float(muon_eps),
-                weight_decay=float(weight_decay),
                 mu_dtype=jnp.float32,
-            ),
-            optax.scale_by_schedule(lr_schedule),
-            optax.scale(-1.0),
-        )
+            )
+        ]
+        if float(weight_decay) != 0.0:
+            muon_chain.append(optax.add_decayed_weights(float(weight_decay)))
+        muon_chain.extend([optax.scale_by_schedule(lr_schedule), optax.scale(-1.0)])
+        muon_tx = optax.chain(*muon_chain)
         adamw_decay_tx = optax.adamw(
             learning_rate=aux_lr_schedule,
             b1=beta1,

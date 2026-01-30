@@ -141,7 +141,6 @@ def _scale_by_muon(
     nesterov: bool,
     ns_steps: int,
     eps: float,
-    weight_decay: float,
     mu_dtype,
 ):
     import jax
@@ -165,12 +164,12 @@ def _scale_by_muon(
         return _MuonState(momentum=jax.tree_util.tree_map(init_leaf, params, is_leaf=is_masked))
 
     def update_fn(updates, state, params=None):
-        def update_leaf(g, m, p):
+        del params
+
+        def update_leaf(g, m):
             if is_masked(g):
                 return MaskedNode(), m
             g = g.astype(mu_dtype)
-            if float(weight_decay) != 0.0 and p is not None:
-                g = g + (jnp.asarray(float(weight_decay), dtype=mu_dtype) * p.astype(mu_dtype))
 
             m_new = (jnp.asarray(float(momentum), dtype=mu_dtype) * m) + g
             if bool(nesterov):
@@ -181,7 +180,7 @@ def _scale_by_muon(
             u = _muon_newton_schulz_5(g=g_eff, steps=int(ns_steps), eps=float(eps))
             return u, m_new
 
-        pairs = jax.tree_util.tree_map(update_leaf, updates, state.momentum, params, is_leaf=is_masked)
+        pairs = jax.tree_util.tree_map(update_leaf, updates, state.momentum, is_leaf=is_masked)
         is_pair = lambda x: isinstance(x, tuple) and len(x) == 2
         new_updates = jax.tree_util.tree_map(lambda x: x[0], pairs, is_leaf=is_pair)
         new_momentum = jax.tree_util.tree_map(lambda x: x[1], pairs, is_leaf=is_pair)
@@ -233,18 +232,20 @@ def build_tx(*, training_steps: int, cfg: OptimizerConfig, params: Any | None = 
         # `optax.multi_transform` so we can tune the auxiliary LR separately.
         # Some Optax versions ship `optax.contrib.muon`, but its signature does
         # not consistently expose an auxiliary learning-rate knob.
-        muon_tx = optax.chain(
+        muon_chain = [
             _scale_by_muon(
                 momentum=float(cfg.muon_momentum),
                 nesterov=bool(cfg.muon_nesterov),
                 ns_steps=int(cfg.muon_ns_steps),
                 eps=float(cfg.muon_eps),
-                weight_decay=float(weight_decay),
                 mu_dtype=jnp.float32,
-            ),
-            optax.scale_by_schedule(lr_schedule),
-            optax.scale(-1.0),
-        )
+            )
+        ]
+        if weight_decay != 0.0:
+            # Decoupled weight decay: do NOT include it inside the orthogonalization.
+            muon_chain.append(optax.add_decayed_weights(weight_decay))
+        muon_chain.extend([optax.scale_by_schedule(lr_schedule), optax.scale(-1.0)])
+        muon_tx = optax.chain(*muon_chain)
         aux_tx = optax.adamw(aux_lr_schedule, weight_decay=weight_decay)
 
         def label(p):

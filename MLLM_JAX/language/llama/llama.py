@@ -9,7 +9,10 @@ import jax
 import flax.linen as nn
 import jax.numpy as jnp
 import numpy as np
-import torch
+try:
+    import torch  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover
+    torch = None  # type: ignore
 from flax.linen.spmd import RulesFallback
 from jax.sharding import Mesh,PartitionSpec,NamedSharding
 from tqdm import tqdm

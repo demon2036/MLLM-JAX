@@ -12,6 +12,7 @@ flax
 optax
 chex
 transformers
+jinja2
 datasets
 tqdm
 wandb

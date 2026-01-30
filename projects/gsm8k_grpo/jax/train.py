@@ -19,6 +19,14 @@ from plugins.training.rl.advantage.estimators import compute_gae_advantages
 from plugins.training.rl.algorithms import AlgoConfig, create_algorithm
 from plugins.training.rl.ppo import get_ppo_state, ppo_training_step
 
+
+@dataclass(frozen=True)
+class TrainEmaConfig:
+    enabled: bool = False
+    decay: float = 0.9998
+    use_for_eval: bool = True
+
+
 @dataclass(frozen=True)
 class GRPORolloutConfig:
     # Prompt batch size per training step (global, across all processes).
@@ -44,6 +52,7 @@ class GRPOTrainConfig:
     ppo_epochs: int = 1
     grad_accum_steps: int = 1
     beta: float = 0.0
+    ema: TrainEmaConfig = field(default_factory=TrainEmaConfig)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
 
 
@@ -422,6 +431,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             model_path=cfg.model_path,
             update_cfg=cfg.algo.update,
             beta=cfg.train.beta,
+            ema_enabled=cfg.train.ema.enabled,
+            ema_decay=cfg.train.ema.decay,
             create_sampler=True,
             tx=tx,
         )
@@ -445,6 +456,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             num_pre_q=cfg.rollout.n,
             max_lengths=cfg.train.max_length_total,
             beta=cfg.train.beta,
+            ema_enabled=cfg.train.ema.enabled,
+            ema_decay=cfg.train.ema.decay,
             create_sampler=True,
             tx=tx,
         )
@@ -524,6 +537,30 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         if not use_value_head:
             return params
         return {"model": params["model"], "lm_head": params["lm_head"]}
+
+    ema_cfg = cfg.train.ema
+    ema_enabled = bool(ema_cfg.enabled)
+    ema_use_for_eval = bool(ema_cfg.use_for_eval)
+    if ema_enabled and int(jax.process_index()) == 0:
+        print(
+            " ".join(
+                [
+                    "ema_enabled=1",
+                    f"decay={float(ema_cfg.decay)}",
+                    f"use_for_eval={int(ema_use_for_eval)}",
+                ]
+            )
+        )
+
+    def _params_for_eval(st):
+        if not ema_enabled or not ema_use_for_eval:
+            return st.params
+        ema_params = getattr(st, "ema_params", None)
+        if ema_params is None:
+            if int(jax.process_index()) == 0:
+                print("WARNING: EMA is enabled but TrainState.ema_params is None; using raw params for eval.")
+            return st.params
+        return ema_params
 
     rng = random.Random(0xC0FFEE + jax.process_index())
     step_times: list[float] = []
@@ -860,7 +897,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_repeated_items = [item for item in eval_items for _ in range(int(n))]
 
                 t_eval_sync0 = time.perf_counter()
-                eval_policy_params = _policy_params_for_rollout(state.params)
+                eval_policy_params = _policy_params_for_rollout(_params_for_eval(state))
                 eval_rollout_module.sync_weights(eval_policy_params)
                 eval_rollout_sync_s += time.perf_counter() - t_eval_sync0
 
@@ -976,7 +1013,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         local_completion_count = 0
 
         t0 = time.perf_counter()
-        eval_policy_params = _policy_params_for_rollout(state.params)
+        eval_policy_params = _policy_params_for_rollout(_params_for_eval(state))
         eval_rollout_module.sync_weights(eval_policy_params)
         t_eval_sync_s += time.perf_counter() - t0
 

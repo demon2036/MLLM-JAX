@@ -32,6 +32,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "micro_batch_size_per_device": 4,
         "ppo_epochs": 1,
         "beta": 0.0,
+        "ema": {
+            "enabled": False,
+            "decay": 0.9998,
+            "use_for_eval": True,
+        },
         # Optimizer (pluggable; defaults match `training2.get_state`).
         "optimizer": {
             "name": "lion",

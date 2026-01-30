@@ -98,7 +98,7 @@ def _get_int_from_aliases(
 
 
 def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
-    from projects.gsm8k_grpo.jax.train import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig
+    from projects.gsm8k_grpo.jax.train import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig, TrainEmaConfig
 
     model_path = str(cfg.get("model_path") or "Qwen/Qwen2.5-3B-Instruct")
     steps = int(cfg.get("steps") or 100)
@@ -208,6 +208,25 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     if beta is None:
         beta = cfg.get("beta")
     beta = float(beta or 0.0)
+
+    ema_raw = _get_by_path(cfg, "train.ema")
+    ema_cfg = TrainEmaConfig()
+    if ema_raw is None:
+        ema_cfg = TrainEmaConfig()
+    elif isinstance(ema_raw, dict):
+        enabled_raw = ema_raw.get("enabled")
+        decay_raw = ema_raw.get("decay")
+        use_for_eval_raw = ema_raw.get("use_for_eval")
+        ema_cfg = TrainEmaConfig(
+            enabled=bool(enabled_raw) if enabled_raw is not None else ema_cfg.enabled,
+            decay=float(decay_raw) if decay_raw is not None else ema_cfg.decay,
+            use_for_eval=bool(use_for_eval_raw) if use_for_eval_raw is not None else ema_cfg.use_for_eval,
+        )
+    else:
+        raise ValueError("train.ema must be a dict when provided")
+    if ema_cfg.enabled and not (0.0 < float(ema_cfg.decay) < 1.0):
+        raise ValueError(f"train.ema.decay must be in (0, 1), got {ema_cfg.decay}")
+
     mesh_shape = str(cfg.get("mesh_shape") or "1,-1,1")
 
     from plugins.training.core.optim.optimizer import LRScheduleConfig, OptimizerConfig
@@ -410,6 +429,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             ppo_epochs=ppo_epochs,
             grad_accum_steps=grad_accum_steps,
             beta=beta,
+            ema=ema_cfg,
             optimizer=optimizer_cfg,
         ),
         mesh_shape=mesh_shape,

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
 from typing import Any, Iterable
 
 import numpy as np
+
+from plugins.training.core.data.iterators import batched, iter_indices
 
 
 @dataclass(frozen=True)
@@ -55,26 +56,6 @@ def collate_sft_batch(
         labels[i, :length] = lab[:length]
 
     return Batch(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-
-
-def iter_indices(*, n: int, seed: int, shuffle: bool) -> list[int]:
-    idx = list(range(int(n)))
-    if not shuffle:
-        return idx
-    rng = random.Random(int(seed))
-    rng.shuffle(idx)
-    return idx
-
-
-def batched(iterable: Iterable[Any], batch_size: int) -> Iterable[list[Any]]:
-    batch: list[Any] = []
-    for item in iterable:
-        batch.append(item)
-        if len(batch) >= int(batch_size):
-            yield batch
-            batch = []
-    if batch:
-        yield batch
 
 
 __all__ = ["Batch", "collate_sft_batch", "iter_indices", "batched"]

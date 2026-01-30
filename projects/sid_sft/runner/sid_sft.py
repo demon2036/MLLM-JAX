@@ -59,6 +59,14 @@ class SidSftMuonConfig:
 
 
 @dataclass(frozen=True)
+class SidSftEmaConfig:
+    enabled: bool = False
+    decay: float = 0.9998
+    # When enabled, use EMA weights for eval/inference metrics (training updates unchanged).
+    use_for_eval: bool = True
+
+
+@dataclass(frozen=True)
 class SidSftTrainConfig:
     per_device_train_batch_size: int = 1
     per_device_eval_batch_size: int = 1
@@ -67,6 +75,7 @@ class SidSftTrainConfig:
     learning_rate: float = 3e-4
     optimizer: str = "adamw"
     muon: SidSftMuonConfig = field(default_factory=SidSftMuonConfig)
+    ema: SidSftEmaConfig = field(default_factory=SidSftEmaConfig)
     weight_decay: float = 0.0
     num_train_epochs: float = 1.0
     max_steps: int = -1
@@ -413,10 +422,13 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             if int(step) == int(max_steps) and bool(cfg.eval.save_predictions_json):
                 output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json")
 
-            _preds, metrics = evaluator.evaluate(
-                params=st.params,
-                output_predictions_json=output_predictions_json,
-            )
+            params_for_eval = st.params
+            if bool(cfg.train.ema.enabled) and bool(cfg.train.ema.use_for_eval):
+                ema_params = getattr(st, "ema_params", None)
+                if ema_params is not None:
+                    params_for_eval = ema_params
+
+            _preds, metrics = evaluator.evaluate(params=params_for_eval, output_predictions_json=output_predictions_json)
             eval_metrics = metrics
 
             if wandb is not None:
@@ -450,6 +462,8 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             seed=int(cfg.seed),
             logging_steps=int(cfg.train.logging_steps),
             warmup_steps=int(cfg.train.warmup_steps),
+            ema_enabled=bool(cfg.train.ema.enabled),
+            ema_decay=float(cfg.train.ema.decay),
             log_cb=(
                 (
                     lambda step, loss, effective_bs, step_time_sec: wandb.log(
@@ -478,6 +492,10 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
     # Eval params: prefer trained state, else use placed params.
     eval_params = state.params if state is not None else params
+    if state is not None and bool(cfg.train.ema.enabled) and bool(cfg.train.ema.use_for_eval):
+        ema_params = getattr(state, "ema_params", None)
+        if ema_params is not None:
+            eval_params = ema_params
     # For non-eval-only runs, allow eval to use a checkpoint if no trained state is available.
     if state is None and cfg.train.resume_from_checkpoint and not loaded_from_checkpoint:
         payload = load_checkpoint(str(cfg.train.resume_from_checkpoint))

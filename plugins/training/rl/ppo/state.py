@@ -24,6 +24,8 @@ class PPOTrainState(train_state.TrainState):
     micro_in_mini: int = 1
     grad_accum: ArrayTree | None = None
     ref_params: Any | None = None
+    ema_params: ArrayTree | None = None
+    ema_decay: float = 0.9998
 
 
 def _resolve_param_dtype() -> jnp.dtype:
@@ -53,6 +55,8 @@ def get_ppo_state(
     model_path: str,
     update_cfg: UpdateConfig,
     beta: float = 0.0,
+    ema_enabled: bool = False,
+    ema_decay: float = 0.9998,
     create_sampler: bool = True,
     tx: Any | None = None,
 ) -> tuple[PPOTrainState, Any, PPOActorCriticModule]:
@@ -82,10 +86,16 @@ def get_ppo_state(
     params = flax.core.freeze(params)
     params = jax.tree_util.tree_map(lambda x: jnp.asarray(x, dtype=param_dtype), params)
 
+    ema_enabled = bool(ema_enabled)
+    ema_decay_f = float(ema_decay)
+    if ema_enabled and not (0.0 < ema_decay_f < 1.0):
+        raise ValueError(f"ema_decay must be in (0, 1), got {ema_decay_f}")
+
     def init_fn(p):
         grad_accum = None
         if int(grad_accum_steps) > 1:
             grad_accum = jax.tree_util.tree_map(jnp.zeros_like, p)
+        ema_params = p if ema_enabled else None
         return PPOTrainState.create(
             apply_fn=module.apply,
             params=p,
@@ -94,12 +104,14 @@ def get_ppo_state(
             micro_step=0,
             micro_in_mini=int(grad_accum_steps),
             grad_accum=grad_accum,
+            ema_params=ema_params,
+            ema_decay=ema_decay_f,
         )
 
     state_shapes = jax.eval_shape(init_fn, params)
     train_state_partition = match_partition_rules(get_partition_rules_llama(), state_shapes)
     train_state_sharding = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh, x), train_state_partition)
-    state = jax.jit(init_fn, donate_argnums=(0,), out_shardings=train_state_sharding)(params)
+    state = jax.jit(init_fn, out_shardings=train_state_sharding)(params)
 
     sampler = None
     if create_sampler:

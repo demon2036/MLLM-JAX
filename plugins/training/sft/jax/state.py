@@ -20,6 +20,8 @@ class SftTrainState(train_state.TrainState):
     micro_step: int = 0
     micro_in_mini: int = 1
     grad_accum: ArrayTree | None = None
+    ema_params: ArrayTree | None = None
+    ema_decay: float = 0.9998
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,8 @@ def create_sft_state(
     grad_accum_steps: int,
     warmup_steps: int = 0,
     label_ignore_id: int = -100,
+    ema_enabled: bool = False,
+    ema_decay: float = 0.9998,
     muon_aux_learning_rate: float = 3e-4,
     muon_momentum: float = 0.95,
     muon_nesterov: bool = True,
@@ -53,6 +57,11 @@ def create_sft_state(
     training_steps = int(training_steps)
     if training_steps <= 0:
         raise ValueError("training_steps must be > 0")
+
+    ema_enabled = bool(ema_enabled)
+    ema_decay_f = float(ema_decay)
+    if ema_enabled and not (0.0 < ema_decay_f < 1.0):
+        raise ValueError(f"ema_decay must be in (0, 1), got {ema_decay_f}")
 
     train_module = TrainSftModule(model=model, label_ignore_id=int(label_ignore_id))
     tx_cfg = OptimizerConfig(
@@ -77,6 +86,7 @@ def create_sft_state(
 
     def init_fn(p):
         grad_accum = jax.tree_util.tree_map(jnp.zeros_like, p) if grad_accum_steps > 1 else None
+        ema_params = p if ema_enabled else None
         return SftTrainState.create(
             apply_fn=train_module.apply,
             params=p,
@@ -84,6 +94,8 @@ def create_sft_state(
             micro_step=0,
             micro_in_mini=grad_accum_steps,
             grad_accum=grad_accum,
+            ema_params=ema_params,
+            ema_decay=ema_decay_f,
         )
 
     state_shapes = jax.eval_shape(init_fn, params)

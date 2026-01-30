@@ -20,6 +20,7 @@ from projects.sid_sft.config import DEFAULT_CONFIG, load_config
 from projects.sid_sft.runner.sid_sft import (
     SidSftConfig,
     SidSftDataConfig,
+    SidSftEmaConfig,
     SidSftEvalConfig,
     SidSftJaxConfig,
     SidSftMuonConfig,
@@ -139,6 +140,30 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
         ),
     )
 
+    ema_cfg = SidSftEmaConfig(
+        enabled=bool(
+            _get_or_default(
+                cfg,
+                "train.ema.enabled",
+                (DEFAULT_CONFIG["train"].get("ema") or {}).get("enabled", False),
+            )
+        ),
+        decay=float(
+            _get_or_default(
+                cfg,
+                "train.ema.decay",
+                (DEFAULT_CONFIG["train"].get("ema") or {}).get("decay", 0.9998),
+            )
+        ),
+        use_for_eval=bool(
+            _get_or_default(
+                cfg,
+                "train.ema.use_for_eval",
+                (DEFAULT_CONFIG["train"].get("ema") or {}).get("use_for_eval", True),
+            )
+        ),
+    )
+
     train = SidSftTrainConfig(
         per_device_train_batch_size=int(_get_or_default(cfg, "train.per_device_train_batch_size", DEFAULT_CONFIG["train"]["per_device_train_batch_size"])),
         per_device_eval_batch_size=int(_get_or_default(cfg, "train.per_device_eval_batch_size", DEFAULT_CONFIG["train"]["per_device_eval_batch_size"])),
@@ -147,6 +172,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
         learning_rate=float(_get_or_default(cfg, "train.learning_rate", DEFAULT_CONFIG["train"]["learning_rate"])),
         optimizer=str(_get_or_default(cfg, "train.optimizer", DEFAULT_CONFIG["train"].get("optimizer") or "adamw")),
         muon=muon_cfg,
+        ema=ema_cfg,
         weight_decay=float(_get_or_default(cfg, "train.weight_decay", DEFAULT_CONFIG["train"].get("weight_decay") or 0.0)),
         num_train_epochs=float(_get_or_default(cfg, "train.num_train_epochs", DEFAULT_CONFIG["train"]["num_train_epochs"])),
         max_steps=int(_get_or_default(cfg, "train.max_steps", DEFAULT_CONFIG["train"]["max_steps"])),

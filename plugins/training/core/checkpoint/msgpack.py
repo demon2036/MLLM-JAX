@@ -20,6 +20,9 @@ def save_checkpoint(*, output_dir: str, state: Any, name: str = "last") -> str:
         "step": int(getattr(state, "step", 0)),
         "params": _to_numpy_tree(getattr(state, "params")),
     }
+    ema_params = getattr(state, "ema_params", None)
+    if ema_params is not None:
+        payload["ema_params"] = _to_numpy_tree(ema_params)
 
     data = flax.serialization.msgpack_serialize(payload)
     with open(path, "wb") as f:

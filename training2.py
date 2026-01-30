@@ -52,6 +52,8 @@ def get_state(
     num_pre_q=16,
     max_lengths=None,
     beta: float = 0.04,
+    ema_enabled: bool = False,
+    ema_decay: float = 0.9998,
     create_sampler: bool = True,
     tx: Any | None = None,
 ):
@@ -75,6 +77,11 @@ def get_state(
     #     max_lengths=max_lengths,
     #     )
 
+    ema_enabled = bool(ema_enabled)
+    ema_decay_f = float(ema_decay)
+    if ema_enabled and not (0.0 < ema_decay_f < 1.0):
+        raise ValueError(f"ema_decay must be in (0, 1), got {ema_decay_f}")
+
 
 
     def init_fn(params):
@@ -96,21 +103,22 @@ def get_state(
             print(f'{grad_accum_steps=}')
             grad_accum = jax.tree_util.tree_map(jnp.zeros_like, params)
 
+        ema_params = params if ema_enabled else None
 
         return TrainState.create(apply_fn=train_module.apply,params=params,tx=tx_impl,
                                  ref_params=copy.deepcopy(params) if beta!=0 else None,
                                  micro_step=0,
                                  micro_in_mini=grad_accum_steps,
                                  grad_accum=grad_accum if grad_accum_steps > 1 else None,
-                                 # ema_decay=0.99,
-                                 # ema_params=copy.deepcopy(params),
+                                 ema_decay=ema_decay_f,
+                                 ema_params=ema_params,
                                  )
 
 
     state_shapes = jax.eval_shape(init_fn, params, )
     train_state_partition = match_partition_rules(get_partition_rules_llama(), state_shapes)
     train_state_sharding = jax.tree_util.tree_map(lambda x: jax.sharding.NamedSharding(mesh, x), train_state_partition)
-    state = jax.jit(init_fn, donate_argnums=(0,),out_shardings=train_state_sharding)(params)
+    state = jax.jit(init_fn, out_shardings=train_state_sharding)(params)
 
     sampler = Sampler(model, tokenizer,mesh=mesh,) if create_sampler else None
 

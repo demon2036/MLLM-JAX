@@ -59,6 +59,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "eps": 1e-7,
             "max_dim": 10_000,
         },
+        "ema": {
+            # If enabled, maintain an exponential moving average of params and
+            # (by default) use it for eval.
+            "enabled": False,
+            "decay": 0.9998,
+            "use_for_eval": True,
+        },
         "weight_decay": 0.0,
         "num_train_epochs": 1,
         # If > 0, overrides num_train_epochs.

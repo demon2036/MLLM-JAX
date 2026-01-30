@@ -13,7 +13,8 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 from plugins.training.core.mesh.mesh import create_mesh
 from plugins.training.core.step.train_step import training_step
 
-from plugins.training.sft.jax.data import batched, collate_sft_batch, iter_indices
+from plugins.training.core.data.iterators import iter_indices
+from plugins.training.sft.jax.data import collate_sft_batch
 from plugins.training.sft.jax.state import SftStateBundle, create_sft_state
 
 
@@ -60,6 +61,8 @@ def run_sft_train(
     seed: int,
     logging_steps: int,
     warmup_steps: int = 0,
+    ema_enabled: bool = False,
+    ema_decay: float = 0.9998,
     log_cb: Callable[[int, float, int, float], None] | None = None,
     eval_every_steps: int = 0,
     eval_cb: Callable[[int, Any], None] | None = None,
@@ -84,6 +87,8 @@ def run_sft_train(
         weight_decay=float(weight_decay),
         grad_accum_steps=int(grad_accum_steps),
         warmup_steps=int(warmup_steps),
+        ema_enabled=bool(ema_enabled),
+        ema_decay=float(ema_decay),
         muon_aux_learning_rate=float(muon_aux_learning_rate),
         muon_momentum=float(muon_momentum),
         muon_nesterov=bool(muon_nesterov),

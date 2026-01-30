@@ -877,6 +877,7 @@ def _grpo_pallas_bwd(
         raise ValueError("vocab must be > 0")
 
     logits, _ = _pad_time(logits, time_block=time_block, pad_value=0.0)
+    logits, _ = _pad_vocab(logits, block_size=block_size)
 
     batch = int(chosen_ids.shape[0])
     time = int(chosen_ids.shape[1])
@@ -885,7 +886,8 @@ def _grpo_pallas_bwd(
     if blocks <= 0:
         raise ValueError("bwd kernel requires at least 1 vocab block")
 
-    out_dlogits = jax.ShapeDtypeStruct((batch, time, vocab), logits.dtype)
+    padded_vocab = int(logits.shape[-1])
+    out_dlogits = jax.ShapeDtypeStruct((batch, time, padded_vocab), logits.dtype)
 
     call = pl.pallas_call(
         functools.partial(kernel_full),

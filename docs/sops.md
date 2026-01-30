@@ -35,6 +35,7 @@
 - TPU alive check: `docs/sops/tpu-alive-check.md`
 - TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
 - TPU v6e-8 SID SFT official-alignment run: `docs/sops/tpu-vm-v6e-8-sid-sft-official-align.md`
+- TPU v6e-8 SID SFT baseline vs EMA (official-align, W&B): `docs/sops/tpu-vm-v6e-8-sid-sft-baseline-vs-ema.md`
 - TPU v6e-8 nanoGPT Tiny Shakespeare standard train (W&B online): `docs/sops/tpu-vm-v6e-8-nanogpt-tinyshakespeare-standard.md`
 - TPU v6e-8 nanoGPT Tiny Shakespeare Muon vs AdamW (W&B online): `docs/sops/tpu-vm-v6e-8-nanogpt-muon-official-compare.md`
 - TPU v6e-8 unified-api-refactor SFT + nanoGPT regression (W&B online): `docs/sops/tpu-vm-v6e-8-unified-api-refactor-sft-nanogpt-regression.md`
@@ -46,6 +47,7 @@
 - TPU v6e-8 GRPO train (100 steps, bs=128 seq, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`
 - TPU v6e-8 rollout speed debug (Qwen2.5-3B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - TPU v6e-8 full test-set eval sweep (Qwen2.5-3B, W&B): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-full-test-eval-sweep.md`
+- TPU v6e-8 GRPO/GSM8K baseline vs EMA (W&B + full eval): `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-baseline-vs-ema.md`
 - TPU v6e-8 vs v6e-16 speed gap debug (multihost + mesh): `docs/sops/tpu-vm-v6e-8-v6e-16-grpo-gsm8k-speed-gap-debug.md`
 - TPU bf16 attention-score precision (dot_general fp32 output): `docs/sops/tpu-bf16-attention-score-f32.md`
 - TPU v4-8 timing (len=1024, 20 steps, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`

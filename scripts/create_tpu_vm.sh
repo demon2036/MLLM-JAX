@@ -6,7 +6,7 @@ usage() {
 Create a Cloud TPU VM (spot by default).
 
 Usage:
-  scripts/create_tpu_vm.sh [--type v4-8|v6e-8] [--zone ZONE] [--name TPU_NAME]
+  scripts/create_tpu_vm.sh [--type v2-8|v3-8|v4-8|v6e-8] [--zone ZONE] [--name TPU_NAME]
                            [--version RUNTIME_VERSION] [--project PROJECT]
                            [--spot|--on-demand] [--async] [--dry-run]
 
@@ -15,8 +15,9 @@ Defaults:
   --zone    us-central2-b
   --spot    enabled (use --on-demand to disable)
   --version auto:
-            v6e-* -> v6e-ubuntu-2404
-            v4-*  -> tpu-ubuntu2204-base
+            v6e-*       -> v6e-ubuntu-2404
+            v2-*|v3-*   -> tpu-ubuntu2204-base
+            v4-*        -> tpu-ubuntu2204-base
 
 Examples:
   scripts/create_tpu_vm.sh
@@ -94,10 +95,10 @@ if [[ -z "$RUNTIME_VERSION" ]]; then
   case "$TPU_TYPE" in
     v6e-*)
       RUNTIME_VERSION="v6e-ubuntu-2404" ;;
-    v4-*)
+    v2-*|v3-*|v4-*)
       RUNTIME_VERSION="tpu-ubuntu2204-base" ;;
     *)
-      echo "Unsupported --type '$TPU_TYPE' (expected v4-* or v6e-*). Provide --version explicitly." >&2
+      echo "Unsupported --type '$TPU_TYPE' (expected v2-*|v3-*|v4-*|v6e-*). Provide --version explicitly." >&2
       exit 2 ;;
   esac
 fi

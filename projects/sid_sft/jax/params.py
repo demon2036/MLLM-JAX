@@ -45,11 +45,31 @@ def resize_lm_vocab(
 
     old_vocab = int(embed.shape[0])
     new_vocab = int(new_vocab_size)
-    if new_vocab <= old_vocab:
+    if new_vocab <= 0:
+        raise ValueError(f"new_vocab_size must be > 0, got {new_vocab}")
+
+    if new_vocab == old_vocab:
         return params, VocabResizeResult(original_vocab_size=old_vocab, new_vocab_size=old_vocab, added_tokens=0)
 
     if int(head.shape[-1]) != old_vocab:
         raise ValueError(f"lm_head vocab mismatch: embed={old_vocab}, lm_head={int(head.shape[-1])}")
+
+    if new_vocab < old_vocab:
+        embed_resized = jnp.asarray(embed)[:new_vocab, :]
+        head_resized = jnp.asarray(head)[:, :new_vocab]
+
+        out: dict[str, Any] = dict(params)
+        model = dict(_get_nested(params, ("model",)))
+        embed_tokens = dict(_get_nested(params, ("model", "embed_tokens")))
+        embed_tokens["embedding"] = embed_resized
+        model["embed_tokens"] = embed_tokens
+        out["model"] = model
+
+        lm_head = dict(_get_nested(params, ("lm_head",)))
+        lm_head["kernel"] = head_resized
+        out["lm_head"] = lm_head
+
+        return out, VocabResizeResult(original_vocab_size=old_vocab, new_vocab_size=new_vocab, added_tokens=new_vocab - old_vocab)
 
     added = new_vocab - old_vocab
     hidden = int(embed.shape[1])

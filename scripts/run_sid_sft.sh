@@ -44,5 +44,4 @@ if [[ "$PRINT_CONFIG" -eq 1 ]]; then
   ARGS+=(--print-config)
 fi
 
-python scripts/run_sid_sft.py "${ARGS[@]}"
-
+python -u scripts/run_sid_sft.py "${ARGS[@]}"

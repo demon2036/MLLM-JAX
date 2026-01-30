@@ -904,6 +904,7 @@ def _grpo_pallas_bwd(
             out_specs=pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
             grid=(batch, time_blocks, blocks),
         ),
+        input_output_aliases={0: 0},
         compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "parallel")),
         interpret=interpret,
         debug=bool(debug),

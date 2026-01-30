@@ -583,6 +583,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             batch_size=int(cfg.eval.batch_size),
             num_beams=int(cfg.eval.num_beams),
             max_cache_length=int(cfg.jax.max_cache_length),
+            constrained=True,
             topk=list(cfg.eval.topk),
             output_predictions_json=output_predictions_json,
         )

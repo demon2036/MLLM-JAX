@@ -496,9 +496,6 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
         # For `train_eval`, run constrained-decoding eval periodically so W&B
         # shows metrics during training (at least once per epoch).
         if run_mode_norm == "train_eval" and cfg.eval.enabled:
-            if not cfg.eval.constrained:
-                raise NotImplementedError("JAX evaluator currently supports only constrained=true (SID trie).")
-
             eval_dataset_full = _build_eval_dataset(cfg, tokenizer)
             n_eval = int(len(eval_dataset_full))
             if n_eval <= 0:
@@ -533,6 +530,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
                         batch_size=cfg.eval.batch_size,
                         num_beams=cfg.eval.num_beams,
                         max_cache_length=cfg.jax.max_cache_length,
+                        constrained=cfg.eval.constrained,
                         topk=eval_topk,
                         show_progress=False,
                     )
@@ -548,6 +546,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
                     batch_size=cfg.eval.batch_size,
                     num_beams=cfg.eval.num_beams,
                     max_cache_length=cfg.jax.max_cache_length,
+                    constrained=cfg.eval.constrained,
                     topk=eval_topk,
                     show_progress=False,
                 )
@@ -713,8 +712,6 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             eval_params = jax.tree_util.tree_map(lambda x, sh: jax.device_put(jnp.asarray(x, dtype=param_dtype), sh), ckpt_params, shardings)
 
     if run_mode_norm == "train_eval" and cfg.eval.enabled and eval_metrics is None and int(jax.process_count()) == 1:
-        if not cfg.eval.constrained:
-            raise NotImplementedError("JAX evaluator currently supports only constrained=true (SID trie).")
         eval_dataset = _build_eval_dataset(cfg, tokenizer)
         output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json") if cfg.eval.save_predictions_json else None
         _preds, eval_metrics = evaluate_sid_next_item_jax(
@@ -727,6 +724,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             batch_size=cfg.eval.batch_size,
             num_beams=cfg.eval.num_beams,
             max_cache_length=cfg.jax.max_cache_length,
+            constrained=cfg.eval.constrained,
             topk=list(cfg.eval.topk),
             output_predictions_json=output_predictions_json,
         )
@@ -741,8 +739,6 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             wandb.log(log, step=int(getattr(state, "step", 0) or 0))
 
     if run_mode_norm == "eval" and cfg.eval.enabled:
-        if not cfg.eval.constrained:
-            raise NotImplementedError("JAX evaluator currently supports only constrained=true (SID trie).")
         eval_dataset = _build_eval_dataset(cfg, tokenizer)
         output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json") if cfg.eval.save_predictions_json else None
         _preds, eval_metrics = evaluate_sid_next_item_jax(
@@ -755,6 +751,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             batch_size=cfg.eval.batch_size,
             num_beams=cfg.eval.num_beams,
             max_cache_length=cfg.jax.max_cache_length,
+            constrained=cfg.eval.constrained,
             topk=list(cfg.eval.topk),
             output_predictions_json=output_predictions_json,
         )

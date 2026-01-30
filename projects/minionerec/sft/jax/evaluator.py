@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from plugins.sample.decoding.sid3_beam_search import beam_search_sid3_prefill
 from plugins.sample.decoding.sid3_constrained_beam_search import constrained_beam_search_sid3_prefill
 from plugins.sample.constraints.sid_trie import build_sid_trie_from_index
 from projects.minionerec.sft.metrics import RankingMetrics, compute_hr_ndcg
@@ -56,11 +57,15 @@ def evaluate_sid_next_item_jax(
     batch_size: int,
     num_beams: int,
     max_cache_length: int,
+    constrained: bool,
     topk: list[int],
     output_predictions_json: str | None,
 ) -> tuple[list[list[str]], RankingMetrics]:
     valid_sids = load_valid_sids_from_info(info_file)
-    trie = build_sid_trie_from_index(tokenizer=tokenizer, sid_index_path=sid_index_path, eos_token_id=int(getattr(tokenizer, "eos_token_id")))
+    eos_token_id = int(getattr(tokenizer, "eos_token_id"))
+    trie = None
+    if constrained:
+        trie = build_sid_trie_from_index(tokenizer=tokenizer, sid_index_path=sid_index_path, eos_token_id=eos_token_id)
 
     n = int(len(eval_dataset))
     targets = list(getattr(eval_dataset, "get_targets")())
@@ -99,16 +104,29 @@ def evaluate_sid_next_item_jax(
     )
 
     def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_len: jax.Array):
-        out = constrained_beam_search_sid3_prefill(
-            model=model,
-            params=params_in,
-            prompt_input_ids=prompt_input_ids,
-            trie=trie,
-            num_beams=int(num_beams),
-            max_cache_length=int(max_cache_length),
-            suffix_token_ids=newline_suffix,
-            prompt_true_len=prompt_true_len,
-        )
+        if constrained:
+            assert trie is not None
+            out = constrained_beam_search_sid3_prefill(
+                model=model,
+                params=params_in,
+                prompt_input_ids=prompt_input_ids,
+                trie=trie,
+                num_beams=int(num_beams),
+                max_cache_length=int(max_cache_length),
+                suffix_token_ids=newline_suffix,
+                prompt_true_len=prompt_true_len,
+            )
+        else:
+            out = beam_search_sid3_prefill(
+                model=model,
+                params=params_in,
+                prompt_input_ids=prompt_input_ids,
+                num_beams=int(num_beams),
+                max_cache_length=int(max_cache_length),
+                eos_token_id=eos_token_id,
+                suffix_token_ids=newline_suffix,
+                prompt_true_len=prompt_true_len,
+            )
         return out.token_ids
 
     beam_search_jit = jax.jit(_beam_search)
@@ -188,6 +206,7 @@ class SidNextItemJaxEvaluator:
         batch_size: int,
         num_beams: int,
         max_cache_length: int,
+        constrained: bool,
         topk: list[int],
         show_progress: bool = False,
     ):
@@ -201,15 +220,19 @@ class SidNextItemJaxEvaluator:
 
         self._num_beams = int(num_beams)
         self._max_cache_length = int(max_cache_length)
+        self._constrained = bool(constrained)
         self._topk = [int(k) for k in topk]
         self._show_progress = bool(show_progress)
 
         self._valid_items = set(load_valid_sids_from_info(info_file))
-        self._trie = build_sid_trie_from_index(
-            tokenizer=tokenizer,
-            sid_index_path=sid_index_path,
-            eos_token_id=int(getattr(tokenizer, "eos_token_id")),
-        )
+        self._eos_token_id = int(getattr(tokenizer, "eos_token_id"))
+        self._trie = None
+        if self._constrained:
+            self._trie = build_sid_trie_from_index(
+                tokenizer=tokenizer,
+                sid_index_path=sid_index_path,
+                eos_token_id=self._eos_token_id,
+            )
         self._newline_suffix = _newline_suffix_token_ids(tokenizer)
 
         n = int(len(eval_dataset))
@@ -238,16 +261,29 @@ class SidNextItemJaxEvaluator:
         self._buckets = buckets
 
         def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_len: jax.Array):
-            out = constrained_beam_search_sid3_prefill(
-                model=self._model,
-                params=params_in,
-                prompt_input_ids=prompt_input_ids,
-                trie=self._trie,
-                num_beams=self._num_beams,
-                max_cache_length=self._max_cache_length,
-                suffix_token_ids=self._newline_suffix,
-                prompt_true_len=prompt_true_len,
-            )
+            if self._constrained:
+                assert self._trie is not None
+                out = constrained_beam_search_sid3_prefill(
+                    model=self._model,
+                    params=params_in,
+                    prompt_input_ids=prompt_input_ids,
+                    trie=self._trie,
+                    num_beams=self._num_beams,
+                    max_cache_length=self._max_cache_length,
+                    suffix_token_ids=self._newline_suffix,
+                    prompt_true_len=prompt_true_len,
+                )
+            else:
+                out = beam_search_sid3_prefill(
+                    model=self._model,
+                    params=params_in,
+                    prompt_input_ids=prompt_input_ids,
+                    num_beams=self._num_beams,
+                    max_cache_length=self._max_cache_length,
+                    eos_token_id=self._eos_token_id,
+                    suffix_token_ids=self._newline_suffix,
+                    prompt_true_len=prompt_true_len,
+                )
             return out.token_ids
 
         self._beam_search_jit = jax.jit(_beam_search)

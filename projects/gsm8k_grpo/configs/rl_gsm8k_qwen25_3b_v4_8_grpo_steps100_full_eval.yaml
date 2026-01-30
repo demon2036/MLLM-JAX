@@ -1,0 +1,45 @@
+# RL/GSM8K config (v4-8, Qwen2.5-3B-Instruct) — GRPO (full test eval)
+#
+# Intended use:
+# - TPU v4-8 end-to-end validation (100 steps, W&B online)
+# - Enable full test-split eval sweep by exporting:
+#     EVAL_FULL_SWEEP=1
+#
+# This variant keeps the small v4-8 batch settings, but increases the
+# generation max length so the full eval accuracy is meaningful.
+
+model_path: Qwen/Qwen2.5-3B-Instruct
+steps: 100
+
+rollout:
+  backend: naive
+  batch_size: 1
+  n: 4
+  global_length: 512
+  max_length_sample: 1024
+
+train:
+  micro_batch_size: null
+  micro_batch_size_per_device: 1
+  ppo_epochs: 1
+  grad_accum_steps: 1
+  beta: 0.0
+
+algo:
+  name: grpo
+  estimator:
+    name: grpo
+  update:
+    name: policy_gradient
+
+mesh_shape: 1,-1,1
+
+wandb_project: mllm-jax-grpo-gsm8k
+wandb_mode: online
+wandb_name: null
+
+reward_weights: [1.0, 0.5, 0.5]
+
+eval_every_steps: 0
+eval_batches_per_process: 1
+eval_split: test

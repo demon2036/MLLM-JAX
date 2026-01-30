@@ -156,8 +156,9 @@ def _grpo_pallas_fwd(
         raise ValueError("time_block must be > 0")
     if time_block % 8 != 0:
         raise ValueError("time_block must be divisible by 8")
-    quantize_logp = _resolve_compute_dtype(cfg.compute_dtype) == jnp.bfloat16
-    compute_dtype = jnp.float32
+    softmax_dtype = _resolve_compute_dtype(cfg.compute_dtype)
+    quantize_logp = softmax_dtype == jnp.bfloat16
+    compute_dtype = softmax_dtype
 
     logits, original_vocab = _pad_vocab(logits, block_size=cfg.block_size)
     logits, original_time = _pad_time(logits, time_block=time_block, pad_value=0.0)
@@ -177,7 +178,7 @@ def _grpo_pallas_fwd(
 
     out_loss = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
     out_logp = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
-    out_lse = jax.ShapeDtypeStruct((batch, time, 1), compute_dtype)
+    out_lse = jax.ShapeDtypeStruct((batch, time, 1), jnp.float32)
 
     eps_low = float(cfg.epsilon_low)
     eps_high = float(cfg.epsilon_high)
@@ -208,7 +209,9 @@ def _grpo_pallas_fwd(
             out_logp_ref[...] = jnp.zeros_like(out_logp_ref)
             out_lse_ref[...] = jnp.zeros_like(out_lse_ref)
 
-        logits_tile = logits_ref[0, :, :].astype(compute_dtype)
+        logits_tile = logits_ref[0, :, :]
+        if compute_dtype == jnp.float32 and logits_tile.dtype != jnp.float32:
+            logits_tile = logits_tile.astype(jnp.float32)
 
         idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
         block_start = pid_k * block_size
@@ -227,25 +230,25 @@ def _grpo_pallas_fwd(
         tile_max = jnp.max(logits_tile, axis=-1)
         new_max = jnp.maximum(prev_max, tile_max)
         prev_sum = prev_sum * jnp.exp(prev_max - new_max)
-        tile_sum = jnp.sum(jnp.exp(logits_tile - new_max[:, None]), axis=-1)
+        tile_sum = jnp.sum(jnp.exp(logits_tile - new_max[:, None]), axis=-1).astype(compute_dtype)
         new_sum = prev_sum + tile_sum
         max_ref[:] = new_max
         sum_ref[:] = new_sum
 
         @pl.when(pid_k == blocks - 1)
         def out():
-            eps_low_v = jnp.asarray(1.0 - eps_low, dtype=compute_dtype)
-            eps_high_v = jnp.asarray(1.0 + eps_high, dtype=compute_dtype)
-            lse = max_ref[:] + jnp.log(sum_ref[:])
+            lse = max_ref[:].astype(jnp.float32) + jnp.log(sum_ref[:].astype(jnp.float32))
             out_lse_ref[0, :, 0] = lse.astype(out_lse_ref.dtype)
 
-            logp_raw = chosen_ref[:] - lse
+            logp_raw = chosen_ref[:].astype(jnp.float32) - lse
             if quantize_logp:
                 logp_raw = logp_raw.astype(jnp.bfloat16).astype(jnp.float32)
             logp = logp_raw / temperature
             out_logp_ref[0, :, 0] = logp.astype(out_logp_ref.dtype)
 
-            old_logp = old_logps_ref[0, :, 0].astype(compute_dtype)
+            eps_low_v = jnp.asarray(1.0 - eps_low, dtype=jnp.float32)
+            eps_high_v = jnp.asarray(1.0 + eps_high, dtype=jnp.float32)
+            old_logp = old_logps_ref[0, :, 0].astype(jnp.float32)
             ratio = jnp.exp(logp - old_logp)
             clipped_ratio = jnp.clip(ratio, eps_low_v, eps_high_v)
             advantage = advantages_ref[pid_b, 0].astype(jnp.float32)
@@ -364,7 +367,9 @@ def _grpo_pallas_bwd(
         idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
         block_start = pid_k * block_size
 
-        lse_val = lse_ref[0, :, 0].astype(compute_dtype)
+        lse_val = lse_ref[0, :, 0].astype(jnp.float32)
+        if use_bf16_softmax:
+            lse_bf16 = lse_val.astype(jnp.bfloat16)
 
         logp = logps_ref[0, :, 0].astype(compute_dtype)
         old_logp = old_logps_ref[0, :, 0].astype(compute_dtype)
@@ -384,12 +389,14 @@ def _grpo_pallas_bwd(
             scale = dlogp / temperature
         lane_ids = jnp.arange(index_subblock, dtype=jnp.int32)[None, :]
         for sb in range(num_index_subblocks):
-            logits_sub = logits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock].astype(compute_dtype)
-            log_softmax_sub = logits_sub - lse_val[:, None]
             if use_bf16_softmax:
-                probs_sub = jnp.exp(log_softmax_sub.astype(jnp.bfloat16))
+                logits_sub = logits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock].astype(jnp.bfloat16)
+                log_softmax_sub = logits_sub - lse_bf16[:, None]
+                probs_sub = jnp.exp(log_softmax_sub)
                 dlogits_sub = (-probs_sub) * scale_bf16[:, None]
             else:
+                logits_sub = logits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock].astype(jnp.float32)
+                log_softmax_sub = logits_sub - lse_val[:, None]
                 probs_sub = jnp.exp(log_softmax_sub).astype(jnp.float32)
                 dlogits_sub = (-probs_sub) * scale[:, None]
 

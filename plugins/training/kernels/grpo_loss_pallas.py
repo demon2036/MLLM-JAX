@@ -217,7 +217,9 @@ def _logsumexp_stats_pallas_full_vocab(
             if vocab != block_size:
                 lanes = jnp.arange(block_size, dtype=jnp.int32)
                 mask = lanes < vocab
-                logits_tile = jnp.where(mask[None, :], logits_tile, jnp.finfo(logits_tile.dtype).min)
+                mask_f = mask.astype(logits_tile.dtype)
+                neg_inf = jnp.asarray(jnp.finfo(logits_tile.dtype).min, dtype=logits_tile.dtype)
+                logits_tile = logits_tile * mask_f + neg_inf * (jnp.asarray(1, dtype=logits_tile.dtype) - mask_f)
 
             if use_manual_reduction:
                 tile_max = _reduce_max_pow2(logits_tile).astype(compute_dtype)
@@ -268,7 +270,9 @@ def _logsumexp_stats_pallas_full_vocab(
             logits_tile = logits_tile.astype(jnp.float32)
         lanes = pid_k * block_size + jnp.arange(block_size, dtype=jnp.int32)
         mask = lanes < vocab
-        logits_tile = jnp.where(mask[None, :], logits_tile, jnp.finfo(logits_tile.dtype).min)
+        mask_f = mask.astype(logits_tile.dtype)
+        neg_inf = jnp.asarray(jnp.finfo(logits_tile.dtype).min, dtype=logits_tile.dtype)
+        logits_tile = logits_tile * mask_f + neg_inf * (jnp.asarray(1, dtype=logits_tile.dtype) - mask_f)
 
         prev_max = max_ref[:]
         prev_sum = sum_ref[:]
@@ -408,7 +412,9 @@ def _logsumexp_stats_pallas_full_vocab_with_logits(
             if vocab != block_size:
                 lanes = jnp.arange(block_size, dtype=jnp.int32)
                 mask = lanes < vocab
-                logits_tile = jnp.where(mask[None, :], logits_tile, jnp.finfo(logits_tile.dtype).min)
+                mask_f = mask.astype(logits_tile.dtype)
+                neg_inf = jnp.asarray(jnp.finfo(logits_tile.dtype).min, dtype=logits_tile.dtype)
+                logits_tile = logits_tile * mask_f + neg_inf * (jnp.asarray(1, dtype=logits_tile.dtype) - mask_f)
 
             if use_manual_reduction:
                 tile_max = _reduce_max_pow2(logits_tile).astype(compute_dtype)
@@ -476,7 +482,9 @@ def _logsumexp_stats_pallas_full_vocab_with_logits(
             logits_tile = logits_tile.astype(jnp.float32)
         lanes = pid_k * block_size + jnp.arange(block_size, dtype=jnp.int32)
         mask = lanes < vocab
-        logits_tile = jnp.where(mask[None, :], logits_tile, jnp.finfo(logits_tile.dtype).min)
+        mask_f = mask.astype(logits_tile.dtype)
+        neg_inf = jnp.asarray(jnp.finfo(logits_tile.dtype).min, dtype=logits_tile.dtype)
+        logits_tile = logits_tile * mask_f + neg_inf * (jnp.asarray(1, dtype=logits_tile.dtype) - mask_f)
 
         prev_max = max_ref[:]
         prev_sum = sum_ref[:]

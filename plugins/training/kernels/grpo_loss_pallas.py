@@ -839,318 +839,51 @@ def _grpo_pallas_bwd(
                 dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = dlogits_sub.astype(dlogits_ref.dtype)
 
     vocab = int(original_vocab)
-    full_blocks = int(vocab // block_size)
-    full_vocab = int(full_blocks * block_size)
-    tail_vocab = int(vocab - full_vocab)
+    if vocab <= 0:
+        raise ValueError("vocab must be > 0")
+
+    logits, _ = _pad_time(logits, time_block=time_block, pad_value=0.0)
 
     batch = int(chosen_ids.shape[0])
     time = int(chosen_ids.shape[1])
     time_blocks = int(time // time_block)
+    blocks = int(_ceil_div(vocab, block_size))
+    if blocks <= 0:
+        raise ValueError("bwd kernel requires at least 1 vocab block")
 
-    dlogits = None
+    out_dlogits = jax.ShapeDtypeStruct((batch, time, vocab), logits.dtype)
 
-    if tail_vocab == 0:
-        if full_blocks > 0:
-            logits_full, _ = _pad_time(logits, time_block=time_block, pad_value=0.0)
-            out_dlogits_full = jax.ShapeDtypeStruct((batch, time, full_vocab), logits.dtype)
-
-            call = pl.pallas_call(
-                functools.partial(kernel_full),
-                out_shape=out_dlogits_full,
-                grid_spec=pltpu.PrefetchScalarGridSpec(
-                    num_scalar_prefetch=0,
-                    in_specs=[
-                        pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
-                        pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                        pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                        pl.BlockSpec((batch, 1), lambda b, t, k: (0, 0)),
-                        pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                        pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                        pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                    ],
-                    out_specs=pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
-                    grid=(batch, time_blocks, full_blocks),
-                ),
-                compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "parallel")),
-                interpret=interpret,
-                debug=bool(debug),
-            )
-
-            dlogits = call(
-                logits_full,
-                chosen_ids3,
-                old_logps3,
-                advantages2,
-                logps3,
-                lse3,
-                dloss3,
-            )
-    else:
-        # NOTE: Interpret-mode Pallas runs on host and can drift vs TPU exp/log
-        # numerics. Keep the tail path in JAX ops for interpret-mode tests to
-        # match the reference implementation more tightly.
-        is_interpret = interpret is not False and interpret is not None
-        if is_interpret:
-            dlogits_full = None
-            if full_blocks > 0:
-                logits_full, _ = _pad_time(logits[:, :, :full_vocab], time_block=time_block, pad_value=0.0)
-                out_dlogits_full = jax.ShapeDtypeStruct((batch, time, full_vocab), logits.dtype)
-
-                call = pl.pallas_call(
-                    functools.partial(kernel_full),
-                    out_shape=out_dlogits_full,
-                    grid_spec=pltpu.PrefetchScalarGridSpec(
-                        num_scalar_prefetch=0,
-                        in_specs=[
-                            pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
-                            pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                            pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                            pl.BlockSpec((batch, 1), lambda b, t, k: (0, 0)),
-                            pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                            pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                            pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-                        ],
-                        out_specs=pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
-                        grid=(batch, time_blocks, full_blocks),
-                    ),
-                    compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "parallel")),
-                    interpret=interpret,
-                    debug=bool(debug),
-                )
-
-                dlogits_full = call(
-                    logits_full,
-                    chosen_ids3,
-                    old_logps3,
-                    advantages2,
-                    logps3,
-                    lse3,
-                    dloss3,
-                )
-
-            logits_tail, _ = _pad_time(logits[:, :, full_vocab:], time_block=time_block, pad_value=0.0)
-
-            lse_val = lse.astype(jnp.float32)
-            logp = per_token_logps.astype(jnp.float32)
-            old_logp = old_per_token_logps.astype(jnp.float32)
-            ratio = jnp.exp(logp - old_logp).astype(jnp.float32)
-            clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
-
-            advantage = advantages.astype(jnp.float32)[:, None]
-            loss1 = ratio * advantage
-            loss2 = clipped_ratio * advantage
-            unclipped = loss2 >= loss1
-
-            dlogp = (-loss1) * unclipped.astype(jnp.float32)
-            dlogp = dlogp * dloss.astype(jnp.float32)
-            scale = dlogp / temperature
-
-            if use_bf16_softmax:
-                scale_c = scale.astype(jnp.bfloat16)
-                logits_c = logits_tail.astype(jnp.bfloat16)
-                log_softmax = logits_c.astype(jnp.float32) - lse_val[..., None]
-                probs = jnp.exp(log_softmax).astype(jnp.bfloat16)
-                dlogits_tail = (-probs) * scale_c[..., None]
-            else:
-                scale_c = scale
-                logits_c = logits_tail.astype(jnp.float32)
-                log_softmax = logits_c - lse_val[..., None]
-                probs = jnp.exp(log_softmax).astype(jnp.float32)
-                dlogits_tail = (-probs) * scale_c[..., None]
-
-            idx_tail = (chosen_ids.astype(jnp.int32) - int(full_vocab)).astype(jnp.int32)
-            mask = (idx_tail >= 0) & (idx_tail < int(tail_vocab))
-            bt = int(dlogits_tail.shape[0] * dlogits_tail.shape[1])
-            rows = jnp.arange(bt, dtype=jnp.int32)
-            cols = idx_tail.reshape((bt,))
-            updates = scale_c.reshape((bt,))
-            mask_flat = mask.reshape((bt,))
-            cols = jnp.where(mask_flat, cols, 0)
-            updates = jnp.where(mask_flat, updates, jnp.asarray(0, dtype=updates.dtype))
-            dlogits_tail = dlogits_tail.reshape((bt, int(tail_vocab))).at[rows, cols].add(updates).reshape(
-                dlogits_tail.shape
-            )
-            dlogits_tail = dlogits_tail.astype(logits.dtype)
-
-            if dlogits_full is None:
-                dlogits = dlogits_tail
-            else:
-                dlogits = jnp.concatenate([dlogits_full, dlogits_tail], axis=-1)
-        else:
-            tail_tile_vocab = int(_ceil_div(tail_vocab, index_subblock) * index_subblock)
-            if tail_tile_vocab <= 0:
-                raise ValueError("tail_tile_vocab must be > 0")
-
-            logits_tail, _ = _pad_time(logits[:, :, full_vocab:], time_block=time_block, pad_value=0.0)
-            pad_tail = int(tail_tile_vocab - tail_vocab)
-            if pad_tail > 0:
-                logits_tail = jnp.pad(
-                    logits_tail,
-                    ((0, 0), (0, 0), (0, pad_tail)),
-                    constant_values=jnp.finfo(logits.dtype).min,
-                )
-
-            num_tail_subblocks = int(tail_tile_vocab // index_subblock)
-
-            def kernel_full_and_tail(
-                logits_full_ref,
-                logits_tail_ref,
-                chosen_ids_ref,
-                old_logps_ref,
-                advantages_ref,
-                logps_ref,
-                lse_ref,
-                dloss_ref,
-                dlogits_ref,
-            ):
-                pid_k = pl.program_id(2)
-
-                idx = chosen_ids_ref[0, :, 0].astype(jnp.int32)
-                block_start = pid_k * block_size
-
-                lse_val = lse_ref[0, :, 0].astype(jnp.float32)
-                logp = logps_ref[0, :, 0].astype(compute_dtype)
-                old_logp = old_logps_ref[0, :, 0].astype(compute_dtype)
-                ratio = jnp.exp(logp - old_logp).astype(jnp.float32)
-                clipped_ratio = jnp.clip(ratio, 1.0 - eps_low, 1.0 + eps_high)
-
-                pid_b = pl.program_id(0)
-                advantage = advantages_ref[pid_b, 0].astype(jnp.float32)
-                loss1 = ratio * advantage
-                loss2 = clipped_ratio * advantage
-                unclipped = loss2 >= loss1
-
-                dlogp = -loss1 * unclipped.astype(jnp.float32)
-                dlogp = dlogp * dloss_ref[0, :, 0].astype(jnp.float32)
-                if use_bf16_softmax:
-                    scale_bf16 = (dlogp / temperature).astype(jnp.bfloat16)
-                else:
-                    scale = dlogp / temperature
-
-                lane_ids = jnp.arange(index_subblock, dtype=jnp.int32)[None, :]
-
-                @pl.when(pid_k < full_blocks)
-                def _full():
-                    for sb in range(num_index_subblocks):
-                        if use_bf16_softmax:
-                            logits_sub = logits_full_ref[
-                                0, :, sb * index_subblock : (sb + 1) * index_subblock
-                            ].astype(jnp.bfloat16)
-                            log_softmax_sub = logits_sub.astype(jnp.float32) - lse_val[:, None]
-                            probs_sub = jnp.exp(log_softmax_sub).astype(jnp.bfloat16)
-                            dlogits_sub = (-probs_sub) * scale_bf16[:, None]
-                        else:
-                            logits_sub = logits_full_ref[
-                                0, :, sb * index_subblock : (sb + 1) * index_subblock
-                            ].astype(jnp.float32)
-                            log_softmax_sub = logits_sub - lse_val[:, None]
-                            probs_sub = jnp.exp(log_softmax_sub).astype(jnp.float32)
-                            dlogits_sub = (-probs_sub) * scale[:, None]
-
-                        sb_start = block_start + sb * index_subblock
-                        offset = idx - sb_start
-                        onehot = (lane_ids == offset[:, None]).astype(jnp.float32)
-                        if use_bf16_softmax:
-                            dlogits_sub = dlogits_sub + onehot.astype(jnp.bfloat16) * scale_bf16[:, None]
-                        else:
-                            dlogits_sub = dlogits_sub + onehot * scale[:, None]
-
-                        dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = dlogits_sub.astype(
-                            dlogits_ref.dtype
-                        )
-
-                @pl.when(pid_k == full_blocks)
-                def _tail():
-                    for sb in range(num_index_subblocks):
-                        if sb < num_tail_subblocks:
-                            if use_bf16_softmax:
-                                logits_sub = logits_tail_ref[
-                                    0, :, sb * index_subblock : (sb + 1) * index_subblock
-                                ].astype(jnp.bfloat16)
-                                log_softmax_sub = logits_sub.astype(jnp.float32) - lse_val[:, None]
-                                probs_sub = jnp.exp(log_softmax_sub).astype(jnp.bfloat16)
-                                dlogits_sub = (-probs_sub) * scale_bf16[:, None]
-                            else:
-                                logits_sub = logits_tail_ref[
-                                    0, :, sb * index_subblock : (sb + 1) * index_subblock
-                                ].astype(jnp.float32)
-                                log_softmax_sub = logits_sub - lse_val[:, None]
-                                probs_sub = jnp.exp(log_softmax_sub).astype(jnp.float32)
-                                dlogits_sub = (-probs_sub) * scale[:, None]
-
-                            sb_start = block_start + sb * index_subblock
-                            offset = idx - sb_start
-                            onehot = (lane_ids == offset[:, None]).astype(jnp.float32)
-                            if use_bf16_softmax:
-                                dlogits_sub = dlogits_sub + onehot.astype(jnp.bfloat16) * scale_bf16[:, None]
-                            else:
-                                dlogits_sub = dlogits_sub + onehot * scale[:, None]
-
-                            dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = dlogits_sub.astype(
-                                dlogits_ref.dtype
-                            )
-                        else:
-                            dlogits_ref[0, :, sb * index_subblock : (sb + 1) * index_subblock] = jnp.zeros(
-                                (time_block, index_subblock), dtype=dlogits_ref.dtype
-                            )
-
-            blocks = int(full_blocks + 1)
-            # Important: keep the output shape at the original vocab size.
-            #
-            # For the last block, Pallas will present an out-of-bounds-padded
-            # view of shape (block_size), and out-of-bounds stores will be
-            # discarded. This avoids materializing a padded `[B,T,blocks*block]`
-            # buffer and then slicing it down to `[B,T,vocab]` (which can double
-            # peak HBM in some benchmarks).
-            out_dlogits = jax.ShapeDtypeStruct((batch, time, vocab), logits.dtype)
-
-            in_specs = [
-                pl.BlockSpec(
-                    (1, time_block, block_size),
-                    (lambda b, t, k: (b, t, jnp.minimum(k, full_blocks - 1)))
-                    if full_blocks > 0
-                    else (lambda b, t, k: (b, t, 0)),
-                ),
-                pl.BlockSpec((1, time_block, tail_tile_vocab), lambda b, t, k: (b, t, 0)),
+    call = pl.pallas_call(
+        functools.partial(kernel_full),
+        out_shape=out_dlogits,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[
+                pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((batch, 1), lambda b, t, k: (0, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
                 pl.BlockSpec((1, time_block, 1), lambda b, t, k: (b, t, 0)),
-            ]
+            ],
+            out_specs=pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
+            grid=(batch, time_blocks, blocks),
+        ),
+        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "parallel")),
+        interpret=interpret,
+        debug=bool(debug),
+    )
 
-            call = pl.pallas_call(
-                functools.partial(kernel_full_and_tail),
-                out_shape=out_dlogits,
-                grid_spec=pltpu.PrefetchScalarGridSpec(
-                    num_scalar_prefetch=0,
-                    in_specs=in_specs,
-                    out_specs=pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
-                    grid=(batch, time_blocks, blocks),
-                ),
-                compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "parallel")),
-                interpret=interpret,
-                debug=bool(debug),
-            )
-
-            logits_full, _ = _pad_time(logits[:, :, :full_vocab], time_block=time_block, pad_value=0.0)
-            if full_blocks == 0:
-                logits_full = jnp.zeros((batch, time, block_size), dtype=logits.dtype)
-
-            dlogits = call(
-                logits_full,
-                logits_tail,
-                chosen_ids3,
-                old_logps3,
-                advantages2,
-                logps3,
-                lse3,
-                dloss3,
-            )
-
-    if dlogits is None:
-        raise ValueError("dlogits was not computed (unexpected config/shape)")
+    dlogits = call(
+        logits,
+        chosen_ids3,
+        old_logps3,
+        advantages2,
+        logps3,
+        lse3,
+        dloss3,
+    )
 
     return dlogits[:, :original_time, :vocab]
 

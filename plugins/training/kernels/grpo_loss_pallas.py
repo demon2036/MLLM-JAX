@@ -724,15 +724,10 @@ def _grpo_pallas_fwd(
         max_val, sum_exp, sum_exp_logits = _logsumexp_stats_with_logits(
             logits=logits, cfg=cfg, interpret=interpret, debug=debug
         )
-        lse = max_val + jnp.log(sum_exp)
     else:
-        # For the non-entropy path, use JAX's float32 logsumexp to avoid an extra
-        # Pallas call (which tends to increase `memory_stats().peak_bytes_reserved`
-        # on TPU for large-vocab logits).
-        import jax
-
-        lse = jax.nn.logsumexp(logits.astype(jnp.float32), axis=-1).astype(jnp.float32)
+        max_val, sum_exp = _logsumexp_stats(logits=logits, cfg=cfg, interpret=interpret, debug=debug)
         sum_exp_logits = None
+    lse = max_val + jnp.log(sum_exp)
 
     chosen = jnp.take_along_axis(logits, chosen_ids[..., None], axis=-1)[..., 0].astype(compute_dtype)
     logp_raw = chosen.astype(jnp.float32) - lse.astype(jnp.float32)
@@ -877,7 +872,6 @@ def _grpo_pallas_bwd(
         raise ValueError("vocab must be > 0")
 
     logits, _ = _pad_time(logits, time_block=time_block, pad_value=0.0)
-    logits, _ = _pad_vocab(logits, block_size=block_size)
 
     batch = int(chosen_ids.shape[0])
     time = int(chosen_ids.shape[1])
@@ -886,8 +880,7 @@ def _grpo_pallas_bwd(
     if blocks <= 0:
         raise ValueError("bwd kernel requires at least 1 vocab block")
 
-    padded_vocab = int(logits.shape[-1])
-    out_dlogits = jax.ShapeDtypeStruct((batch, time, padded_vocab), logits.dtype)
+    out_dlogits = jax.ShapeDtypeStruct((batch, time, vocab), logits.dtype)
 
     call = pl.pallas_call(
         functools.partial(kernel_full),
@@ -906,7 +899,6 @@ def _grpo_pallas_bwd(
             out_specs=pl.BlockSpec((1, time_block, block_size), lambda b, t, k: (b, t, k)),
             grid=(batch, time_blocks, blocks),
         ),
-        input_output_aliases={0: 0},
         compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel", "parallel")),
         interpret=interpret,
         debug=bool(debug),

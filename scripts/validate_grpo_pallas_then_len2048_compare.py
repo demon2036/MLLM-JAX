@@ -186,10 +186,16 @@ def _run_training_once(*, label: str, config_path: str, logs_dir: str) -> Traini
     _rm_libtpu_lockfile()
     t0 = time.perf_counter()
     log_path = os.path.join(logs_dir, f"len2048_{label}_{_now_tag()}.log")
+    env = os.environ.copy()
+    # Keep TPU runner behavior consistent with our standard TPU launchers.
+    env.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+    env.setdefault("TOKENIZERS_PARALLELISM", "false")
+    env.setdefault("ROLLOUT_FAST_GENERATE", "1")
+    env.setdefault("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION", "1")
     rc, oom_hit = _stream_subprocess_to_file(
         [sys.executable, "-u", os.path.join(REPO_ROOT, "scripts", "run_grpo_gsm8k_training.py"), "--config", config_path],
         log_path=log_path,
-        env=os.environ.copy(),
+        env=env,
     )
     wall_s = time.perf_counter() - t0
     return TrainingRunResult(
@@ -207,12 +213,15 @@ def main() -> None:
     p.add_argument(
         "--config_pallas",
         type=str,
-        default="plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps2_len2048_pallas_tb512_bf16_mem.yaml",
+        default=(
+            "plugins/training/configs/"
+            "grpo_gsm8k_qwen25_3b_bs128_steps2_len2048_pallas_tb512_bf16_mem_v6e8_mb2.yaml"
+        ),
     )
     p.add_argument(
         "--config_jax",
         type=str,
-        default="plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps2_len2048_jax_mem.yaml",
+        default="plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps2_len2048_jax_mem_v6e8_mb2.yaml",
     )
     p.add_argument("--wandb_mode", type=str, default="online", choices=["online", "disabled"])
     p.add_argument("--require_kernel_faster", action="store_true")

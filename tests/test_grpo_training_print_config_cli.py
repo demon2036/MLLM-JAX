@@ -12,7 +12,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
     def _run(self, args: list[str]) -> str:
         proc = subprocess.run(
-            [sys.executable, os.path.join(REPO_ROOT, "scripts", "run_grpo_gsm8k_training.py"), *args],
+            [sys.executable, os.path.join(REPO_ROOT, "projects", "gsm8k_grpo", "scripts", "run_train.py"), *args],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
@@ -44,7 +44,7 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
             [
                 "--print-config",
                 "--config",
-                "plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml",
+                "projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml",
             ]
         )
         self.assertIn("algo:", out)

@@ -1,5 +1,8 @@
 # SOP: Make optimizer configurable (train.optimizer -> tx passthrough)
 
+- NOTE (2026-01-30): Paths referenced in this SOP were updated after removing legacy shims and
+  extracting GSM8K/GRPO into `projects/gsm8k_grpo/`.
+
 - **Title**: SOP: Make the GRPO/GSM8K runner accept a pluggable optimizer (`train.optimizer`) instead of a hardcoded Optax `tx`
   **Prereqs**: Windows PowerShell; Python; repo checkout
   **Environment (verified)**:
@@ -10,7 +13,7 @@
 
 ### 1) Add an Optax optimizer builder under the update phase
 
-- Add `plugins/training/update/optimizer.py`
+- Add `plugins/training/core/optim/optimizer.py`
   - `OptimizerConfig` + `LRScheduleConfig`
   - `build_tx(training_steps, cfg)` returns an Optax `GradientTransformation`
 
@@ -22,9 +25,9 @@
 
 ### 3) Wire the runner + CLI config to pass the optimizer through
 
-- Update `plugins/training/config.py` to include default `train.optimizer` (so configs have a documented schema).
-- Update `scripts/run_grpo_gsm8k_training.py` to parse `train.optimizer` into an `OptimizerConfig`.
-- Update `plugins/training/runner/grpo_gsm8k.py` to:
+- Update `plugins/training/rl/config.py` to include default `train.optimizer` (so configs have a documented schema).
+- Update `projects/gsm8k_grpo/scripts/run_train.py` to parse `train.optimizer` into an `OptimizerConfig`.
+- Update `projects/gsm8k_grpo/jax/train.py` to:
   - build `tx = build_tx(training_steps=cfg.steps, cfg=cfg.train.optimizer)`
   - call `get_state(..., tx=tx)`
 
@@ -40,9 +43,8 @@
 
 ## References
 
-- `plugins/training/update/optimizer.py`
+- `plugins/training/core/optim/optimizer.py`
 - `training2.py` (`get_state`)
-- `plugins/training/runner/grpo_gsm8k.py`
-- `scripts/run_grpo_gsm8k_training.py`
-- `plugins/training/config.py`
-
+- `projects/gsm8k_grpo/jax/train.py`
+- `projects/gsm8k_grpo/scripts/run_train.py`
+- `plugins/training/rl/config.py`

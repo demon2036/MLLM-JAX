@@ -12,6 +12,7 @@
 - Inspect mesh/sharding/optimizer/checkpoint duplication: `docs/sops/inspect-mesh-sharding-optimizer-duplication.md`
 - Make projects/sid_sft JAX-only (remove torch): `docs/sops/plugins-sft-jax-only-remove-torch.md`
 - Inspect plugin utility duplicates: `docs/sops/inspect-plugin-utility-duplicates.md`
+- Repo layout canonical vs compatibility shims: `docs/sops/repo-layout-canonical-vs-compat-shims.md`
 - Refactor plan to consolidate `projects/sid_sft` + `plugins/training`: `docs/sops/plugins-refactor-sft-training-consolidation.md`
 - Add `plugins/common/` shared abstractions: `docs/sops/plugins-common-shared-abstractions.md`
 - Add `plugins/sample/` shared sampling package: `docs/sops/plugins-sample-shared-sampling.md`

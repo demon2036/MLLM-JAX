@@ -1,6 +1,6 @@
 # GRPO/GSM8K runner: `batch_size` semantics + local validation
 
-- **Title**: SOP: Validate `scripts/run_grpo_gsm8k_training.py` YAML configs and understand rollout batch size fields
+- **Title**: SOP: Validate `projects/gsm8k_grpo/scripts/run_train.py` YAML configs and understand rollout batch size fields
   **Prereqs**: Windows PowerShell; Python installed; repo checkout at `MLLM-jax-sglang`; no JAX needed for `--print-config`
   **Environment (verified)**:
   - OS: Windows `11` (`Windows-11-10.0.22631-SP0`)
@@ -10,7 +10,7 @@
 
 ## Batch size semantics (runner YAML)
 
-In `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` (used by `scripts/run_grpo_gsm8k_training.py`):
+In `projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml` (used by `projects/gsm8k_grpo/scripts/run_train.py`):
 
 - `rollout.batch_size`: **global prompts per training step** (sum across all JAX processes / TPU hosts).
   - Each prompt expands to `rollout.n` completions, so global sequences per step = `rollout.batch_size * rollout.n`.
@@ -31,9 +31,9 @@ Notes:
 From repo root:
 
 - Print merged default config (no JAX required):
-  - `python scripts/run_grpo_gsm8k_training.py --print-config`
+  - `python projects/gsm8k_grpo/scripts/run_train.py --print-config`
 - Print merged config with an explicit `--config` (recommended):
-  - `python scripts/run_grpo_gsm8k_training.py --print-config --config plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
+  - `python projects/gsm8k_grpo/scripts/run_train.py --print-config --config projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
 - Run local test suite:
   - `pytest -q`
 
@@ -49,7 +49,7 @@ From repo root:
 
 ## References
 
-- `scripts/run_grpo_gsm8k_training.py`
-- `plugins/training/runner/grpo_gsm8k.py`
-- `plugins/training/config.py`
-- `plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`
+- `projects/gsm8k_grpo/scripts/run_train.py`
+- `projects/gsm8k_grpo/jax/train.py`
+- `plugins/training/rl/config.py`
+- `projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml`

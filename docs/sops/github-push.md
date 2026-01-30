@@ -11,13 +11,13 @@
   - Check working tree status:
     - `git status -sb`
   - Run local checks (if any):
-    - `python -m py_compile training2.py scripts/run_grpo_gsm8k_training.py test_jit8.py`
+    - `python -m py_compile training2.py projects/gsm8k_grpo/scripts/run_train.py test_jit8.py`
   - Stage changes:
     - `git add -A`
   - Commit with a Conventional Commit message:
     - `git commit -m "docs: update SOPs"`
   - Push to GitHub:
-    - `git push origin main`
-  **Expected Result**: `git push` completes without errors and the `origin/main` branch shows the new commit.
+    - `git push origin HEAD`
+  **Expected Result**: `git push` completes without errors and the remote branch shows the new commit.
   **Troubleshooting**: If push fails with auth errors, ensure your GitHub auth is configured for the remote URL scheme.
   **References**: N/A

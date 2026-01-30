@@ -18,8 +18,8 @@ from projects.sid_sft.jax.evaluator import evaluate_sid_next_item_jax
 from projects.sid_sft.jax.params import resize_lm_vocab
 from projects.sid_sft.jax.sid_trie import build_sid_trie_from_index
 from projects.sid_sft.wandb_utils import maybe_init_wandb
-from plugins.training.advantage.grpo import compute_grpo_advantages_by_group_id
-from plugins.training.update.optimizer import OptimizerConfig, build_tx
+from plugins.training.rl.advantage.grpo import compute_grpo_advantages_by_group_id
+from plugins.training.core.optim.optimizer import OptimizerConfig, build_tx
 
 
 @dataclass(frozen=True)
@@ -138,8 +138,8 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 
     from projects.sid_sft.jax.beam_search import constrained_beam_search_sid3_prefill
-    from plugins.training.mesh import create_mesh
-    from plugins.training.update.train_step import training_step
+    from plugins.training.core.mesh.mesh import create_mesh
+    from plugins.training.core.step.train_step import training_step
 
     def parse_dtype(name: str) -> Any:
         n = str(name or "float32").strip().lower()

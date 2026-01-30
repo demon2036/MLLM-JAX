@@ -70,13 +70,11 @@ def run_training(cfg: dict[str, Any]) -> None:
     from datasets import load_dataset
     from jax.experimental.multihost_utils import process_allgather
 
-    from plugins.training.modules import (
-        GRPOSyncRollout,
-        GroupIdGRPOAdvantageModule,
-        PPOUpdateModule,
-        WeightedRewardModule,
-    )
-    from plugins.training.api import BatchSchemaError, validate_grpo_batch
+    from plugins.training.rl.rollout.modules import GRPOSyncRollout
+    from plugins.training.rl.advantage.modules import GroupIdGRPOAdvantageModule
+    from plugins.training.rl.update.modules import PPOUpdateModule
+    from plugins.training.rl.reward.modules import WeightedRewardModule
+    from plugins.api.training import BatchSchemaError, validate_grpo_batch
 
     from MLLM_JAX.utils import (
         _form_global_array,

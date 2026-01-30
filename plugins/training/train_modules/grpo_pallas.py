@@ -35,6 +35,7 @@ class TrainGRPOModulePallas(nn.Module):
     pallas_block_size: int = 2048
     pallas_time_block: int = 8
     pallas_compute_dtype: str = "f32"
+    pallas_bwd_output_alias_logits: bool = False
 
     def __call__(self, inputs):
         input_ids = inputs["input_ids"]
@@ -64,6 +65,7 @@ class TrainGRPOModulePallas(nn.Module):
             epsilon_low=float(self.epsilon_low),
             epsilon_high=float(self.epsilon_high),
             temperature=float(self.temperature),
+            bwd_output_alias_logits=bool(self.pallas_bwd_output_alias_logits),
             compute_dtype=str(self.pallas_compute_dtype),
         )
         advantages = inputs["advantages"]

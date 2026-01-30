@@ -56,6 +56,7 @@ def get_state(
     pallas_block_size: int = 2048,
     pallas_time_block: int = 8,
     pallas_compute_dtype: str = "f32",
+    pallas_bwd_output_alias_logits: bool = False,
     create_sampler: bool = True,
     tx: Any | None = None,
 ):
@@ -85,6 +86,7 @@ def get_state(
         train_module_kwargs["pallas_block_size"] = int(pallas_block_size)
         train_module_kwargs["pallas_time_block"] = int(pallas_time_block)
         train_module_kwargs["pallas_compute_dtype"] = str(pallas_compute_dtype)
+        train_module_kwargs["pallas_bwd_output_alias_logits"] = bool(pallas_bwd_output_alias_logits)
 
     remat_policy_norm = str(remat_policy or "").strip().lower()
     if remat_policy_norm in {"", "dots_with_no_batch_dims", "dots-no-batch-dims"}:

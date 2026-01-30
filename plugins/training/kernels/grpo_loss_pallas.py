@@ -11,6 +11,14 @@ class GRPOKernelConfig:
     epsilon_low: float = 0.2
     epsilon_high: float = 0.2
     temperature: float = 1.0
+    # Optional: allow the backward kernel to alias its dlogits output with the
+    # logits input buffer (in-place gradient materialization).
+    #
+    # Notes:
+    # - This is a memory optimization; numerics should be identical.
+    # - XLA will only apply aliasing when it can prove it's safe (e.g. logits is
+    #   a dead intermediate). Otherwise it may ignore the alias request.
+    bwd_output_alias_logits: bool = False
     # Controls numerical behavior of logp and softmax gradient inside the kernel.
     #
     # - "f32": match the float32 reference implementation (tests/bench)
@@ -885,6 +893,7 @@ def _grpo_pallas_bwd(
     call = pl.pallas_call(
         functools.partial(kernel_full),
         out_shape=out_dlogits,
+        input_output_aliases=({0: 0} if (interpret is False and bool(cfg.bwd_output_alias_logits)) else {}),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
@@ -931,6 +940,7 @@ def build_grpo_per_token_loss_pallas(
         epsilon_low=float(cfg.epsilon_low),
         epsilon_high=float(cfg.epsilon_high),
         temperature=float(cfg.temperature),
+        bwd_output_alias_logits=bool(getattr(cfg, "bwd_output_alias_logits", False)),
         compute_dtype=str(getattr(cfg, "compute_dtype", "f32")),
     )
 
@@ -991,6 +1001,7 @@ def build_grpo_per_token_loss_pallas_with_entropy(
         epsilon_low=float(cfg.epsilon_low),
         epsilon_high=float(cfg.epsilon_high),
         temperature=float(cfg.temperature),
+        bwd_output_alias_logits=bool(getattr(cfg, "bwd_output_alias_logits", False)),
         compute_dtype=str(getattr(cfg, "compute_dtype", "f32")),
     )
 
@@ -1052,6 +1063,7 @@ def build_grpo_per_token_loss_pallas_on_policy(
         epsilon_low=float(cfg.epsilon_low),
         epsilon_high=float(cfg.epsilon_high),
         temperature=float(cfg.temperature),
+        bwd_output_alias_logits=bool(getattr(cfg, "bwd_output_alias_logits", False)),
         compute_dtype=str(getattr(cfg, "compute_dtype", "f32")),
     )
     eps_low = float(cfg.epsilon_low)
@@ -1125,6 +1137,7 @@ def build_grpo_per_token_loss_pallas_on_policy_with_entropy(
         epsilon_low=float(cfg.epsilon_low),
         epsilon_high=float(cfg.epsilon_high),
         temperature=float(cfg.temperature),
+        bwd_output_alias_logits=bool(getattr(cfg, "bwd_output_alias_logits", False)),
         compute_dtype=str(getattr(cfg, "compute_dtype", "f32")),
     )
     eps_low = float(cfg.epsilon_low)

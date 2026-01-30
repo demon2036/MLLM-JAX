@@ -58,6 +58,7 @@ class GRPOTrainConfig:
     pallas_block_size: int = 2048
     pallas_time_block: int = 128
     pallas_compute_dtype: str = "bf16"
+    pallas_bwd_output_alias_logits: bool = False
     # Optional: log TPU memory stats (jax.devices()[0].memory_stats()) to W&B.
     log_tpu_memory: bool = False
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
@@ -486,6 +487,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             pallas_block_size=cfg.train.pallas_block_size,
             pallas_time_block=cfg.train.pallas_time_block,
             pallas_compute_dtype=cfg.train.pallas_compute_dtype,
+            pallas_bwd_output_alias_logits=cfg.train.pallas_bwd_output_alias_logits,
             create_sampler=True,
             tx=tx,
         )

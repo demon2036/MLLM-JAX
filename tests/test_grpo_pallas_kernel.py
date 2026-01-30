@@ -270,6 +270,72 @@ def test_grpo_pallas_kernel_tpu_lowering_block2048_time128_bf16_on_policy():
 
 
 @pytest.mark.skipif(jax.default_backend() != "tpu", reason="requires TPU mosaic lowering")
+def test_grpo_pallas_kernel_bwd_output_alias_logits_matches_reference():
+    key = jax.random.PRNGKey(0)
+
+    batch = 1
+    time = 128
+    vocab = 257
+
+    logits = jax.random.normal(key, (batch, time, vocab), dtype=jnp.float32)
+    chosen_ids = jax.random.randint(key, (batch, time), 0, vocab, dtype=jnp.int32)
+    advantages = jax.random.normal(key, (batch,), dtype=jnp.float32)
+
+    eps_low = 0.2
+    eps_high = 0.2
+    temperature = 1.0
+
+    _, logps_seed = grpo_per_token_loss_reference(
+        logits=logits,
+        chosen_ids=chosen_ids,
+        old_per_token_logps=jnp.zeros((batch, time), dtype=jnp.float32),
+        advantages=advantages,
+        epsilon_low=eps_low,
+        epsilon_high=eps_high,
+        temperature=temperature,
+    )
+    old_per_token_logps = jax.lax.stop_gradient(logps_seed + 0.3)
+
+    cfg = GRPOKernelConfig(
+        block_size=128,
+        time_block=time,
+        epsilon_low=eps_low,
+        epsilon_high=eps_high,
+        temperature=temperature,
+        bwd_output_alias_logits=True,
+        compute_dtype="f32",
+    )
+
+    def loss_ref_fn(l):
+        per_loss, _ = grpo_per_token_loss_reference(
+            logits=l,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+            epsilon_low=eps_low,
+            epsilon_high=eps_high,
+            temperature=temperature,
+        )
+        return jnp.sum(per_loss)
+
+    def loss_k_fn(l):
+        per_loss, _ = grpo_per_token_loss_pallas(
+            logits=l,
+            chosen_ids=chosen_ids,
+            old_per_token_logps=old_per_token_logps,
+            advantages=advantages,
+            cfg=cfg,
+            interpret=False,
+            debug=False,
+        )
+        return jnp.sum(per_loss)
+
+    grad_ref = jax.grad(loss_ref_fn)(logits)
+    grad_k = jax.grad(loss_k_fn)(logits).astype(jnp.float32)
+    assert jnp.max(jnp.abs(grad_ref - grad_k)) < 1e-4
+
+
+@pytest.mark.skipif(jax.default_backend() != "tpu", reason="requires TPU mosaic lowering")
 def test_grpo_pallas_kernel_on_policy_matches_baseline_bf16_log_softmax_grad():
     key = jax.random.PRNGKey(0)
 

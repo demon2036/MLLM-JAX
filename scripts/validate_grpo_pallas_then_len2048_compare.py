@@ -65,12 +65,51 @@ def _stream_subprocess_to_file(cmd: list[str], *, log_path: str, env: dict[str, 
 
 
 def _parse_last_json(output: str) -> dict:
-    # `scripts/grpo_kernel_bench.py` prints a single pretty JSON at the end, but
-    # W&B logs can add extra lines. Heuristic: parse from the last '{'.
-    start = output.rfind("{")
-    if start < 0:
-        raise ValueError("No JSON object found in output")
-    blob = output[start:]
+    """Extract the last JSON object from a noisy stdout blob.
+
+    `scripts/grpo_kernel_bench.py` prints one pretty JSON object at the end,
+    but W&B and other loggers can add lines before/after. We recover the last
+    full JSON object by scanning backwards from the final '}' and matching
+    braces (with minimal string/escape handling).
+    """
+    end = output.rfind("}")
+    if end < 0:
+        raise ValueError("No JSON object found in output (missing '}')")
+
+    depth = 0
+    in_string = False
+    escape = False
+    start = None
+
+    for i in range(end, -1, -1):
+        ch = output[i]
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+
+        if ch == "}":
+            depth += 1
+            continue
+        if ch == "{":
+            depth -= 1
+            if depth == 0:
+                start = i
+                break
+
+    if start is None:
+        raise ValueError("Failed to locate JSON object start in output")
+    blob = output[start : end + 1]
     return json.loads(blob)
 
 
@@ -233,4 +272,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

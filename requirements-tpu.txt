@@ -8,7 +8,9 @@
 flax
 optax
 chex
-torch
+# Torch is imported by some modules, but the default PyPI wheel may pull large CUDA deps.
+# Install the CPU-only wheel explicitly on TPU VMs:
+#   pip install -U torch --index-url https://download.pytorch.org/whl/cpu
 # transformers v5 removed `return_tensors="jax"`; keep v4 for JAX return_tensors support.
 transformers<5
 datasets

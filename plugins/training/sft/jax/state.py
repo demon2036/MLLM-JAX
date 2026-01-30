@@ -40,6 +40,12 @@ def create_sft_state(
     grad_accum_steps: int,
     warmup_steps: int = 0,
     label_ignore_id: int = -100,
+    muon_aux_learning_rate: float = 3e-4,
+    muon_momentum: float = 0.95,
+    muon_nesterov: bool = True,
+    muon_ns_steps: int = 5,
+    muon_eps: float = 1e-7,
+    muon_max_dim: int = 10_000,
 ) -> SftStateBundle:
     grad_accum_steps = int(grad_accum_steps)
     if grad_accum_steps <= 0:
@@ -60,8 +66,14 @@ def create_sft_state(
             end_value=0.0,
             warmup_steps=int(warmup_steps),
         ),
+        muon_aux_lr=float(muon_aux_learning_rate),
+        muon_momentum=float(muon_momentum),
+        muon_nesterov=bool(muon_nesterov),
+        muon_ns_steps=int(muon_ns_steps),
+        muon_eps=float(muon_eps),
+        muon_max_dim=int(muon_max_dim),
     )
-    tx = build_tx(training_steps=training_steps, cfg=tx_cfg)
+    tx = build_tx(training_steps=training_steps, cfg=tx_cfg, params=params)
 
     def init_fn(p):
         grad_accum = jax.tree_util.tree_map(jnp.zeros_like, p) if grad_accum_steps > 1 else None

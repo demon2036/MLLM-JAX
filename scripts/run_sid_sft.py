@@ -22,6 +22,7 @@ from projects.sid_sft.runner.sid_sft import (
     SidSftDataConfig,
     SidSftEvalConfig,
     SidSftJaxConfig,
+    SidSftMuonConfig,
     SidSftTasksConfig,
     SidSftTrainConfig,
     SidSftWandbConfig,
@@ -93,6 +94,51 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
         fusion_seq_rec=bool(_get_by_path(cfg, "tasks.fusion_seq_rec") if _get_by_path(cfg, "tasks.fusion_seq_rec") is not None else True),
     )
 
+    muon_cfg = SidSftMuonConfig(
+        aux_learning_rate=float(
+            _get_or_default(
+                cfg,
+                "train.muon.aux_learning_rate",
+                (DEFAULT_CONFIG["train"].get("muon") or {}).get("aux_learning_rate") or 3e-4,
+            )
+        ),
+        momentum=float(
+            _get_or_default(
+                cfg,
+                "train.muon.momentum",
+                (DEFAULT_CONFIG["train"].get("muon") or {}).get("momentum") or 0.95,
+            )
+        ),
+        nesterov=bool(
+            _get_or_default(
+                cfg,
+                "train.muon.nesterov",
+                (DEFAULT_CONFIG["train"].get("muon") or {}).get("nesterov") if (DEFAULT_CONFIG["train"].get("muon") or {}).get("nesterov") is not None else True,
+            )
+        ),
+        ns_steps=int(
+            _get_or_default(
+                cfg,
+                "train.muon.ns_steps",
+                (DEFAULT_CONFIG["train"].get("muon") or {}).get("ns_steps") or 5,
+            )
+        ),
+        eps=float(
+            _get_or_default(
+                cfg,
+                "train.muon.eps",
+                (DEFAULT_CONFIG["train"].get("muon") or {}).get("eps") or 1e-7,
+            )
+        ),
+        max_dim=int(
+            _get_or_default(
+                cfg,
+                "train.muon.max_dim",
+                (DEFAULT_CONFIG["train"].get("muon") or {}).get("max_dim") or 10_000,
+            )
+        ),
+    )
+
     train = SidSftTrainConfig(
         per_device_train_batch_size=int(_get_or_default(cfg, "train.per_device_train_batch_size", DEFAULT_CONFIG["train"]["per_device_train_batch_size"])),
         per_device_eval_batch_size=int(_get_or_default(cfg, "train.per_device_eval_batch_size", DEFAULT_CONFIG["train"]["per_device_eval_batch_size"])),
@@ -100,6 +146,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
         gradient_accumulation_steps=int(_get_or_default(cfg, "train.gradient_accumulation_steps", DEFAULT_CONFIG["train"]["gradient_accumulation_steps"])),
         learning_rate=float(_get_or_default(cfg, "train.learning_rate", DEFAULT_CONFIG["train"]["learning_rate"])),
         optimizer=str(_get_or_default(cfg, "train.optimizer", DEFAULT_CONFIG["train"].get("optimizer") or "adamw")),
+        muon=muon_cfg,
         weight_decay=float(_get_or_default(cfg, "train.weight_decay", DEFAULT_CONFIG["train"].get("weight_decay") or 0.0)),
         num_train_epochs=float(_get_or_default(cfg, "train.num_train_epochs", DEFAULT_CONFIG["train"]["num_train_epochs"])),
         max_steps=int(_get_or_default(cfg, "train.max_steps", DEFAULT_CONFIG["train"]["max_steps"])),

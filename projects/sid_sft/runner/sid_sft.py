@@ -49,6 +49,16 @@ class SidSftTasksConfig:
 
 
 @dataclass(frozen=True)
+class SidSftMuonConfig:
+    aux_learning_rate: float = 3e-4
+    momentum: float = 0.95
+    nesterov: bool = True
+    ns_steps: int = 5
+    eps: float = 1e-7
+    max_dim: int = 10_000
+
+
+@dataclass(frozen=True)
 class SidSftTrainConfig:
     per_device_train_batch_size: int = 1
     per_device_eval_batch_size: int = 1
@@ -56,6 +66,7 @@ class SidSftTrainConfig:
     gradient_accumulation_steps: int = 1
     learning_rate: float = 3e-4
     optimizer: str = "adamw"
+    muon: SidSftMuonConfig = field(default_factory=SidSftMuonConfig)
     weight_decay: float = 0.0
     num_train_epochs: float = 1.0
     max_steps: int = -1
@@ -427,6 +438,12 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             optimizer_name=cfg.train.optimizer,
             learning_rate=float(cfg.train.learning_rate),
             weight_decay=float(cfg.train.weight_decay),
+            muon_aux_learning_rate=float(cfg.train.muon.aux_learning_rate),
+            muon_momentum=float(cfg.train.muon.momentum),
+            muon_nesterov=bool(cfg.train.muon.nesterov),
+            muon_ns_steps=int(cfg.train.muon.ns_steps),
+            muon_eps=float(cfg.train.muon.eps),
+            muon_max_dim=int(cfg.train.muon.max_dim),
             grad_accum_steps=int(grad_accum_steps),
             micro_batch_size_per_replica=int(cfg.train.per_device_train_batch_size),
             max_steps=int(max_steps),

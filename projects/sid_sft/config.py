@@ -48,8 +48,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "global_batch_size": 0,
         "gradient_accumulation_steps": 1,
         "learning_rate": 3e-4,
-        # Optimizer: "adamw" | "lion"
+        # Optimizer: "adamw" | "lion" | "muon"
         "optimizer": "adamw",
+        "muon": {
+            # Auxiliary AdamW LR for non-matrix params; Muon LR is `train.learning_rate`.
+            "aux_learning_rate": 3e-4,
+            "momentum": 0.95,
+            "nesterov": True,
+            "ns_steps": 5,
+            "eps": 1e-7,
+            "max_dim": 10_000,
+        },
         "weight_decay": 0.0,
         "num_train_epochs": 1,
         # If > 0, overrides num_train_epochs.

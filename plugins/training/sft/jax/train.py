@@ -48,6 +48,12 @@ def run_sft_train(
     optimizer_name: str,
     learning_rate: float,
     weight_decay: float,
+    muon_aux_learning_rate: float = 3e-4,
+    muon_momentum: float = 0.95,
+    muon_nesterov: bool = True,
+    muon_ns_steps: int = 5,
+    muon_eps: float = 1e-7,
+    muon_max_dim: int = 10_000,
     grad_accum_steps: int,
     micro_batch_size_per_replica: int,
     max_steps: int,
@@ -78,6 +84,12 @@ def run_sft_train(
         weight_decay=float(weight_decay),
         grad_accum_steps=int(grad_accum_steps),
         warmup_steps=int(warmup_steps),
+        muon_aux_learning_rate=float(muon_aux_learning_rate),
+        muon_momentum=float(muon_momentum),
+        muon_nesterov=bool(muon_nesterov),
+        muon_ns_steps=int(muon_ns_steps),
+        muon_eps=float(muon_eps),
+        muon_max_dim=int(muon_max_dim),
     )
 
     data_sharding = NamedSharding(mesh, P(("dp", "fsdp"), None))

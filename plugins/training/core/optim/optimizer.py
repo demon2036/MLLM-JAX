@@ -96,6 +96,57 @@ def build_lr_schedule(*, training_steps: int, cfg: LRScheduleConfig):
     raise ValueError(f"Unsupported lr_schedule.type={cfg.type!r} (expected warmup_cosine|warmup_linear|constant)")
 
 
+def _scale_by_muon(
+    *,
+    momentum: float = 0.95,
+    nesterov: bool = True,
+    ns_steps: int = 5,
+    eps: float = 1e-7,
+    mu_dtype: Any | None = None,
+    weight_dimension_numbers: Any | None = None,
+):
+    """Compatibility wrapper around `optax.contrib.scale_by_muon`.
+
+    Some project code (e.g. `projects/nano_gpt/runner.py`) uses this helper to
+    build a custom Muon+AdamW split optimizer. We keep it here so project code
+    can depend on a stable in-repo entry point instead of relying on optax's
+    evolving contrib API.
+    """
+    import optax
+
+    contrib = getattr(optax, "contrib", None)
+    scale_by_muon_fn = getattr(contrib, "scale_by_muon", None) if contrib is not None else None
+    if scale_by_muon_fn is None:
+        raise ValueError("Muon requires optax.contrib.scale_by_muon (upgrade optax).")
+
+    dim_nums_cls = getattr(contrib, "MuonDimensionNumbers", None) if contrib is not None else None
+    if weight_dimension_numbers is None and dim_nums_cls is not None:
+        # Newer optax versions require a weight-dimension spec callback.
+        def weight_dimension_numbers(updates):  # noqa: ANN001
+            import jax
+
+            return jax.tree_util.tree_map(lambda _x: dim_nums_cls(), updates)
+
+    kwargs = {
+        "nesterov": bool(nesterov),
+        "ns_steps": int(ns_steps),
+        "eps": float(eps),
+    }
+    if weight_dimension_numbers is not None:
+        kwargs["weight_dimension_numbers"] = weight_dimension_numbers
+    if mu_dtype is not None:
+        kwargs["mu_dtype"] = mu_dtype
+
+    try:
+        return scale_by_muon_fn(beta=float(momentum), **kwargs)
+    except TypeError:
+        # Older optax versions may not accept `mu_dtype` and/or
+        # `weight_dimension_numbers`. Retry with the minimal signature.
+        kwargs.pop("mu_dtype", None)
+        kwargs.pop("weight_dimension_numbers", None)
+        return scale_by_muon_fn(beta=float(momentum), **kwargs)
+
+
 def build_tx(*, training_steps: int, cfg: OptimizerConfig, params: Any | None = None):
     """Build an Optax optimizer transformation.
 
@@ -190,4 +241,4 @@ def build_tx(*, training_steps: int, cfg: OptimizerConfig, params: Any | None = 
     return optax.chain(optax.clip_by_global_norm(clip_norm), base)
 
 
-__all__ = ["LRScheduleConfig", "OptimizerConfig", "build_lr_schedule", "build_tx"]
+__all__ = ["LRScheduleConfig", "OptimizerConfig", "_scale_by_muon", "build_lr_schedule", "build_tx"]

@@ -18,7 +18,7 @@ def run_nano_gpt(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
 
     from projects.nano_gpt.data import prepare_tinyshakespeare_char, sample_batch
     from plugins.training.core.optim.optimizer import _scale_by_muon
-    from plugins.nano_gpt.model import GPT, GPTConfig, parse_dtype
+    from projects.nano_gpt.model import GPT, GPTConfig, parse_dtype
 
     seed = int(cfg.get("seed", 1337))
     output_dir = os.path.abspath(str(cfg.get("output_dir") or "runs/nano_gpt"))

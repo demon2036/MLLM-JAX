@@ -7,19 +7,27 @@ from typing import Any
 
 import numpy as np
 import torch
-
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-from plugins.minionerec.rl.datasets import MiniOneRecNextItemRlDataset
-from plugins.minionerec.rl.grpo_module import MiniOneRecGrpoModule
-from plugins.minionerec.rl.reward import build_rank_penalties, compute_ranking_rewards
-from projects.sid_sft.jax.checkpoint import load_checkpoint
+from plugins.sample.constraints.sid_trie import build_sid_trie_from_index
+from plugins.training.core.checkpoint.msgpack import load_checkpoint, save_checkpoint
+from plugins.training.core.logging.wandb import maybe_init_wandb
+from plugins.training.core.mesh.mesh import create_mesh
+from plugins.training.core.optim.optimizer import OptimizerConfig, build_tx
+from plugins.training.core.step.train_step import training_step
+from plugins.training.core.tokenizer import prepare_tokenizer
+from plugins.training.rl.advantage.grpo import compute_grpo_advantages_by_group_id
+from projects.minionerec_rl.datasets import (
+    MiniOneRecRlDataset,
+    build_next_item_examples,
+    build_seqtitle2sid_examples,
+    build_title_and_description_examples,
+)
+from projects.minionerec_rl.grpo_module import MiniOneRecGrpoModule
+from projects.minionerec_rl.reward import build_rank_penalties, compute_ranking_rewards
 from projects.sid_sft.jax.evaluator import evaluate_sid_next_item_jax
 from projects.sid_sft.jax.params import resize_lm_vocab
-from projects.sid_sft.jax.sid_trie import build_sid_trie_from_index
-from projects.sid_sft.wandb_utils import maybe_init_wandb
-from plugins.training.rl.advantage.grpo import compute_grpo_advantages_by_group_id
-from plugins.training.core.optim.optimizer import OptimizerConfig, build_tx
+from projects.sid_sft.tokens import maybe_extend_tokenizer
 
 
 @dataclass(frozen=True)
@@ -30,10 +38,21 @@ class MiniOneRecRlDataConfig:
     test_file: str
     info_file: str
     sid_index_path: str
+    item_meta_path: str
     max_len: int = 512
     sample_train: int = -1
     sample_eval: int = -1
     sample_test: int = -1
+    init_from_sft_checkpoint: str | None = None
+
+
+@dataclass(frozen=True)
+class MiniOneRecRlTasksConfig:
+    next_item: bool = True
+    title2sid: bool = True
+    description2sid: bool = True
+    seqtitle2sid: bool = True
+    seqtitle2sid_sample: int = 10_000
 
 
 @dataclass(frozen=True)
@@ -46,21 +65,29 @@ class MiniOneRecRlJaxConfig:
 
 @dataclass(frozen=True)
 class MiniOneRecRlRolloutConfig:
-    prompt_batch_size: int = 32  # prompts per update (global)
+    prompt_batch_size: int = 64  # prompts per update (global)
     num_generations: int = 16
     prompt_pad_len: int = 256  # fixed prompt padding (no length bucketing)
     global_length: int = 512  # fixed training padding
 
 
 @dataclass(frozen=True)
+class MiniOneRecRlEmaConfig:
+    enabled: bool = False
+    decay: float = 0.9998
+    # When enabled, use EMA weights for eval metrics (training updates unchanged).
+    use_for_eval: bool = True
+
+
+@dataclass(frozen=True)
 class MiniOneRecRlTrainConfig:
     num_train_epochs: float = 2.0
     max_steps: int = -1
-    grad_accum_steps: int = 1
-    ppo_steps: int = 1
+    grad_accum_steps: int = 2
     beta: float = 1e-3
     logging_steps: int = 10
     save_last: bool = True
+    ema: MiniOneRecRlEmaConfig = field(default_factory=MiniOneRecRlEmaConfig)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
 
 
@@ -68,7 +95,7 @@ class MiniOneRecRlTrainConfig:
 class MiniOneRecRlEvalConfig:
     enabled: bool = True
     every_steps: int = 0
-    batch_size: int = 2
+    batch_size: int = 1
     num_beams: int = 50
     topk: tuple[int, ...] = (1, 3, 5, 10, 20, 50)
     save_predictions_json: bool = True
@@ -89,12 +116,12 @@ class MiniOneRecRlConfig:
     seed: int
     device: str
     data: MiniOneRecRlDataConfig
+    tasks: MiniOneRecRlTasksConfig = field(default_factory=MiniOneRecRlTasksConfig)
     jax: MiniOneRecRlJaxConfig = field(default_factory=MiniOneRecRlJaxConfig)
     rollout: MiniOneRecRlRolloutConfig = field(default_factory=MiniOneRecRlRolloutConfig)
     train: MiniOneRecRlTrainConfig = field(default_factory=MiniOneRecRlTrainConfig)
     eval: MiniOneRecRlEvalConfig = field(default_factory=MiniOneRecRlEvalConfig)
     wandb: MiniOneRecRlWandbConfig = field(default_factory=MiniOneRecRlWandbConfig)
-    resume_from_checkpoint: str | None = None
 
 
 def _set_seed(seed: int) -> None:
@@ -137,9 +164,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
     from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 
-    from projects.sid_sft.jax.beam_search import constrained_beam_search_sid3_prefill
-    from plugins.training.core.mesh.mesh import create_mesh
-    from plugins.training.core.step.train_step import training_step
+    from plugins.sample.decoding.sid3_constrained_beam_search import constrained_beam_search_sid3_prefill
 
     def parse_dtype(name: str) -> Any:
         n = str(name or "float32").strip().lower()
@@ -155,13 +180,17 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     compute_dtype = parse_dtype(cfg.jax.compute_dtype)
     param_dtype = parse_dtype(cfg.jax.param_dtype)
 
-    wandb = maybe_init_wandb(cfg=cfg, project=cfg.wandb.project, name=cfg.wandb.name, mode=cfg.wandb.mode) if jax.process_index() == 0 else None
+    wandb = maybe_init_wandb(
+        cfg=cfg,
+        project=cfg.wandb.project,
+        name=cfg.wandb.name,
+        mode=cfg.wandb.mode,
+        process_index=jax.process_index(),
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.base_model, trust_remote_code=True)
-    if getattr(tokenizer, "pad_token_id", None) is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-    tokenizer.padding_side = "right"
+    tokenizer, _pad_token_id = prepare_tokenizer(tokenizer, padding_side="right")
+    token_extension = maybe_extend_tokenizer(tokenizer=tokenizer, sid_index_path=cfg.data.sid_index_path)
 
     trie = build_sid_trie_from_index(
         tokenizer=tokenizer,
@@ -192,12 +221,16 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
 
     rng = jax.random.PRNGKey(int(cfg.seed))
 
-    # Load params (torch HF -> flax) unless resuming from a msgpack checkpoint.
-    if run_mode_norm in {"eval"} and cfg.resume_from_checkpoint:
-        payload = load_checkpoint(str(cfg.resume_from_checkpoint))
+    # Params init:
+    # - If `data.init_from_sft_checkpoint` is set, load params from that msgpack.
+    # - Else, load base HF weights (torch -> flax).
+    if cfg.data.init_from_sft_checkpoint:
+        payload = load_checkpoint(str(cfg.data.init_from_sft_checkpoint))
         params = payload.get("params")
         if params is None:
-            raise ValueError("Checkpoint payload missing 'params'")
+            raise ValueError("init_from_sft_checkpoint payload missing 'params'")
+        if jax.process_index() == 0:
+            print(f"[rl] init_from_sft_checkpoint={cfg.data.init_from_sft_checkpoint}")
     else:
         torch_model = AutoModelForCausalLM.from_pretrained(
             cfg.base_model,
@@ -205,7 +238,10 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             trust_remote_code=True,
         )
         params = convert_torch_to_flax_llama(torch_model.state_dict())
-        params = jax.tree_util.tree_map(lambda x: np.asarray(x.detach().cpu().to(torch.float32).numpy()) if hasattr(x, "detach") else np.asarray(x), params)
+        params = jax.tree_util.tree_map(
+            lambda x: np.asarray(x.detach().cpu().to(torch.float32).numpy()) if hasattr(x, "detach") else np.asarray(x),
+            params,
+        )
 
     params, vocab_resize = resize_lm_vocab(params=params, new_vocab_size=int(padded_vocab_size), rng=rng)
     params = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), params)
@@ -225,22 +261,44 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
         if prompt_batch <= 0 or k <= 0:
             raise ValueError("rollout.prompt_batch_size and rollout.num_generations must be > 0")
 
-        # RL dataset: next-item only (SID space).
-        train_dataset = MiniOneRecNextItemRlDataset(
-            csv_path=cfg.data.train_file,
-            sample=cfg.data.sample_train,
-            seed=cfg.seed,
-        )
+        examples: list[Any] = []
+        if bool(cfg.tasks.next_item):
+            examples.extend(build_next_item_examples(csv_path=cfg.data.train_file, sample=cfg.data.sample_train, seed=cfg.seed))
+
+        if bool(cfg.tasks.title2sid) or bool(cfg.tasks.description2sid) or bool(cfg.tasks.seqtitle2sid):
+            align_examples, sid2title = build_title_and_description_examples(
+                item_meta_path=cfg.data.item_meta_path,
+                sid_index_path=cfg.data.sid_index_path,
+            )
+            if bool(cfg.tasks.title2sid) and bool(cfg.tasks.description2sid):
+                examples.extend(align_examples)
+            elif bool(cfg.tasks.title2sid) and not bool(cfg.tasks.description2sid):
+                examples.extend([e for e in align_examples if "Which item has the title:" in e.prompt])
+            elif bool(cfg.tasks.description2sid) and not bool(cfg.tasks.title2sid):
+                examples.extend([e for e in align_examples if "An item can be described as follows:" in e.prompt])
+
+            if bool(cfg.tasks.seqtitle2sid):
+                examples.extend(
+                    build_seqtitle2sid_examples(
+                        csv_path=cfg.data.train_file,
+                        sid2title=sid2title,
+                        sample=int(cfg.tasks.seqtitle2sid_sample),
+                        seed=cfg.seed,
+                    )
+                )
+
+        train_dataset = MiniOneRecRlDataset(examples)
         if len(train_dataset) <= 0:
             raise ValueError("Empty train_dataset")
+        if jax.process_index() == 0:
+            print(f"[rl] train_dataset_size={len(train_dataset)} token_extension_added={len(token_extension.added_tokens)}")
 
-        # Steps: derive from epochs over prompt batches (paper uses 2 epochs).
         max_steps = int(cfg.train.max_steps)
         if max_steps <= 0:
             steps_per_epoch = int(math.ceil(len(train_dataset) / max(1, prompt_batch)))
             max_steps = int(math.ceil(float(cfg.train.num_train_epochs) * steps_per_epoch))
 
-        tx = build_tx(training_steps=max_steps, cfg=cfg.train.optimizer)
+        tx = build_tx(training_steps=max_steps, cfg=cfg.train.optimizer, params=params)
 
         train_module = flax.linen.remat(MiniOneRecGrpoModule, policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)(
             model=model,
@@ -253,11 +311,19 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             micro_in_mini: int = 1
             grad_accum: Any | None = None
             ref_params: Any | None = None
+            ema_params: Any | None = None
+            ema_decay: float = 0.9998
+
+        ema_enabled = bool(cfg.train.ema.enabled)
+        ema_decay_f = float(cfg.train.ema.decay)
+        if ema_enabled and not (0.0 < ema_decay_f < 1.0):
+            raise ValueError(f"train.ema.decay must be in (0, 1), got {ema_decay_f}")
 
         def init_fn(p):
             grad_accum = None
             if int(cfg.train.grad_accum_steps) > 1:
                 grad_accum = jax.tree_util.tree_map(jnp.zeros_like, p)
+            ema_params = p if ema_enabled else None
             return _TrainState.create(
                 apply_fn=train_module.apply,
                 params=p,
@@ -266,6 +332,8 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                 micro_step=0,
                 micro_in_mini=int(cfg.train.grad_accum_steps),
                 grad_accum=grad_accum,
+                ema_params=ema_params,
+                ema_decay=ema_decay_f,
             )
 
         state_shapes = jax.eval_shape(init_fn, params)
@@ -286,7 +354,6 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
         global_len = int(cfg.rollout.global_length)
         if prompt_pad_len <= 0 or global_len <= 0:
             raise ValueError("rollout.prompt_pad_len and rollout.global_length must be > 0")
-
         if global_len < prompt_pad_len + 8:
             raise ValueError("rollout.global_length too small for prompt_pad_len + completion")
 
@@ -347,7 +414,6 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             completion_ids[:, :, :3] = tok
             completion_ids[:, :, 3] = int(newline_id)
             completion_ids[:, :, 4] = int(tokenizer.eos_token_id)
-            completion_flat = completion_ids.reshape(prompt_batch * k, 5)
 
             input_ids = np.full((prompt_batch * k, global_len), pad_token_id, dtype=np.int32)
             attention_mask = np.zeros((prompt_batch * k, global_len), dtype=np.int32)
@@ -361,7 +427,6 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                     comp = completion_ids[i, j]
                     seq_len = int(p_len + comp.shape[0])
                     if seq_len > global_len:
-                        # Keep the tail (align with MiniOneRec truncation style).
                         overflow = seq_len - global_len
                         p_start = min(int(overflow), p_len)
                         p_ids_trunc = p_ids[p_start:]
@@ -385,7 +450,6 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                 "advantages": jax.device_put(jnp.asarray(advantages, dtype=jnp.float32), data_sharding),
             }
 
-            # Gradient accumulation over the full (prompt_batch*k) batch.
             micro = int(prompt_batch * k) // int(cfg.train.grad_accum_steps)
             if micro * int(cfg.train.grad_accum_steps) != int(prompt_batch * k):
                 raise ValueError("prompt_batch_size*num_generations must be divisible by grad_accum_steps")
@@ -413,57 +477,39 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                             step=step,
                         )
 
-            if cfg.eval.enabled and int(cfg.eval.every_steps) > 0 and step % int(cfg.eval.every_steps) == 0:
-                eval_dataset = MiniOneRecNextItemRlDataset(csv_path=cfg.data.eval_file, sample=cfg.data.sample_eval, seed=cfg.seed)
-                prompts_eval = [eval_dataset[i].prompt for i in range(min(len(eval_dataset), 256))]
-                targets_eval = [eval_dataset[i].target_sid for i in range(min(len(eval_dataset), 256))]
-                # Lightweight sanity eval: reuse ranking reward on a small slice.
-                # Full HR/NDCG eval is done at the end via `evaluate_sid_next_item_jax`.
-                prompt_ids_eval = [list(tokenizer.encode(p, add_special_tokens=False))[-prompt_pad_len:] for p in prompts_eval]
-                true_lens_eval = np.asarray([len(x) for x in prompt_ids_eval], dtype=np.int32)
-                prompt_np_eval = np.full((len(prompts_eval), prompt_pad_len), pad_token_id, dtype=np.int32)
-                for i, ids in enumerate(prompt_ids_eval):
-                    prompt_np_eval[i, : len(ids)] = np.asarray(ids, dtype=np.int32)
-                tok_eval = np.asarray(beam_search_jit(state.params, jnp.asarray(prompt_np_eval, dtype=jnp.int32), jnp.asarray(true_lens_eval, dtype=jnp.int32)))
-                preds_eval = [[_decode_sid_triplet(tokenizer, tok_eval[i, j]) for j in range(k)] for i in range(len(prompts_eval))]
-                rewards_eval, _correct_eval = compute_ranking_rewards(predictions=preds_eval, targets=targets_eval, rank_penalties=rank_penalties)
-                if wandb is not None and jax.process_index() == 0:
-                    wandb.log({"eval_small/reward_mean": float(np.mean(rewards_eval))}, step=step)
-
         train_stats = {"steps": int(max_steps), "final_loss": float(last_loss)}
 
         tokenizer.save_pretrained(cfg.output_dir)
         if bool(cfg.train.save_last) and jax.process_index() == 0:
-            from projects.sid_sft.jax.checkpoint import save_checkpoint
-
             save_checkpoint(output_dir=cfg.output_dir, state=state, name="rl_last")
 
-    # Eval (full test HR/NDCG) on final params.
+    # Eval (full test HR/NDCG) on final params (next-item only).
     eval_metrics = None
     if run_mode_norm in {"eval", "train_eval"} and cfg.eval.enabled:
-        eval_dataset = MiniOneRecNextItemRlDataset(
-            csv_path=cfg.data.test_file,
-            sample=cfg.data.sample_test,
-            seed=cfg.seed,
-        )
+        eval_examples = build_next_item_examples(csv_path=cfg.data.test_file, sample=cfg.data.sample_test, seed=cfg.seed, dedup=False)
 
-        # Adapt the RL dataset into the evaluator contract.
         class _EvalWrapper:
             def __len__(self):
-                return len(eval_dataset)
+                return len(eval_examples)
 
             def __getitem__(self, idx: int):
-                # Evaluator expects {"input_ids": ...}
-                ids = list(tokenizer.encode(eval_dataset[idx].prompt, add_special_tokens=False))
+                ids = list(tokenizer.encode(eval_examples[idx].prompt, add_special_tokens=False))
                 return {"input_ids": ids, "attention_mask": [1] * len(ids)}
 
             def get_targets(self):
-                return [eval_dataset[i].target_sid for i in range(len(eval_dataset))]
+                return [e.target_sid for e in eval_examples]
 
         output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json") if cfg.eval.save_predictions_json else None
+
+        eval_params = state.params if state is not None else params
+        if state is not None and bool(cfg.train.ema.enabled) and bool(cfg.train.ema.use_for_eval):
+            ema_params = getattr(state, "ema_params", None)
+            if ema_params is not None:
+                eval_params = ema_params
+
         _preds, eval_metrics = evaluate_sid_next_item_jax(
             model=model,
-            params=state.params if state is not None else params,
+            params=eval_params,
             tokenizer=tokenizer,
             eval_dataset=_EvalWrapper(),
             sid_index_path=cfg.data.sid_index_path,
@@ -488,6 +534,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
 
     return {
         "config": asdict(cfg),
+        "token_extension": asdict(token_extension),
         "vocab_resize": asdict(vocab_resize),
         "train": train_stats,
         "eval": asdict(eval_metrics) if eval_metrics else None,
@@ -510,3 +557,4 @@ def run_minionerec_rl(cfg: MiniOneRecRlConfig, *, run_mode: str) -> dict[str, An
 
 
 __all__ = ["MiniOneRecRlConfig", "run_minionerec_rl"]
+

@@ -1,0 +1,78 @@
+# Same as `..._nextitem_sync512_a06_...` but uses a fresh `output_dir` for a
+# rerun after enabling the Qwen2 decode-attention fast path in JAX.
+#
+# Reports HR/NDCG on valid (beam=20).
+
+base_model: Qwen/Qwen2.5-1.5B
+output_dir: runs/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_e2_pb32_nextitem_sync512_a06_fastattn_from_sft_bestval_evalvalid_beam20_20260131
+seed: 42
+device: tpu
+
+resume_from_checkpoint: runs/sid_sft_jax_qwen25_1p5b_base_industrial_v4_8_e3_muon_refactor_20260131_train_bestval/sft_state_best.msgpack
+
+data:
+  category: Industrial_and_Scientific
+  train_file: workdir/MiniOneRec/data/Amazon/train/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  eval_file: workdir/MiniOneRec/data/Amazon/valid/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  test_file: workdir/MiniOneRec/data/Amazon/valid/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  info_file: workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt
+  sid_index_path: workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.index.json
+  item_meta_path: workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.item.json
+  enable_title2sid: false
+  enable_seqtitle2sid: false
+  max_len: 512
+  sample_train: -1
+  sample_eval: -1
+  sample_test: -1
+
+jax:
+  mesh_shape: "4,1,1"
+  param_dtype: bfloat16
+  compute_dtype: bfloat16
+  max_cache_length: 512
+
+rollout:
+  prompt_batch_size: 32
+  num_generations: 16
+  prompt_pad_len: 256
+  global_length: 512
+
+train:
+  num_train_epochs: 2.0
+  max_steps: -1
+  grad_accum_steps: 32
+  ppo_steps: 1
+
+  beta: 0.001
+  sync_ref_model: true
+  sync_ref_model_every_steps: 512
+  sync_ref_model_mixup_alpha: 0.6
+
+  logging_steps: 10
+  save_last: true
+
+  optimizer:
+    name: adamw
+    clip_norm: 0.3
+    weight_decay: 0.0
+    lr_schedule:
+      type: warmup_cosine
+      init_value: 0.0
+      peak_value: 1e-5
+      end_value: 0.0
+      warmup_ratio: 0.03
+      warmup_steps: null
+
+eval:
+  enabled: true
+  every_steps: 0
+  batch_size: 4
+  num_beams: 20
+  topk: [1, 3, 5, 10, 20]
+  save_predictions_json: true
+
+wandb:
+  project: minionerec-sid-rl
+  mode: online
+  name: null
+

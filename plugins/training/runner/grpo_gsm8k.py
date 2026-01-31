@@ -477,7 +477,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             create_sampler=True,
             tx=tx,
         )
-        train_fn = jax.jit(ppo_training_step, donate_argnums=(0, 1))
+        train_fn = jax.jit(ppo_training_step, donate_argnums=(0,))
 
         def _value_forward(params, input_ids, attention_mask):
             return ppo_module.apply(
@@ -506,7 +506,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             create_sampler=True,
             tx=tx,
         )
-        train_fn = jax.jit(training_step, donate_argnums=(0, 1))
+        train_fn = jax.jit(training_step, donate_argnums=(0,))
     if os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1":
         from plugins.training.rollout.optimizations import patch_qwen2_attention_decode_fast
 

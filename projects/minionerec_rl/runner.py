@@ -10,16 +10,18 @@ import torch
 
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-from plugins.minionerec.rl.datasets import MiniOneRecNextItemRlDataset
-from plugins.minionerec.rl.grpo_module import MiniOneRecGrpoModule
-from plugins.minionerec.rl.reward import build_rank_penalties, compute_ranking_rewards
-from projects.sid_sft.jax.checkpoint import load_checkpoint
 from projects.sid_sft.jax.evaluator import evaluate_sid_next_item_jax
 from projects.sid_sft.jax.params import resize_lm_vocab
-from projects.sid_sft.jax.sid_trie import build_sid_trie_from_index
-from projects.sid_sft.wandb_utils import maybe_init_wandb
-from plugins.training.rl.advantage.grpo import compute_grpo_advantages_by_group_id
+from projects.sid_sft.tokens import maybe_extend_tokenizer
+from projects.minionerec_rl.datasets import MiniOneRecNextItemRlDataset
+from projects.minionerec_rl.grpo_module import MiniOneRecGrpoModule
+from projects.minionerec_rl.reward import build_rank_penalties, compute_ranking_rewards
+from plugins.sample.constraints.sid_trie import build_sid_trie_from_index
+from plugins.training.core.checkpoint.msgpack import load_checkpoint, save_checkpoint
+from plugins.training.core.logging.wandb import maybe_init_wandb
 from plugins.training.core.optim.optimizer import OptimizerConfig, build_tx
+from plugins.training.core.tokenizer import prepare_tokenizer
+from plugins.training.rl.advantage.grpo import compute_grpo_advantages_by_group_id
 
 
 @dataclass(frozen=True)
@@ -155,13 +157,17 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     compute_dtype = parse_dtype(cfg.jax.compute_dtype)
     param_dtype = parse_dtype(cfg.jax.param_dtype)
 
-    wandb = maybe_init_wandb(cfg=cfg, project=cfg.wandb.project, name=cfg.wandb.name, mode=cfg.wandb.mode) if jax.process_index() == 0 else None
+    wandb = maybe_init_wandb(
+        cfg=cfg,
+        project=cfg.wandb.project,
+        name=cfg.wandb.name,
+        mode=cfg.wandb.mode,
+        process_index=jax.process_index(),
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.base_model, trust_remote_code=True)
-    if getattr(tokenizer, "pad_token_id", None) is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-    tokenizer.padding_side = "right"
+    tokenizer, _pad_token_id = prepare_tokenizer(tokenizer, padding_side="right")
+    extension = maybe_extend_tokenizer(tokenizer=tokenizer, sid_index_path=cfg.data.sid_index_path)
 
     trie = build_sid_trie_from_index(
         tokenizer=tokenizer,
@@ -192,8 +198,11 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
 
     rng = jax.random.PRNGKey(int(cfg.seed))
 
-    # Load params (torch HF -> flax) unless resuming from a msgpack checkpoint.
-    if run_mode_norm in {"eval"} and cfg.resume_from_checkpoint:
+    # Load params:
+    # - If `resume_from_checkpoint` is provided, initialize from the msgpack payload
+    #   (supports both SFT checkpoints and RL checkpoints).
+    # - Otherwise load HF PyTorch weights and convert to Flax/JAX params.
+    if cfg.resume_from_checkpoint:
         payload = load_checkpoint(str(cfg.resume_from_checkpoint))
         params = payload.get("params")
         if params is None:
@@ -434,8 +443,6 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
 
         tokenizer.save_pretrained(cfg.output_dir)
         if bool(cfg.train.save_last) and jax.process_index() == 0:
-            from projects.sid_sft.jax.checkpoint import save_checkpoint
-
             save_checkpoint(output_dir=cfg.output_dir, state=state, name="rl_last")
 
     # Eval (full test HR/NDCG) on final params.
@@ -488,6 +495,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
 
     return {
         "config": asdict(cfg),
+        "token_extension": asdict(extension),
         "vocab_resize": asdict(vocab_resize),
         "train": train_stats,
         "eval": asdict(eval_metrics) if eval_metrics else None,

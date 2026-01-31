@@ -50,7 +50,7 @@ def _top_k_sampling_batched(rng, logits, k: int = 50, t: float = 0.9):
 def get_params(model_path: str, *, allow_torch_fallback: bool = True):
     """Load HF weights and convert to the MLLM_JAX Flax param tree.
 
-    Prefers `*.safetensors` (via `plugins/common/hf_safetensors.py`). When a model
+    Prefers `*.safetensors` (via `plugins/training/core/io/hf_safetensors.py`). When a model
     repo only provides PyTorch `pytorch_model.bin`, `allow_torch_fallback=True`
     falls back to `transformers.AutoModelForCausalLM` + `state_dict()`.
     """

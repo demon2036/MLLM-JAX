@@ -20,7 +20,7 @@ usage() {
 Start GRPO/GSM8K training via nohup on a multi-host TPU VM.
 
 Usage:
-  bash scripts/tpu_vm_start_grpo_gsm8k_from_config_multihost_nohup.sh --config plugins/training/configs/<file>.yaml
+  bash scripts/tpu_vm_start_grpo_gsm8k_from_config_multihost_nohup.sh --config projects/gsm8k_grpo/configs/<file>.yaml
 
 Optional:
   --env-name NAME               Conda env name (default: mllm-jax)
@@ -69,4 +69,3 @@ fi
 exec bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh \
   --env-name "$ENV_NAME" \
   --config "$CONFIG_PATH"
-

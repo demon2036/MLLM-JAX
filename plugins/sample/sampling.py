@@ -33,9 +33,9 @@ def generate_answers_and_training_batch(
     tokenizer = sampler.tokenizer
     chat_prompts = build_chat_prompts(tokenizer, prompts, system_prompt)
 
-    inputs = tokenizer(chat_prompts, return_tensors="jax", padding=True, padding_side="right")
-    input_ids = inputs["input_ids"]
-    attention_mask = inputs["attention_mask"]
+    inputs = tokenizer(chat_prompts, return_tensors="np", padding=True, padding_side="right")
+    input_ids = jnp.asarray(inputs["input_ids"], dtype=jnp.int32)
+    attention_mask = jnp.asarray(inputs["attention_mask"], dtype=jnp.int32)
     position_ids = attention_mask.cumsum(-1) - 1
     position_ids = jnp.where(attention_mask == 0, 1, position_ids)
 

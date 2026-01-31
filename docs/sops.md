@@ -12,6 +12,7 @@
 - Inspect mesh/sharding/optimizer/checkpoint duplication: `docs/sops/inspect-mesh-sharding-optimizer-duplication.md`
 - Make projects/sid_sft JAX-only (remove torch): `docs/sops/plugins-sft-jax-only-remove-torch.md`
 - Inspect plugin utility duplicates: `docs/sops/inspect-plugin-utility-duplicates.md`
+- Repo layout canonical vs compatibility shims: `docs/sops/repo-layout-canonical-vs-compat-shims.md`
 - Refactor plan to consolidate `projects/sid_sft` + `plugins/training`: `docs/sops/plugins-refactor-sft-training-consolidation.md`
 - Add `plugins/common/` shared abstractions: `docs/sops/plugins-common-shared-abstractions.md`
 - Add `plugins/sample/` shared sampling package: `docs/sops/plugins-sample-shared-sampling.md`
@@ -39,6 +40,7 @@
 - TPU v6e-8 nanoGPT Tiny Shakespeare Muon vs AdamW (W&B online): `docs/sops/tpu-vm-v6e-8-nanogpt-muon-official-compare.md`
 - TPU v6e-8 unified-api-refactor SFT + nanoGPT regression (W&B online): `docs/sops/tpu-vm-v6e-8-unified-api-refactor-sft-nanogpt-regression.md`
 - TPU v4-8 GRPO runner smoke (`rollout.backend=naive`): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
+- TPU v4-8 GRPO full test-set eval sweep (Qwen2.5-3B, W&B): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-full-test-eval-sweep.md`
 - TPU v4-8 RL/GSM8K `reinforce++` (100 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
 - TPU v4-8 RL/GSM8K bs128 `reinforce++` (100 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-reinforcepp-wandb-100steps.md`
 - TPU v4-8 RL/GSM8K bs128 algtest (20 steps, W&B): `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-algtest-20steps.md`
@@ -91,6 +93,7 @@
 - `docs/sops/tpu-vm-v6e-8-nanogpt-tinyshakespeare-standard.md`
 - `docs/sops/tpu-vm-v6e-8-unified-api-refactor-sft-nanogpt-regression.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-rollout-backend-naive-smoke.md`
+- `docs/sops/tpu-vm-v4-8-grpo-gsm8k-full-test-eval-sweep.md`
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-reinforcepp-wandb-100steps.md`
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-reinforcepp-wandb-100steps.md`
 - `docs/sops/tpu-vm-v4-8-rl-gsm8k-bs128-algtest-20steps.md`

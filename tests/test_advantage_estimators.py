@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from plugins.training.advantage.estimators import (
+from plugins.training.rl.advantage.estimators import (
     build_token_rewards_from_final,
     compute_gae_advantages,
     compute_dapo_advantages_by_group_id,
@@ -12,7 +12,7 @@ from plugins.training.advantage.estimators import (
     compute_reinforce_plus_plus_advantages_by_group_id,
     compute_rloo_advantages_by_group_id,
 )
-from plugins.training.advantage.grpo import compute_grpo_advantages_by_group_id
+from plugins.training.rl.advantage.grpo import compute_grpo_advantages_by_group_id
 
 
 class TestAdvantageEstimators(unittest.TestCase):

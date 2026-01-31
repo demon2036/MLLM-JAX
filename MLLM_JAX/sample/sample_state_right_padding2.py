@@ -254,8 +254,8 @@ class Sampler:
     def preprocess_prompt_prefill(self, prompt, prefill_length=128):
 
 
-        inputs = self.tokenizer(prompt, return_tensors="jax", padding=True, padding_side="right")
-        input_ids = inputs['input_ids']
+        inputs = self.tokenizer(prompt, return_tensors="np", padding=True, padding_side="right")
+        input_ids = jnp.asarray(inputs['input_ids'])
 
         # position_ids = inputs['attention_mask'].cumsum(-1) - 1
         # position_ids = jnp.where(inputs['attention_mask'] == 0, 1, position_ids)
@@ -266,7 +266,7 @@ class Sampler:
         prefill_length = self.find_ceil(global_length)
         # prefill_length = input_ids.shape[1]
 
-        attention_mask = inputs['attention_mask']
+        attention_mask = jnp.asarray(inputs['attention_mask'])
         input_ids_pad = jnp.pad(input_ids, ((0, 0), (0,prefill_length - input_ids.shape[1])),
                                 constant_values=self.tokenizer.eos_token_id)
 

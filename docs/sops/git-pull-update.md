@@ -11,7 +11,7 @@
     - `git fetch --all --prune`
     - `git pull --ff-only`
   - Minimal sanity check (if tests exist):
-    - `python -m py_compile training2.py scripts/run_grpo_gsm8k_training.py test_jit8.py`
+    - `python -m py_compile training2.py projects/gsm8k_grpo/scripts/run_train.py test_jit8.py`
   **Expected Result**:
   - `git pull --ff-only` prints `Fast-forward` (or `Already up to date.`)
   - `git status -sb` shows a clean working tree

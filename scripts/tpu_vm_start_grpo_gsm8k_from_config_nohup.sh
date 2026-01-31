@@ -17,7 +17,7 @@ usage() {
 Start GRPO/GSM8K training via nohup from an explicit YAML config.
 
 Usage:
-  bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh --config plugins/training/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml
+  bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh --config projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml
 
 Optional:
   --env-name NAME   Conda env name (default: mllm-jax)
@@ -97,7 +97,7 @@ RUNNER="set -euo pipefail; \
   fi; \
   cd '$REPO_DIR'; \
   set +e; \
-  python -u scripts/run_grpo_gsm8k_training.py --config '$CONFIG_PATH'; \
+  python -u projects/gsm8k_grpo/scripts/run_train.py --config '$CONFIG_PATH'; \
   status=\$?; \
   set -e; \
   echo \$status > '$EXIT_FILE'; \

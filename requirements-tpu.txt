@@ -3,13 +3,16 @@
 # Install JAX for TPU separately (needs the libtpu wheel index), e.g.:
 #   pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 #
+# Install CPU-only torch separately to avoid pulling massive CUDA wheels:
+#   pip install -U torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+#
 # Then:
 #   pip install -U -r requirements-tpu.txt
 flax
 optax
 chex
-torch
 transformers
+jinja2
 datasets
 tqdm
 wandb

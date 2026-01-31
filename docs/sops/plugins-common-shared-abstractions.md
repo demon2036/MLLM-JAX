@@ -1,5 +1,10 @@
 # SOP: Add `plugins/common/` shared abstractions (no folder merge)
 
+- NOTE (2026-01-30): `plugins/common/` was removed. Shared utilities now live under:
+  - training infra: `plugins/training/core/*`
+  - sampling/generation: `plugins/sample/*`
+  This SOP is kept for historical context only.
+
 - **Title**: SOP: Introduce `plugins/common/` as the shared abstraction layer for `projects/sid_sft/` + `plugins/training/`
   **Prereqs**: Repo checkout; Python; `pytest`
   **Environment (verified)**: Ubuntu Linux; repo `/home/john/workdir/minionerec`

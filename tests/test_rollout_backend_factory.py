@@ -8,8 +8,8 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from plugins.training.config import DEFAULT_CONFIG
-from plugins.training.rollout.backends import SUPPORTED_ROLLOUT_BACKENDS, create_rollout_backend
+from plugins.training.rl.config import DEFAULT_CONFIG
+from plugins.training.rl.rollout.backends import SUPPORTED_ROLLOUT_BACKENDS, create_rollout_backend
 
 
 class _DummySampler:

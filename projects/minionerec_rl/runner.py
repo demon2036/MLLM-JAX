@@ -285,7 +285,8 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
         state_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), state_partitions)
         state = jax.jit(init_fn, out_shardings=state_shardings)(params)
 
-        data_sharding = NamedSharding(mesh, P(("dp", "fsdp"), None))
+        data_sharding_2d = NamedSharding(mesh, P(("dp", "fsdp"), None))
+        data_sharding_1d = NamedSharding(mesh, P(("dp", "fsdp"),))
         train_step_fn = jax.jit(training_step, donate_argnums=(0,), out_shardings=(state_shardings, None))
 
         rank_penalties = build_rank_penalties(k)
@@ -391,10 +392,10 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                         labels[row, p_len:seq_len] = 1
 
             batch = {
-                "input_ids": jax.device_put(jnp.asarray(input_ids, dtype=jnp.int32), data_sharding),
-                "attention_mask": jax.device_put(jnp.asarray(attention_mask, dtype=jnp.int32), data_sharding),
-                "labels": jax.device_put(jnp.asarray(labels, dtype=jnp.int32), data_sharding),
-                "advantages": jax.device_put(jnp.asarray(advantages, dtype=jnp.float32), data_sharding),
+                "input_ids": jax.device_put(jnp.asarray(input_ids, dtype=jnp.int32), data_sharding_2d),
+                "attention_mask": jax.device_put(jnp.asarray(attention_mask, dtype=jnp.int32), data_sharding_2d),
+                "labels": jax.device_put(jnp.asarray(labels, dtype=jnp.int32), data_sharding_2d),
+                "advantages": jax.device_put(jnp.asarray(advantages, dtype=jnp.float32), data_sharding_1d),
             }
 
             # Gradient accumulation over the full (prompt_batch*k) batch.

@@ -152,10 +152,18 @@ def _grpo_fused_forward_pallas_with_intermediates(
     ):
         pid_v = pl.program_id(1)
 
+        # Hyperparams may be traced scalars under jax.jit; keep them as JAX
+        # scalars inside the kernel (no Python float() / Python branching).
+        temp = jnp.asarray(temperature, dtype=jnp.float32)
+        eps_low_f = jnp.asarray(eps_low, dtype=jnp.float32)
+        eps_high_f = jnp.asarray(eps_high, dtype=jnp.float32)
+        beta_f = jnp.asarray(beta, dtype=jnp.float32)
+        one_f = jnp.asarray(1.0, dtype=jnp.float32)
+
         v_start = pid_v * BLOCK_V
 
         # Load current vocab tile and mask out padded tail.
-        logits_tile = jnp.asarray(logits_ref[...]).astype(jnp.float32) / float(temperature)
+        logits_tile = jnp.asarray(logits_ref[...]).astype(jnp.float32) / temp
         cols = v_start + jnp.arange(BLOCK_V, dtype=jnp.int32)
         v_in_bounds = cols < vocab_size
         v_mask = jnp.broadcast_to(v_in_bounds[None, :], logits_tile.shape)
@@ -212,7 +220,7 @@ def _grpo_fused_forward_pallas_with_intermediates(
             old = jnp.asarray(old_logp_ref[...]).astype(jnp.float32)
             ratio = jnp.exp(logp - old)
             clipped_ratio = jnp.minimum(
-                jnp.maximum(ratio, 1.0 - float(eps_low)), 1.0 + float(eps_high)
+                jnp.maximum(ratio, one_f - eps_low_f), one_f + eps_high_f
             )
 
             adv = adv_ref[...].astype(jnp.float32)
@@ -220,17 +228,14 @@ def _grpo_fused_forward_pallas_with_intermediates(
             per_token_loss2 = clipped_ratio * adv
             loss = -jnp.minimum(per_token_loss1, per_token_loss2)
 
-            is_low_clipped = (ratio < 1.0 - float(eps_low)) & (adv < 0.0)
-            is_high_clipped = (ratio > 1.0 + float(eps_high)) & (adv > 0.0)
+            is_low_clipped = (ratio < one_f - eps_low_f) & (adv < 0.0)
+            is_high_clipped = (ratio > one_f + eps_high_f) & (adv > 0.0)
             is_clipped = is_low_clipped | is_high_clipped
 
-            if beta != 0.0:
-                ref = jnp.asarray(ref_logp_ref[...]).astype(jnp.float32)
-                delta = ref - logp
-                kl = jnp.exp(delta) - delta - 1.0
-                loss = loss + float(beta) * kl
-            else:
-                kl = jnp.zeros_like(loss)
+            ref = jnp.asarray(ref_logp_ref[...]).astype(jnp.float32)
+            delta = ref - logp
+            kl = jnp.exp(delta) - delta - one_f
+            loss = loss + beta_f * kl
 
             keep_i32 = jnp.asarray(mask_ref[...]).astype(jnp.int32)
             keep = keep_i32 != 0
@@ -367,6 +372,14 @@ def _grpo_fused_backward_pallas(
         pid_t = pl.program_id(0)
         pid_v = pl.program_id(1)
 
+        # Hyperparams may be traced scalars under jax.jit; keep them as JAX
+        # scalars inside the kernel (no Python float() / Python branching).
+        temp = jnp.asarray(temperature, dtype=jnp.float32)
+        eps_low_f = jnp.asarray(eps_low, dtype=jnp.float32)
+        eps_high_f = jnp.asarray(eps_high, dtype=jnp.float32)
+        beta_f = jnp.asarray(beta, dtype=jnp.float32)
+        one_f = jnp.asarray(1.0, dtype=jnp.float32)
+
         t_start = pid_t * BLOCK_T
         rows = t_start + jnp.arange(BLOCK_T, dtype=jnp.int32)
         t_in_bounds = rows < num_tokens
@@ -423,8 +436,8 @@ def _grpo_fused_backward_pallas(
         logp = jax.lax.select(row_active, token_logit - lse, jnp.zeros_like(lse))
 
         ratio = jnp.exp(logp - old)
-        is_low_clipped = (ratio < 1.0 - float(eps_low)) & (adv < 0.0)
-        is_high_clipped = (ratio > 1.0 + float(eps_high)) & (adv > 0.0)
+        is_low_clipped = (ratio < one_f - eps_low_f) & (adv < 0.0)
+        is_high_clipped = (ratio > one_f + eps_high_f) & (adv > 0.0)
         not_clipped = ~(is_low_clipped | is_high_clipped)
 
         not_clipped_f32 = jax.lax.select(
@@ -433,14 +446,13 @@ def _grpo_fused_backward_pallas(
             jnp.zeros_like(old, dtype=jnp.float32),
         )
         dlogp = (-adv * ratio) * not_clipped_f32
-        if beta != 0.0:
-            dlogp = dlogp + float(beta) * (1.0 - jnp.exp(ref - logp))
+        dlogp = dlogp + beta_f * (one_f - jnp.exp(ref - logp))
 
-        scale = dloss_local * dlogp / float(temperature)
+        scale = dloss_local * dlogp / temp
 
         # Load logits tile and mask padded vocab tail and inactive rows.
         logits_block = jnp.asarray(logits_ref[...])
-        logits_tile = logits_block.astype(jnp.float32) / float(temperature)
+        logits_tile = logits_block.astype(jnp.float32) / temp
         logits_tile = jax.lax.select(
             active_mask,
             logits_tile,

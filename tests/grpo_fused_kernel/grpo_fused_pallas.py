@@ -228,12 +228,23 @@ def _grpo_fused_forward_pallas_with_intermediates(
             else:
                 kl = jnp.zeros_like(loss)
 
-            keep = jnp.asarray(mask_ref[...]).astype(jnp.bool_)
+            keep_i32 = jnp.asarray(mask_ref[...]).astype(jnp.int32)
+            keep = keep_i32 != 0
+
             loss_ref[...] = jax.lax.select(keep, loss, jnp.zeros_like(loss))
             kl_ref[...] = jax.lax.select(keep, kl, jnp.zeros_like(kl))
+
+            # Avoid i32->i1 truncation (Mosaic) by never doing astype(bool_).
+            is_clipped_i32 = jax.lax.select(
+                is_clipped,
+                jnp.ones_like(keep_i32, dtype=jnp.int32),
+                jnp.zeros_like(keep_i32, dtype=jnp.int32),
+            )
             is_clipped_ref[...] = jax.lax.select(
-                keep, is_clipped, jnp.zeros_like(is_clipped)
-            ).astype(jnp.int32)
+                keep,
+                is_clipped_i32,
+                jnp.zeros_like(is_clipped_i32),
+            )
 
         jax.lax.cond(pid_v == vocab_blocks - 1, _write_final, lambda _: None, operand=None)
 
@@ -366,7 +377,8 @@ def _grpo_fused_backward_pallas(
         old = jnp.asarray(old_logp_ref[...]).astype(jnp.float32)
         ref = jnp.asarray(ref_logp_ref[...]).astype(jnp.float32)
         adv = jnp.asarray(adv_ref[...]).astype(jnp.float32)
-        keep = jnp.asarray(mask_ref[...]).astype(jnp.bool_)
+        keep_i32 = jnp.asarray(mask_ref[...]).astype(jnp.int32)
+        keep = keep_i32 != 0
         dloss_local = jnp.asarray(dloss_ref[...]).astype(jnp.float32)
 
         # Saved forward intermediates for stable logsumexp.
@@ -398,7 +410,12 @@ def _grpo_fused_backward_pallas(
         is_high_clipped = (ratio > 1.0 + float(eps_high)) & (adv > 0.0)
         not_clipped = ~(is_low_clipped | is_high_clipped)
 
-        dlogp = (-adv * ratio) * not_clipped.astype(jnp.float32)
+        not_clipped_f32 = jax.lax.select(
+            not_clipped,
+            jnp.ones_like(old, dtype=jnp.float32),
+            jnp.zeros_like(old, dtype=jnp.float32),
+        )
+        dlogp = (-adv * ratio) * not_clipped_f32
         if beta != 0.0:
             dlogp = dlogp + float(beta) * (1.0 - jnp.exp(ref - logp))
 
@@ -415,7 +432,12 @@ def _grpo_fused_backward_pallas(
 
         probs = jnp.exp(logits_tile - lse[:, None])
         one_hot = (token_ids[:, None] == cols[None, :]) & row_mask & v_mask
-        grad_f32 = (one_hot.astype(jnp.float32) - probs) * scale[:, None]
+        one_hot_f32 = jax.lax.select(
+            one_hot,
+            jnp.ones_like(probs, dtype=jnp.float32),
+            jnp.zeros_like(probs, dtype=jnp.float32),
+        )
+        grad_f32 = (one_hot_f32 - probs) * scale[:, None]
         dlogits_ref[...] = grad_f32.astype(logits_block.dtype)
 
     logits_spec = pl.BlockSpec((BLOCK_T, BLOCK_V), lambda pid_t, pid_v: (pid_t, pid_v))
@@ -705,7 +727,7 @@ def grpo_loss_fused_pallas(
         eps_high,
     )
 
-    is_clipped = jnp.asarray(is_clipped_i32).astype(jnp.bool_)
+    is_clipped = jnp.asarray(is_clipped_i32) != 0
     return loss, (None if beta == 0.0 else kl), is_clipped
 
 

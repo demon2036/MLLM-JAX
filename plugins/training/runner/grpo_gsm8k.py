@@ -46,6 +46,14 @@ class GRPOTrainConfig:
     # - "dots_with_no_batch_dims": default transformer heuristic (historical)
     # - "nothing_saveable": rematerialize everything (lower HBM, more compute)
     remat_policy: str = "dots_with_no_batch_dims"
+    # Optional model memory optimization (compute-for-memory).
+    #
+    # When enabled, patches `LlamaMLP.__call__` to wrap the SwiGLU gate/up
+    # activation (`silu(gate_proj(x)) * up_proj(x)`) in
+    # `jax.checkpoint(..., policy=nothing_saveable)`.
+    #
+    # Intended to reduce peak HBM at long sequence lengths / larger micro-batches.
+    mlp_checkpoint_gate_up: bool = False
     max_length_total: int = 0
     ppo_epochs: int = 1
     grad_accum_steps: int = 1
@@ -399,6 +407,13 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             )
         )
     )
+
+    if bool(getattr(cfg.train, "mlp_checkpoint_gate_up", False)):
+        from plugins.sample.optimizations.llama_mlp_checkpoint import patch_llama_mlp_checkpoint_gate_up
+
+        patch_llama_mlp_checkpoint_gate_up()
+        if jax.process_index() == 0:
+            print("mlp_checkpoint_gate_up=1 (patched LlamaMLP.__call__ with jax.checkpoint)")
 
     dataset = load_dataset("openai/gsm8k", "main", split="train")
     qas = [{"Q": q, "A": a.split("####")[-1].strip()} for q, a in zip(dataset["question"], dataset["answer"])]

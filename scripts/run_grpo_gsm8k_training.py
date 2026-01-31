@@ -215,6 +215,13 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         remat_policy_raw = cfg.get("remat_policy")
     remat_policy = str(remat_policy_raw or "dots_with_no_batch_dims")
 
+    mlp_checkpoint_gate_up_raw = _get_by_path(cfg, "train.mlp_checkpoint_gate_up")
+    if mlp_checkpoint_gate_up_raw is None:
+        mlp_checkpoint_gate_up_raw = cfg.get("mlp_checkpoint_gate_up")
+    mlp_checkpoint_gate_up = (
+        bool(mlp_checkpoint_gate_up_raw) if mlp_checkpoint_gate_up_raw is not None else False
+    )
+
     policy_loss_impl_raw = _get_by_path(cfg, "train.policy_loss_impl")
     if policy_loss_impl_raw is None:
         policy_loss_impl_raw = cfg.get("policy_loss_impl")
@@ -456,6 +463,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             micro_batch_size_per_device=train_micro_batch_size_per_device,
             micro_batch_size=train_micro_batch_size,
             remat_policy=remat_policy,
+            mlp_checkpoint_gate_up=mlp_checkpoint_gate_up,
             max_length_total=max_length_total,
             ppo_epochs=ppo_epochs,
             grad_accum_steps=grad_accum_steps,

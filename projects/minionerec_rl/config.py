@@ -42,6 +42,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "grad_accum_steps": 1,
         "ppo_steps": 1,
         "beta": 1e-3,
+        "sync_ref_model": False,
+        "sync_ref_model_every_steps": 0,
+        "sync_ref_model_mixup_alpha": 1.0,
         "logging_steps": 10,
         "save_last": True,
         "optimizer": {
@@ -79,4 +82,3 @@ def load_config(config_path: str | None, overrides: list[str] | None = None) -> 
 
 
 __all__ = ["DEFAULT_CONFIG", "load_config"]
-

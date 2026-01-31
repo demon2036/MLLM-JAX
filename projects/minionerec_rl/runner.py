@@ -62,6 +62,9 @@ class MiniOneRecRlTrainConfig:
     grad_accum_steps: int = 1
     ppo_steps: int = 1
     beta: float = 1e-3
+    sync_ref_model: bool = False
+    sync_ref_model_every_steps: int = 0
+    sync_ref_model_mixup_alpha: float = 1.0
     logging_steps: int = 10
     save_last: bool = True
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
@@ -354,6 +357,8 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             rewards, correct = compute_ranking_rewards(predictions=preds_grouped, targets=targets, rank_penalties=rank_penalties)
             group_ids = np.repeat(np.arange(prompt_batch, dtype=np.int32), k)
             advantages = compute_grpo_advantages_by_group_id(rewards=rewards, group_ids=group_ids)
+            rewards_rule = correct
+            rewards_ndcg = rewards - correct
 
             # Build padded training sequences.
             completion_ids = np.zeros((prompt_batch, k, 5), dtype=np.int32)
@@ -403,23 +408,61 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             if micro * int(cfg.train.grad_accum_steps) != int(prompt_batch * k):
                 raise ValueError("prompt_batch_size*num_generations must be divisible by grad_accum_steps")
 
+            micro_metrics_sum: dict[str, float] = {}
             for micro_idx in range(int(cfg.train.grad_accum_steps)):
                 sl = slice(micro_idx * micro, (micro_idx + 1) * micro)
                 micro_batch = {kk: vv[sl] for kk, vv in batch.items()}
                 state, metrics = train_step_fn(state, micro_batch)
-                last_loss = float(np.asarray(metrics["loss"]))
+                for kk in ("loss", "kl", "completion_length"):
+                    if kk not in metrics:
+                        continue
+                    micro_metrics_sum[kk] = micro_metrics_sum.get(kk, 0.0) + float(np.asarray(metrics[kk]))
+
+            for kk in micro_metrics_sum:
+                micro_metrics_sum[kk] /= float(cfg.train.grad_accum_steps)
+            last_loss = float(micro_metrics_sum.get("loss", float("nan")))
+
+            if (
+                bool(cfg.train.sync_ref_model)
+                and getattr(state, "ref_params", None) is not None
+                and int(cfg.train.sync_ref_model_every_steps) > 0
+                and step % int(cfg.train.sync_ref_model_every_steps) == 0
+            ):
+                alpha = float(cfg.train.sync_ref_model_mixup_alpha)
+                if alpha >= 1.0:
+                    state = state.replace(ref_params=state.params)
+                elif alpha > 0.0:
+                    state = state.replace(
+                        ref_params=jax.tree_util.tree_map(
+                            lambda r, p: (1.0 - alpha) * r + alpha * p,
+                            state.ref_params,
+                            state.params,
+                        )
+                    )
 
             if step % int(cfg.train.logging_steps) == 0 or step == 1 or step == max_steps:
                 reward_mean = float(np.mean(rewards)) if rewards.size else float("nan")
+                reward_rule_mean = float(np.mean(rewards_rule)) if rewards_rule.size else float("nan")
+                reward_ndcg_mean = float(np.mean(rewards_ndcg)) if rewards_ndcg.size else float("nan")
                 pass_at_1 = float(np.mean(correct.reshape(prompt_batch, k)[:, 0])) if correct.size else float("nan")
                 pass_at_k = float(np.mean(np.max(correct.reshape(prompt_batch, k), axis=1))) if correct.size else float("nan")
                 if jax.process_index() == 0:
-                    print(f"[rl] step={step}/{max_steps} loss={last_loss:.6f} reward_mean={reward_mean:.6f} pass@1={pass_at_1:.4f} pass@K={pass_at_k:.4f}")
+                    kl = micro_metrics_sum.get("kl", float("nan"))
+                    completion_length = micro_metrics_sum.get("completion_length", float("nan"))
+                    print(
+                        f"[rl] step={step}/{max_steps} loss={last_loss:.6f} kl={kl:.6f} completion_len={completion_length:.2f} "
+                        f"reward_mean={reward_mean:.6f} rule_mean={reward_rule_mean:.6f} ndcg_mean={reward_ndcg_mean:.6f} "
+                        f"pass@1={pass_at_1:.4f} pass@K={pass_at_k:.4f}"
+                    )
                     if wandb is not None:
                         wandb.log(
                             {
                                 "train/loss": last_loss,
+                                "train/kl": kl,
+                                "train/completion_length": completion_length,
                                 "train/reward_mean": reward_mean,
+                                "train/reward_rule_mean": reward_rule_mean,
+                                "train/reward_ndcg_mean": reward_ndcg_mean,
                                 "train/pass@1": pass_at_1,
                                 "train/pass@K": pass_at_k,
                             },

@@ -122,6 +122,9 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> MiniOneRecRlConf
         grad_accum_steps=int(_get_or_default(cfg, "train.grad_accum_steps", DEFAULT_CONFIG["train"]["grad_accum_steps"])),
         ppo_steps=int(_get_or_default(cfg, "train.ppo_steps", DEFAULT_CONFIG["train"]["ppo_steps"])),
         beta=float(_get_or_default(cfg, "train.beta", DEFAULT_CONFIG["train"]["beta"])),
+        sync_ref_model=bool(_get_or_default(cfg, "train.sync_ref_model", DEFAULT_CONFIG["train"]["sync_ref_model"])),
+        sync_ref_model_every_steps=int(_get_or_default(cfg, "train.sync_ref_model_every_steps", DEFAULT_CONFIG["train"]["sync_ref_model_every_steps"])),
+        sync_ref_model_mixup_alpha=float(_get_or_default(cfg, "train.sync_ref_model_mixup_alpha", DEFAULT_CONFIG["train"]["sync_ref_model_mixup_alpha"])),
         logging_steps=int(_get_or_default(cfg, "train.logging_steps", DEFAULT_CONFIG["train"]["logging_steps"])),
         save_last=bool(_get_or_default(cfg, "train.save_last", DEFAULT_CONFIG["train"]["save_last"])),
         optimizer=opt_cfg,
@@ -192,4 +195,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

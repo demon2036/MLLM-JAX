@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, NamedTuple
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -96,99 +96,6 @@ def build_lr_schedule(*, training_steps: int, cfg: LRScheduleConfig):
     raise ValueError(f"Unsupported lr_schedule.type={cfg.type!r} (expected warmup_cosine|warmup_linear|constant)")
 
 
-def _muon_frob_norm(x):
-    import jax.numpy as jnp
-
-    x32 = x.astype(jnp.float32)
-    return jnp.sqrt(jnp.sum(x32 * x32))
-
-
-def _muon_newton_schulz_5(*, g, steps: int, eps: float):
-    """Approximate an orthogonalized update for a 2D matrix (Muon).
-
-    This is a JAX port of the `newtonschulz5` reference from
-    https://kellerjordan.github.io/posts/muon/.
-    """
-    import jax
-    import jax.numpy as jnp
-
-    if int(getattr(g, "ndim", 0)) != 2:
-        raise ValueError(f"Muon update expects a 2D matrix, got ndim={getattr(g, 'ndim', None)}")
-
-    a, b, c = (3.4445, -4.7750, 2.0315)
-
-    x = g.astype(jnp.bfloat16)
-    x = x / (_muon_frob_norm(x) + jnp.asarray(float(eps), dtype=jnp.float32))
-
-    transposed = bool(int(x.shape[0]) > int(x.shape[1]))
-    if transposed:
-        x = x.T
-
-    def body(_i, x_in):
-        a_in = x_in @ x_in.T
-        b_in = (jnp.asarray(b, dtype=jnp.bfloat16) * a_in) + (jnp.asarray(c, dtype=jnp.bfloat16) * (a_in @ a_in))
-        return (jnp.asarray(a, dtype=jnp.bfloat16) * x_in) + (b_in @ x_in)
-
-    x = jax.lax.fori_loop(0, int(steps), body, x)
-    if transposed:
-        x = x.T
-    return x
-
-
-def _scale_by_muon(
-    *,
-    momentum: float,
-    nesterov: bool,
-    ns_steps: int,
-    eps: float,
-    mu_dtype,
-):
-    import jax
-    import jax.numpy as jnp
-    import optax
-
-    MaskedNode = getattr(optax, "MaskedNode", None)
-
-    def is_masked(x: Any) -> bool:
-        return MaskedNode is not None and isinstance(x, MaskedNode)
-
-    class _MuonState(NamedTuple):
-        momentum: Any
-
-    def init_fn(params):
-        def init_leaf(p):
-            if is_masked(p):
-                return MaskedNode()
-            return jnp.zeros_like(p, dtype=mu_dtype)
-
-        return _MuonState(momentum=jax.tree_util.tree_map(init_leaf, params, is_leaf=is_masked))
-
-    def update_fn(updates, state, params=None):
-        del params
-
-        def update_leaf(g, m):
-            if is_masked(g):
-                return MaskedNode(), m
-            g = g.astype(mu_dtype)
-
-            m_new = (jnp.asarray(float(momentum), dtype=mu_dtype) * m) + g
-            if bool(nesterov):
-                g_eff = g + (jnp.asarray(float(momentum), dtype=mu_dtype) * m_new)
-            else:
-                g_eff = m_new
-
-            u = _muon_newton_schulz_5(g=g_eff, steps=int(ns_steps), eps=float(eps))
-            return u, m_new
-
-        pairs = jax.tree_util.tree_map(update_leaf, updates, state.momentum, is_leaf=is_masked)
-        is_pair = lambda x: isinstance(x, tuple) and len(x) == 2
-        new_updates = jax.tree_util.tree_map(lambda x: x[0], pairs, is_leaf=is_pair)
-        new_momentum = jax.tree_util.tree_map(lambda x: x[1], pairs, is_leaf=is_pair)
-        return new_updates, _MuonState(momentum=new_momentum)
-
-    return optax.GradientTransformation(init_fn, update_fn)
-
-
 def build_tx(*, training_steps: int, cfg: OptimizerConfig, params: Any | None = None):
     """Build an Optax optimizer transformation.
 
@@ -228,19 +135,34 @@ def build_tx(*, training_steps: int, cfg: OptimizerConfig, params: Any | None = 
         )
         aux_lr_schedule = build_lr_schedule(training_steps=training_steps, cfg=aux_lr_cfg)
 
-        # NOTE: We intentionally use a custom Muon + auxiliary AdamW split via
-        # `optax.multi_transform` so we can tune the auxiliary LR separately.
-        # Some Optax versions ship `optax.contrib.muon`, but its signature does
-        # not consistently expose an auxiliary learning-rate knob.
-        muon_chain = [
-            _scale_by_muon(
-                momentum=float(cfg.muon_momentum),
-                nesterov=bool(cfg.muon_nesterov),
-                ns_steps=int(cfg.muon_ns_steps),
-                eps=float(cfg.muon_eps),
-                mu_dtype=jnp.float32,
-            )
-        ]
+        # NOTE: We use a Muon + auxiliary AdamW split via `optax.multi_transform`
+        # so we can tune the auxiliary LR separately.
+        contrib = getattr(optax, "contrib", None)
+        scale_by_muon_fn = getattr(contrib, "scale_by_muon", None) if contrib is not None else None
+        dim_nums_cls = getattr(contrib, "MuonDimensionNumbers", None) if contrib is not None else None
+        if scale_by_muon_fn is None or dim_nums_cls is None:
+            raise ValueError("optimizer.name='muon' requires optax.contrib.scale_by_muon (upgrade optax).")
+
+        # Optax's `scale_by_muon` expects an explicit weight-dimension spec tree
+        # (or callable) matching the (masked) updates structure. We provide the
+        # default 2D spec everywhere; masked subtrees remain MaskedNode().
+        def weight_dimension_numbers(updates):
+            return jax.tree_util.tree_map(lambda _x: dim_nums_cls(), updates)
+
+        kwargs = {
+            "nesterov": bool(cfg.muon_nesterov),
+            "ns_steps": int(cfg.muon_ns_steps),
+            "eps": float(cfg.muon_eps),
+            "mu_dtype": jnp.float32,
+            "weight_dimension_numbers": weight_dimension_numbers,
+        }
+        try:
+            scale_by_muon = scale_by_muon_fn(beta=float(cfg.muon_momentum), **kwargs)
+        except TypeError:
+            kwargs.pop("mu_dtype", None)
+            scale_by_muon = scale_by_muon_fn(beta=float(cfg.muon_momentum), **kwargs)
+
+        muon_chain = [scale_by_muon]
         if weight_decay != 0.0:
             # Decoupled weight decay: do NOT include it inside the orthogonalization.
             muon_chain.append(optax.add_decayed_weights(weight_decay))

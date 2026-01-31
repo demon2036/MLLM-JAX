@@ -19,6 +19,7 @@ runs/
 
 # Local scratch (never commit)
 workdir/
+workdir
 answers/
 memory/
 memo/

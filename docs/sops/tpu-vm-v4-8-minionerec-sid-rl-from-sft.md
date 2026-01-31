@@ -112,6 +112,26 @@
   - HR@K: 1=`0.08317`, 3=`0.10523`, 5=`0.12067`, 10=`0.15067`, 20=`0.18575`, 50=`0.23980`
   - NDCG@K: 1=`0.08317`, 3=`0.09584`, 5=`0.10213`, 10=`0.11177`, 20=`0.12062`, 50=`0.13132`
 
+## Run 6: RL (valid split eval, beams=20) with TRL sync defaults + fast-attn patch
+
+- Repo branch/commit: `nano-gpt-sft` @ `5c87b61`
+  - Applies `patch_qwen2_attention_decode_fast()` for faster decode on TPU.
+- Config:
+  - `projects/minionerec_rl/configs/v4-8/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps640_pb32_sync512_a06_fastattn_from_sft_bestval_evalvalid_beam20_20260131.yaml`
+- Command:
+  - `./scripts/ssh_tpu_vm_root.sh --name plugins-refactor-sid-sft-muon-260131052355 --zone us-central2-b --command 'set -euo pipefail; export PYTHONUNBUFFERED=1; export HF_HUB_ENABLE_HF_TRANSFER=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; ./scripts/run_minionerec_rl.sh --config projects/minionerec_rl/configs/v4-8/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps640_pb32_sync512_a06_fastattn_from_sft_bestval_evalvalid_beam20_20260131.yaml --run-mode train_eval'`
+- W&B run: `johntitordemon2036/minionerec-sid-rl/runs/ml2v3yqy` (mode=online)
+  - Reward breakdown logs: `rewards/rule_reward`, `rewards/ndcg_rule_reward`, `reward`, `reward_std`
+- Output dir:
+  - `runs/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps640_pb32_sync512_a06_fastattn_from_sft_bestval_evalvalid_beam20_20260131/`
+- Artifacts:
+  - `runs/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps640_pb32_sync512_a06_fastattn_from_sft_bestval_evalvalid_beam20_20260131/sft_state_rl_last.msgpack`
+  - `runs/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps640_pb32_sync512_a06_fastattn_from_sft_bestval_evalvalid_beam20_20260131/eval_predictions.json`
+  - `runs/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps640_pb32_sync512_a06_fastattn_from_sft_bestval_evalvalid_beam20_20260131/eval_predictions.metrics.json`
+- Eval (valid split, beams=20, samples=4532, invalid=0):
+  - HR@K: 3=`0.11231`, 5=`0.12732`, 10=`0.14850`
+  - NDCG@K: 3=`0.10218`, 5=`0.10827`, 10=`0.11506`
+
 ## Cleanup
 
 - Per task requirement, this run did **not** delete the TPU VM.

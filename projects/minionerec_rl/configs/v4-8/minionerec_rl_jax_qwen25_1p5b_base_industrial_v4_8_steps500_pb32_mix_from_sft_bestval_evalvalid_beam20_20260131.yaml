@@ -1,0 +1,84 @@
+# MiniOneRec SID RL (v4-8) with upstream-like task mix:
+# - next-item SID (from train_file)
+# - title/description -> SID (from item_meta + sid_index)
+# - seq-title -> SID (from train_file, sampled)
+#
+# Starts from the SFT best-on-valid checkpoint and reports HR/NDCG on the valid split (beam=20).
+
+base_model: Qwen/Qwen2.5-1.5B
+output_dir: runs/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps500_pb32_mix_from_sft_bestval_evalvalid_beam20_20260131
+seed: 42
+device: tpu
+
+resume_from_checkpoint: runs/sid_sft_jax_qwen25_1p5b_base_industrial_v4_8_e3_muon_refactor_20260131_train_bestval/sft_state_best.msgpack
+
+data:
+  category: Industrial_and_Scientific
+  train_file: workdir/MiniOneRec/data/Amazon/train/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  eval_file: workdir/MiniOneRec/data/Amazon/valid/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  # Evaluate on valid split (upstream `rl.sh` passes eval_file=valid/... during training).
+  test_file: workdir/MiniOneRec/data/Amazon/valid/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  info_file: workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt
+  sid_index_path: workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.index.json
+  item_meta_path: workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.item.json
+  enable_title2sid: true
+  enable_seqtitle2sid: true
+  # Cap extra tasks for TPU iteration speed; increase to -1 for full upstream-scale training.
+  sample_title2sid: 20000
+  sample_seqtitle2sid: 10000
+  max_len: 512
+  sample_train: -1
+  sample_eval: -1
+  sample_test: -1
+
+jax:
+  mesh_shape: "4,1,1"
+  param_dtype: bfloat16
+  compute_dtype: bfloat16
+  max_cache_length: 512
+
+rollout:
+  prompt_batch_size: 32
+  num_generations: 16
+  prompt_pad_len: 256
+  global_length: 512
+
+train:
+  num_train_epochs: 0.0
+  max_steps: 500
+  grad_accum_steps: 32
+  ppo_steps: 1
+
+  beta: 0.001
+  sync_ref_model: true
+  sync_ref_model_every_steps: 1
+  sync_ref_model_mixup_alpha: 0.1
+
+  logging_steps: 10
+  save_last: true
+
+  optimizer:
+    name: adamw
+    clip_norm: 0.3
+    weight_decay: 0.0
+    lr_schedule:
+      type: warmup_cosine
+      init_value: 0.0
+      peak_value: 1e-5
+      end_value: 0.0
+      warmup_ratio: 0.03
+      warmup_steps: null
+
+eval:
+  enabled: true
+  every_steps: 0
+  batch_size: 4
+  num_beams: 20
+  topk: [1, 3, 5, 10, 20]
+  save_predictions_json: true
+
+wandb:
+  project: minionerec-sid-rl
+  mode: online
+  name: null
+

@@ -19,6 +19,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "test_file": "workdir/MiniOneRec/data/Amazon/test/Industrial_and_Scientific_5_2016-10-2018-11.csv",
         "info_file": "workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt",
         "sid_index_path": "workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.index.json",
+        "item_meta_path": "workdir/MiniOneRec/data/Amazon/index/Industrial_and_Scientific.item.json",
+        # Optional upstream-aligned RL task mix:
+        # - next-item (SID) is always included from train_file
+        # - enable title/description -> SID and seq-title -> SID for better alignment
+        "enable_title2sid": False,
+        "enable_seqtitle2sid": False,
+        "sample_title2sid": -1,
+        "sample_seqtitle2sid": 10000,
         "max_len": 512,
         "sample_train": -1,
         "sample_eval": -1,

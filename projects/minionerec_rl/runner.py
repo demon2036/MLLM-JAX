@@ -13,7 +13,12 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from projects.sid_sft.jax.evaluator import evaluate_sid_next_item_jax
 from projects.sid_sft.jax.params import resize_lm_vocab
 from projects.sid_sft.tokens import maybe_extend_tokenizer
-from projects.minionerec_rl.datasets import MiniOneRecNextItemRlDataset
+from projects.minionerec_rl.datasets import (
+    MiniOneRecMixedRlDataset,
+    MiniOneRecNextItemRlDataset,
+    MiniOneRecSeqTitle2SidRlDataset,
+    MiniOneRecTitle2SidRlDataset,
+)
 from projects.minionerec_rl.grpo_module import MiniOneRecGrpoModule
 from projects.minionerec_rl.reward import build_rank_penalties, compute_ranking_rewards
 from plugins.sample.constraints.sid_trie import build_sid_trie_from_index
@@ -33,6 +38,13 @@ class MiniOneRecRlDataConfig:
     test_file: str
     info_file: str
     sid_index_path: str
+    item_meta_path: str | None = None
+    # Upstream RL mixes multiple prompt types; keep next-item as default, and
+    # optionally enable additional tasks for better alignment.
+    enable_title2sid: bool = False
+    enable_seqtitle2sid: bool = False
+    sample_title2sid: int = -1
+    sample_seqtitle2sid: int = 10_000
     max_len: int = 512
     sample_train: int = -1
     sample_eval: int = -1
@@ -240,12 +252,38 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
         if prompt_batch <= 0 or k <= 0:
             raise ValueError("rollout.prompt_batch_size and rollout.num_generations must be > 0")
 
-        # RL dataset: next-item only (SID space).
-        train_dataset = MiniOneRecNextItemRlDataset(
-            csv_path=cfg.data.train_file,
-            sample=cfg.data.sample_train,
-            seed=cfg.seed,
+        # RL dataset: align with upstream by optionally mixing multiple prompt types.
+        # Default keeps next-item-only to preserve historical behavior.
+        train_datasets: list[Any] = []
+        train_datasets.append(
+            MiniOneRecNextItemRlDataset(
+                csv_path=cfg.data.train_file,
+                sample=cfg.data.sample_train,
+                seed=cfg.seed,
+            )
         )
+        if bool(cfg.data.enable_title2sid):
+            if not cfg.data.item_meta_path:
+                raise ValueError("data.item_meta_path is required when data.enable_title2sid=true")
+            train_datasets.append(
+                MiniOneRecTitle2SidRlDataset(
+                    item_meta_path=str(cfg.data.item_meta_path),
+                    sid_index_path=str(cfg.data.sid_index_path),
+                    sample=int(cfg.data.sample_title2sid),
+                    seed=int(cfg.seed),
+                    include_description=True,
+                )
+            )
+        if bool(cfg.data.enable_seqtitle2sid):
+            train_datasets.append(
+                MiniOneRecSeqTitle2SidRlDataset(
+                    csv_path=cfg.data.train_file,
+                    sample=int(cfg.data.sample_seqtitle2sid),
+                    seed=int(cfg.seed),
+                )
+            )
+
+        train_dataset = train_datasets[0] if len(train_datasets) == 1 else MiniOneRecMixedRlDataset(train_datasets)
         if len(train_dataset) <= 0:
             raise ValueError("Empty train_dataset")
 

@@ -18,6 +18,7 @@ from projects.minionerec_rl.grpo_module import MiniOneRecGrpoModule
 from projects.minionerec_rl.reward import build_rank_penalties, compute_ranking_rewards
 from plugins.sample.constraints.sid_trie import build_sid_trie_from_index
 from plugins.training.core.checkpoint.msgpack import load_checkpoint, save_checkpoint
+from plugins.training.core.io.hf_config import ensure_rope_theta
 from plugins.training.core.logging.wandb import maybe_init_wandb
 from plugins.training.core.optim.optimizer import OptimizerConfig, build_tx
 from plugins.training.core.tokenizer import prepare_tokenizer
@@ -190,6 +191,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                 print(f"[rl] pad_vocab_size {tokenizer_vocab_size} -> {padded_vocab_size} (multiple={pad_multiple})")
 
     base_config = AutoConfig.from_pretrained(cfg.base_model, trust_remote_code=True)
+    ensure_rope_theta(base_config)
     base_config.vocab_size = int(padded_vocab_size)
 
     attention_mesh = mesh if jax.devices()[0].platform == "tpu" else None

@@ -27,9 +27,13 @@ def _ceil_div(a: int, b: int) -> int:
 
 
 # Kernel tile sizes. BLOCK_T=128 matches the TPU-friendly 1D block constraint for
-# fp32 outputs. BLOCK_V must be a multiple of 128.
+# fp32 outputs.
+#
+# NOTE: On TPU v3, large BLOCK_V values can trigger Mosaic lowering patterns
+# involving sublane gathers (e.g. during row-wise reductions like max/sum) that
+# are not supported. Keep BLOCK_V small and a multiple of 128.
 BLOCK_T = 128
-BLOCK_V = 1024
+BLOCK_V = 128
 
 
 def _is_tpu_runtime() -> bool:

@@ -124,6 +124,22 @@ scripts/ssh_tpu_vm_root.sh --name grpo-pallas-kernel-opt-v6e8-spot-260130080500 
   - JAX: `qerilbpe` — exceeded HBM by **3.58G** (total usage `>=35.08G`)
   - Interpretation: under the same mb4/dev setting, Pallas is **~3.56G closer to fitting** than the legacy JAX path; remaining gap is ~**19MB**.
 
+## Update (2026-01-31): further attempts to close the remaining ~19MB
+
+Status:
+- Kernel tuning sweeps (`pallas_block_size` / `pallas_time_block`) did **not** change the mb4 compile-OOM margin (still **18.80M**) except `pallas_time_block=128`, which fails Mosaic compilation (`offset not aligned to sublanes`).
+- Some alternative knobs (remat/optimizer/MLP checkpoint) changed XLA accounting to include large `arguments` buffers, resulting in **larger** OOM margins (not usable as a fix).
+- `XLA_FLAGS=--xla_multiheap_size_constraint_per_heap=1073741824` is **not viable** on v6e in this setup (rollout fails with a MegaChip `UNIMPLEMENTED` error).
+
+W&B runs (v6e-8, online):
+- Pallas `block_size=1024` mb4/dev: `nbkoqc76` — exceeded HBM by **18.80M**
+- Pallas `time_block=256` mb4/dev: `zit6d56f` — exceeded HBM by **18.80M**
+- Pallas `time_block=128` mb4/dev: `qd3a6ffm` — Mosaic error `offset not aligned to sublanes`
+- Remat `nothing_saveable` mb4/dev: `z7m13akl` — exceeded HBM by **2.48G**
+- Optimizer `sgd` mb4/dev: `65f7kdii` — exceeded HBM by **1.07G**
+- MLP checkpoint patch mb4/dev: `9qo5sd95` — exceeded HBM by **2.45G**
+- `XLA_FLAGS=--xla_multiheap_size_constraint_per_heap=1073741824`: `jrnbj6o7` / `oh64awms` — MegaChip `UNIMPLEMENTED` during rollout
+
 ## References
 
 - Kernel micro-bench: `scripts/grpo_kernel_bench.py`

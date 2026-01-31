@@ -36,6 +36,7 @@
 - TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
 - TPU v6e-8 SID SFT official-alignment run: `docs/sops/tpu-vm-v6e-8-sid-sft-official-align.md`
 - TPU v6e-8 SID SFT Qwen2.5-1.5B Muon local vs optax (W&B online): `docs/sops/tpu-vm-v6e-8-sid-sft-qwen25-1p5b-muon-local-vs-optax.md`
+- TPU v4-8 SID SFT Qwen2.5-1.5B Muon (plugins refactor) run: `docs/sops/tpu-vm-v4-8-sid-sft-qwen25-1p5b-muon-refactor.md`
 - TPU v6e-8 nanoGPT Tiny Shakespeare standard train (W&B online): `docs/sops/tpu-vm-v6e-8-nanogpt-tinyshakespeare-standard.md`
 - TPU v6e-8 nanoGPT Tiny Shakespeare Muon vs AdamW (W&B online): `docs/sops/tpu-vm-v6e-8-nanogpt-muon-official-compare.md`
 - TPU v6e-8 unified-api-refactor SFT + nanoGPT regression (W&B online): `docs/sops/tpu-vm-v6e-8-unified-api-refactor-sft-nanogpt-regression.md`

@@ -1,8 +1,6 @@
-# pyright: reportAttributeAccessIssue=false
+# pyright: reportAttributeAccessIssue=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportMissingParameterType=false, reportCallIssue=false, reportFunctionMemberAccess=false
 
 from __future__ import annotations
-
-# pyright: reportAttributeAccessIssue=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportMissingParameterType=false
 
 
 from tests.grpo_fused_kernel import grpo_reference
@@ -518,8 +516,9 @@ def _grpo_fused_backward_pallas(
 if FUSED_AVAILABLE:
     import jax
 
-    @jax.custom_vjp
-    def _grpo_loss_fused_pallas_jax(
+    # Treat scalar hyperparameters as static/non-differentiable so Pallas kernels
+    # don't close over traced scalar constants under jax.jit.
+    def _grpo_loss_fused_pallas_jax_impl(
         logits: object,
         old_logp: object,
         ref_logp: object,
@@ -545,6 +544,11 @@ if FUSED_AVAILABLE:
             interpret=(not _is_tpu_runtime()),
         )
         return loss, kl, is_clipped_i32
+
+    _grpo_loss_fused_pallas_jax = jax.custom_vjp(
+        _grpo_loss_fused_pallas_jax_impl,
+        nondiff_argnums=(6, 7, 8, 9),
+    )
 
     def _grpo_loss_fused_pallas_jax_fwd(
         logits: object,
@@ -583,14 +587,10 @@ if FUSED_AVAILABLE:
             m_flat,
             l_flat,
             token_logit_flat,
-            temperature,
-            beta,
-            eps_low,
-            eps_high,
         )
         return (loss, kl, is_clipped_i32), residuals
 
-    def _grpo_loss_fused_pallas_jax_bwd(residuals, g):
+    def _grpo_loss_fused_pallas_jax_bwd(temperature, beta, eps_low, eps_high, residuals, g):
         import importlib
 
         jnp = importlib.import_module("jax.numpy")
@@ -605,10 +605,6 @@ if FUSED_AVAILABLE:
             m_flat,
             l_flat,
             token_logit_flat,
-            temperature,
-            beta,
-            eps_low,
-            eps_high,
         ) = residuals
 
         dloss, _dkl, _dis_clipped = g
@@ -635,20 +631,10 @@ if FUSED_AVAILABLE:
                 interpret=(not _is_tpu_runtime()),
             )
 
-        return (
-            dlogits,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+        # Gradients correspond to the 6 differentiable args only.
+        return (dlogits, None, None, None, None, None)
 
-    _grpo_loss_fused_pallas_jax.defvjp(
+    _grpo_loss_fused_pallas_jax.defvjp(  # pyright: ignore[reportFunctionMemberAccess]
         _grpo_loss_fused_pallas_jax_fwd,
         _grpo_loss_fused_pallas_jax_bwd,
     )

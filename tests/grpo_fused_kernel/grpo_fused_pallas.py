@@ -370,11 +370,21 @@ def _grpo_fused_backward_pallas(
         t_start = pid_t * BLOCK_T
         rows = t_start + jnp.arange(BLOCK_T, dtype=jnp.int32)
         t_in_bounds = rows < num_tokens
+        t_in_bounds_i32 = jax.lax.select(
+            t_in_bounds,
+            jnp.ones_like(rows, dtype=jnp.int32),
+            jnp.zeros_like(rows, dtype=jnp.int32),
+        )
 
         v_start = pid_v * BLOCK_V
         cols = v_start + jnp.arange(BLOCK_V, dtype=jnp.int32)
         v_in_bounds = cols < vocab_size
-        v_mask = jnp.broadcast_to(v_in_bounds[None, :], (BLOCK_T, BLOCK_V))
+        v_in_bounds_i32 = jax.lax.select(
+            v_in_bounds,
+            jnp.ones_like(cols, dtype=jnp.int32),
+            jnp.zeros_like(cols, dtype=jnp.int32),
+        )
+        v_mask_i32 = jnp.broadcast_to(v_in_bounds_i32[None, :], (BLOCK_T, BLOCK_V))
 
         # Per-token inputs.
         token_ids = jnp.asarray(ids_ref[...]).astype(jnp.int32)
@@ -382,7 +392,6 @@ def _grpo_fused_backward_pallas(
         ref = jnp.asarray(ref_logp_ref[...]).astype(jnp.float32)
         adv = jnp.asarray(adv_ref[...]).astype(jnp.float32)
         keep_i32 = jnp.asarray(mask_ref[...]).astype(jnp.int32)
-        keep = keep_i32 != 0
         dloss_local = jnp.asarray(dloss_ref[...]).astype(jnp.float32)
 
         # Saved forward intermediates for stable logsumexp.
@@ -396,8 +405,12 @@ def _grpo_fused_backward_pallas(
         token_logit = jax.lax.select(t_in_bounds, token_logit, jnp.zeros_like(token_logit))
 
         # Row-level active mask: completion mask + token in-bounds.
-        row_active = keep & t_in_bounds
-        row_mask = jnp.broadcast_to(row_active[:, None], (BLOCK_T, BLOCK_V))
+        # NOTE: Avoid bool vector reshapes/broadcasts (e.g. row_active[:, None])
+        # which can trigger unsupported Mosaic shape-casts on TPU v6e.
+        row_active_i32 = keep_i32 * t_in_bounds_i32
+        row_active = row_active_i32 != 0
+        row_mask_i32 = jnp.broadcast_to(row_active_i32[:, None], (BLOCK_T, BLOCK_V))
+        active_mask = (row_mask_i32 != 0) & (v_mask_i32 != 0)
 
         # Zero out non-active scalars to keep exp() finite.
         old = jax.lax.select(row_active, old, jnp.zeros_like(old))
@@ -429,13 +442,13 @@ def _grpo_fused_backward_pallas(
         logits_block = jnp.asarray(logits_ref[...])
         logits_tile = logits_block.astype(jnp.float32) / float(temperature)
         logits_tile = jax.lax.select(
-            row_mask & v_mask,
+            active_mask,
             logits_tile,
             jnp.full_like(logits_tile, -jnp.inf),
         )
 
         probs = jnp.exp(logits_tile - lse[:, None])
-        one_hot = (token_ids[:, None] == cols[None, :]) & row_mask & v_mask
+        one_hot = (token_ids[:, None] == cols[None, :]) & active_mask
         one_hot_f32 = jax.lax.select(
             one_hot,
             jnp.ones_like(probs, dtype=jnp.float32),

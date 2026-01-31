@@ -68,9 +68,25 @@
   - HR@K: 1=`0.07809`, 3=`0.10346`, 5=`0.11780`, 10=`0.14869`, 20=`0.18685`, 50=`0.24664`
   - NDCG@K: 1=`0.07809`, 3=`0.09271`, 5=`0.09857`, 10=`0.10846`, 20=`0.11806`, 50=`0.12988`
 
+## Run 2: train_eval on validation + save best checkpoint
+
+- Repo branch/commit: `nano-gpt-sft` @ `c2c3e2c`
+  - Adds `train.save_best`/`train.save_best_metric` and `eval.split` to `projects/sid_sft`.
+- Train+eval config (valid split, beams=20):
+  - `projects/sid_sft/configs/train/v4-8/sid_sft_jax_qwen25_1p5b_base_industrial_v4_8_e3_muon_refactor_20260131_train_bestval.yaml`
+- Command:
+  - `./scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone us-central2-b --command 'set -euo pipefail; export PYTHONUNBUFFERED=1; export HF_HUB_ENABLE_HF_TRANSFER=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; ./scripts/run_sid_sft.sh --config projects/sid_sft/configs/train/v4-8/sid_sft_jax_qwen25_1p5b_base_industrial_v4_8_e3_muon_refactor_20260131_train_bestval.yaml --run-mode train_eval'`
+- Output dir:
+  - `runs/sid_sft_jax_qwen25_1p5b_base_industrial_v4_8_e3_muon_refactor_20260131_train_bestval/`
+  - Best checkpoint:
+    - `runs/sid_sft_jax_qwen25_1p5b_base_industrial_v4_8_e3_muon_refactor_20260131_train_bestval/sft_state_best.msgpack`
+- W&B run: `johntitordemon2036/minionerec-sid-sft/runs/jiykssr3` (mode=online)
+- Eval (valid split, beams=20, samples=4532, invalid=0):
+  - HR@K: 1=`0.08694`, 3=`0.11584`, 5=`0.12842`, 10=`0.15181`, 20=`0.17829`
+  - NDCG@K: 1=`0.08694`, 3=`0.10350`, 5=`0.10865`, 10=`0.11617`, 20=`0.12287`
+
 ## Cleanup
 
 - Per task requirement, this run did **not** delete the TPU VM.
   When you want to stop billing:
   - `./scripts/delete_tpu_vm.sh --name "$TPU_NAME" --zone us-central2-b`
-

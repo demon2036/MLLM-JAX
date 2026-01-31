@@ -81,6 +81,37 @@
   - HR@K: 1=`0.08317`, 3=`0.10523`, 5=`0.12067`, 10=`0.15067`, 20=`0.18575`, 50=`0.23980`
   - NDCG@K: 1=`0.08317`, 3=`0.09584`, 5=`0.10213`, 10=`0.11177`, 20=`0.12062`, 50=`0.13132`
 
+## Run 4: save best-on-valid SFT checkpoint (then use it for RL init)
+
+- Repo branch/commit: `nano-gpt-sft` @ `c2c3e2c`
+  - Adds `train.save_best`/`train.save_best_metric` and `eval.split` to `projects/sid_sft`.
+- Config:
+  - `projects/sid_sft/configs/train/v4-8/sid_sft_jax_qwen25_1p5b_base_industrial_v4_8_e3_muon_refactor_20260131_train_bestval.yaml`
+- Command:
+  - `./scripts/ssh_tpu_vm_root.sh --name plugins-refactor-sid-sft-muon-260131052355 --zone us-central2-b --command 'set -euo pipefail; export PYTHONUNBUFFERED=1; export HF_HUB_ENABLE_HF_TRANSFER=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; ./scripts/run_sid_sft.sh --config projects/sid_sft/configs/train/v4-8/sid_sft_jax_qwen25_1p5b_base_industrial_v4_8_e3_muon_refactor_20260131_train_bestval.yaml --run-mode train_eval'`
+- W&B run: `johntitordemon2036/minionerec-sid-sft/runs/jiykssr3` (mode=online)
+- Output dir:
+  - `runs/sid_sft_jax_qwen25_1p5b_base_industrial_v4_8_e3_muon_refactor_20260131_train_bestval/`
+  - Best checkpoint:
+    - `runs/sid_sft_jax_qwen25_1p5b_base_industrial_v4_8_e3_muon_refactor_20260131_train_bestval/sft_state_best.msgpack`
+- Eval (valid split, beams=20, samples=4532, invalid=0):
+  - HR@K: 1=`0.08694`, 3=`0.11584`, 5=`0.12842`, 10=`0.15181`, 20=`0.17829`
+  - NDCG@K: 1=`0.08694`, 3=`0.10350`, 5=`0.10865`, 10=`0.11617`, 20=`0.12287`
+
+## Run 5: RL pb32 init from SFT best-on-valid checkpoint
+
+- Repo branch/commit: `nano-gpt-sft` @ `c2c3e2c`
+- Config:
+  - `projects/minionerec_rl/configs/v4-8/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps100_pb32_from_sft_bestval_20260131.yaml`
+- Command:
+  - `./scripts/ssh_tpu_vm_root.sh --name plugins-refactor-sid-sft-muon-260131052355 --zone us-central2-b --command 'set -euo pipefail; export PYTHONUNBUFFERED=1; export HF_HUB_ENABLE_HF_TRANSFER=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; ./scripts/run_minionerec_rl.sh --config projects/minionerec_rl/configs/v4-8/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps100_pb32_from_sft_bestval_20260131.yaml --run-mode train_eval'`
+- W&B run: `johntitordemon2036/minionerec-sid-rl/runs/teo6pia7` (mode=online)
+- Output dir:
+  - `runs/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps100_pb32_from_sft_bestval_20260131/`
+- Eval (test split, beams=50, samples=4533, invalid=0):
+  - HR@K: 1=`0.08317`, 3=`0.10523`, 5=`0.12067`, 10=`0.15067`, 20=`0.18575`, 50=`0.23980`
+  - NDCG@K: 1=`0.08317`, 3=`0.09584`, 5=`0.10213`, 10=`0.11177`, 20=`0.12062`, 50=`0.13132`
+
 ## Cleanup
 
 - Per task requirement, this run did **not** delete the TPU VM.

@@ -76,6 +76,17 @@ class SidSftTrainConfig:
     save_steps: int = 200
     save_total_limit: int = 1
     save_last: bool = True
+    # Optional: save the best checkpoint according to constrained-decoding eval
+    # metrics (computed on `cfg.eval.split`).
+    #
+    # When enabled, the best checkpoint is written as `sft_state_best.msgpack`
+    # in `output_dir`.
+    save_best: bool = False
+    # Metric name used for "best" selection, e.g.:
+    # - "ndcg@10" (default)
+    # - "hr@10"
+    # - "eval/ndcg@10" (prefix is allowed)
+    save_best_metric: str = "ndcg@10"
     group_by_length: bool = False
     freeze_LLM: bool = False
     train_from_scratch: bool = False
@@ -88,6 +99,10 @@ class SidSftTrainConfig:
 @dataclass(frozen=True)
 class SidSftEvalConfig:
     enabled: bool = True
+    # Which split to use for constrained-decoding evaluation:
+    # - "test": use `data.test_file` (default; preserves historical behavior)
+    # - "eval": use `data.eval_file` (validation)
+    split: str = "test"
     batch_size: int = 4
     num_beams: int = 50
     max_new_tokens: int = 64
@@ -182,11 +197,20 @@ def _build_train_dataset(cfg: SidSftConfig, tokenizer: Any) -> Any:
 
 
 def _build_eval_dataset(cfg: SidSftConfig, tokenizer: Any) -> SidNextItemEvalDataset:
+    split = str(getattr(cfg.eval, "split", "test") or "test").strip().lower()
+    if split in {"eval", "valid", "val"}:
+        csv_path = cfg.data.eval_file
+        sample = cfg.data.sample_eval
+    elif split in {"test"}:
+        csv_path = cfg.data.test_file
+        sample = cfg.data.sample_test
+    else:
+        raise ValueError(f"Unsupported eval.split={cfg.eval.split!r} (expected 'eval'|'test')")
     return SidNextItemEvalDataset(
-        csv_path=cfg.data.test_file,
+        csv_path=csv_path,
         tokenizer=tokenizer,
         max_len=cfg.data.max_len,
-        sample=cfg.data.sample_test,
+        sample=sample,
         seed=cfg.seed,
         pretokenize=True,
     )
@@ -208,6 +232,11 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     from projects.sid_sft.jax.checkpoint import load_checkpoint, save_checkpoint
     from projects.sid_sft.jax.params import resize_lm_vocab
     from projects.sid_sft.jax.train import create_mesh_from_config, run_sft_train
+
+    best_metric_name = str(cfg.train.save_best_metric or "ndcg@10")
+    best_metric_value: float | None = None
+    best_metric_step: int | None = None
+    best_checkpoint_path: str | None = None
 
     def parse_dtype(name: str) -> Any:
         n = str(name or "float32").strip().lower()
@@ -372,6 +401,24 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
         evaluator = None
         eval_every_steps = 0
 
+        def _get_best_metric_value(metrics: Any) -> float:
+            key = str(best_metric_name or "").strip().lower()
+            if key.startswith("eval/"):
+                key = key[len("eval/") :]
+            if key.startswith("ndcg@"):
+                k = int(key.split("@", 1)[1])
+                if int(k) not in metrics.ndcg:
+                    raise KeyError(f"{best_metric_name!r} requested but eval.topk does not include {int(k)}")
+                return float(metrics.ndcg[k])
+            if key.startswith("hr@"):
+                k = int(key.split("@", 1)[1])
+                if int(k) not in metrics.hr:
+                    raise KeyError(f"{best_metric_name!r} requested but eval.topk does not include {int(k)}")
+                return float(metrics.hr[k])
+            raise ValueError(
+                f"Unsupported train.save_best_metric={best_metric_name!r}; expected 'ndcg@K' or 'hr@K' (e.g. 'ndcg@10')."
+            )
+
         # For `train_eval`, run constrained-decoding eval periodically so W&B
         # shows metrics during training (at least once per epoch).
         if run_mode_norm == "train_eval" and cfg.eval.enabled:
@@ -401,6 +448,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
         def eval_cb(step: int, st: Any) -> None:
             nonlocal eval_metrics
+            nonlocal best_metric_value, best_metric_step, best_checkpoint_path
             if evaluator is None:
                 return
             if int(jax.process_index()) != 0:
@@ -419,6 +467,18 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             )
             eval_metrics = metrics
 
+            if bool(cfg.train.save_best):
+                value = _get_best_metric_value(metrics)
+                improved = best_metric_value is None or value > float(best_metric_value)
+                if improved:
+                    best_metric_value = float(value)
+                    best_metric_step = int(step)
+                    best_checkpoint_path = save_checkpoint(output_dir=cfg.output_dir, state=st, name="best")
+                    print(
+                        f"[eval] new best {best_metric_name}={best_metric_value:.6f} at step={int(step)} "
+                        f"-> {best_checkpoint_path}"
+                    )
+
             if wandb is not None:
                 log = {"eval/epoch": epoch}
                 for k, v in metrics.hr.items():
@@ -426,6 +486,10 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
                 for k, v in metrics.ndcg.items():
                     log[f"eval/ndcg@{k}"] = v
                 log["eval/invalid_prediction_count"] = metrics.invalid_prediction_count
+                if best_metric_value is not None:
+                    log["eval/best_metric_value"] = float(best_metric_value)
+                if best_metric_step is not None:
+                    log["eval/best_metric_step"] = int(best_metric_step)
                 wandb.log(log, step=int(step))
 
         state, train_stats = run_sft_train(
@@ -555,6 +619,14 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
         "vocab_resize": asdict(vocab_resize),
         "train": asdict(train_stats) if train_stats else None,
         "eval": asdict(eval_metrics) if eval_metrics else None,
+        "best_checkpoint": {
+            "metric": str(best_metric_name),
+            "value": best_metric_value,
+            "step": best_metric_step,
+            "path": best_checkpoint_path,
+        }
+        if bool(getattr(cfg.train, "save_best", False))
+        else None,
     }
 
 

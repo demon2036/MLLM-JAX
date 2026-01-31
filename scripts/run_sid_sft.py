@@ -156,6 +156,10 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
         save_steps=int(_get_or_default(cfg, "train.save_steps", DEFAULT_CONFIG["train"]["save_steps"])),
         save_total_limit=int(_get_or_default(cfg, "train.save_total_limit", DEFAULT_CONFIG["train"]["save_total_limit"])),
         save_last=bool(_get_or_default(cfg, "train.save_last", DEFAULT_CONFIG["train"].get("save_last", True))),
+        save_best=bool(_get_or_default(cfg, "train.save_best", DEFAULT_CONFIG["train"].get("save_best", False))),
+        save_best_metric=str(
+            _get_or_default(cfg, "train.save_best_metric", DEFAULT_CONFIG["train"].get("save_best_metric") or "ndcg@10")
+        ),
         group_by_length=bool(_get_or_default(cfg, "train.group_by_length", DEFAULT_CONFIG["train"]["group_by_length"])),
         freeze_LLM=bool(_get_or_default(cfg, "train.freeze_LLM", DEFAULT_CONFIG["train"]["freeze_LLM"])),
         train_from_scratch=bool(_get_or_default(cfg, "train.train_from_scratch", DEFAULT_CONFIG["train"]["train_from_scratch"])),
@@ -167,6 +171,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
 
     eval_cfg = SidSftEvalConfig(
         enabled=bool(_get_by_path(cfg, "eval.enabled") if _get_by_path(cfg, "eval.enabled") is not None else DEFAULT_CONFIG["eval"]["enabled"]),
+        split=str(_get_or_default(cfg, "eval.split", DEFAULT_CONFIG["eval"].get("split") or "test")),
         batch_size=int(_get_or_default(cfg, "eval.batch_size", DEFAULT_CONFIG["eval"]["batch_size"])),
         num_beams=int(_get_or_default(cfg, "eval.num_beams", DEFAULT_CONFIG["eval"]["num_beams"])),
         max_new_tokens=int(_get_or_default(cfg, "eval.max_new_tokens", DEFAULT_CONFIG["eval"]["max_new_tokens"])),

@@ -70,6 +70,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "save_total_limit": 1,
         # If false, the JAX backend won't write `sft_state_last.msgpack`.
         "save_last": True,
+        # If true, save the best checkpoint (as `sft_state_best.msgpack`) according to
+        # constrained-decoding eval metrics computed on `eval.split`.
+        "save_best": False,
+        # Metric name used for "best" selection. Examples: "ndcg@10", "hr@10".
+        "save_best_metric": "ndcg@10",
         "group_by_length": False,
         "freeze_LLM": False,
         "train_from_scratch": False,
@@ -81,6 +86,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "eval": {
         "enabled": True,
+        # Which split to use for constrained-decoding evaluation: "test" (default) or "eval" (validation).
+        "split": "test",
         "batch_size": 4,
         "num_beams": 50,
         "max_new_tokens": 64,

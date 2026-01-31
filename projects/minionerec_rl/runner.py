@@ -130,6 +130,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     import math
 
     import flax
+    from flax.training import train_state
     import jax
     import jax.numpy as jnp
     from jax.sharding import NamedSharding
@@ -257,7 +258,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             beta=float(cfg.train.beta),
         )
 
-        class _TrainState(flax.training.train_state.TrainState):
+        class _TrainState(train_state.TrainState):
             micro_step: int = 0
             micro_in_mini: int = 1
             grad_accum: Any | None = None

@@ -37,7 +37,7 @@ rollout:
 train:
   num_train_epochs: 0.0
   max_steps: 100
-  grad_accum_steps: 1
+  grad_accum_steps: 16
   ppo_steps: 1
   beta: 0.001
   logging_steps: 10
@@ -67,4 +67,3 @@ wandb:
   project: minionerec-sid-rl
   mode: online
   name: null
-

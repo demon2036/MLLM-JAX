@@ -157,8 +157,12 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
     from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 
     from projects.sid_sft.jax.beam_search import constrained_beam_search_sid3_prefill
+    from plugins.sample.optimizations import patch_qwen2_attention_decode_fast
     from plugins.training.core.mesh.mesh import create_mesh
     from plugins.training.core.step.train_step import training_step
+
+    # Performance: avoid slow float32 matmuls in decode attention path on TPU.
+    patch_qwen2_attention_decode_fast()
 
     def parse_dtype(name: str) -> Any:
         n = str(name or "float32").strip().lower()

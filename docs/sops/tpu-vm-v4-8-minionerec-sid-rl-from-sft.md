@@ -68,6 +68,19 @@
   - HR@K: 1=`0.08317`, 3=`0.10611`, 5=`0.12199`, 10=`0.15067`, 20=`0.18619`, 50=`0.24311`
   - NDCG@K: 1=`0.08317`, 3=`0.09626`, 5=`0.10266`, 10=`0.11183`, 20=`0.12087`, 50=`0.13217`
 
+## Run 3: pb32 batch semantics aligned with upstream (unique prompts per step)
+
+- Repo branch/commit: `nano-gpt-sft` @ `af0b0f7`
+- Config:
+  - `projects/minionerec_rl/configs/v4-8/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps100_pb32_align_minionerec_rl_sh_20260131.yaml`
+- W&B run: `johntitordemon2036/minionerec-sid-rl/runs/gkobyl1b` (mode=online)
+  - Logs include per-reward means: `train/reward_rule_mean`, `train/reward_ndcg_mean`, `train/reward_mean`
+- Output dir:
+  - `runs/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps100_pb32_align_minionerec_rl_sh_20260131/`
+- Eval (samples=4533, invalid=0):
+  - HR@K: 1=`0.08317`, 3=`0.10523`, 5=`0.12067`, 10=`0.15067`, 20=`0.18575`, 50=`0.23980`
+  - NDCG@K: 1=`0.08317`, 3=`0.09584`, 5=`0.10213`, 10=`0.11177`, 20=`0.12062`, 50=`0.13132`
+
 ## Cleanup
 
 - Per task requirement, this run did **not** delete the TPU VM.

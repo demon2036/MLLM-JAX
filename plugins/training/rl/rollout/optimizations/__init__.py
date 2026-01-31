@@ -1,5 +1,9 @@
 from __future__ import annotations
 
-from plugins.sample.optimizations import patch_sampler_generate_fast, patch_qwen2_attention_decode_fast
+"""Compatibility re-export for rollout-time sampler optimizations.
 
-__all__ = ["patch_sampler_generate_fast", "patch_qwen2_attention_decode_fast"]
+Canonical location: `plugins.sample.optimizations`.
+"""
+
+from plugins.sample.optimizations import *  # noqa: F403
+from plugins.sample.optimizations import __all__  # type: ignore  # noqa: E402,F401

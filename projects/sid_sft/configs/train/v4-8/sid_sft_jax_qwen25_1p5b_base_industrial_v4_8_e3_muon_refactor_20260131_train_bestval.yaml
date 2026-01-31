@@ -66,6 +66,7 @@ train:
 eval:
   enabled: true
   split: eval
+  use_best_checkpoint: true
   batch_size: 4
   num_beams: 20
   max_new_tokens: 32
@@ -80,4 +81,3 @@ wandb:
   project: minionerec-sid-sft
   mode: online
   name: null
-

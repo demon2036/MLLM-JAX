@@ -172,6 +172,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
     eval_cfg = SidSftEvalConfig(
         enabled=bool(_get_by_path(cfg, "eval.enabled") if _get_by_path(cfg, "eval.enabled") is not None else DEFAULT_CONFIG["eval"]["enabled"]),
         split=str(_get_or_default(cfg, "eval.split", DEFAULT_CONFIG["eval"].get("split") or "test")),
+        use_best_checkpoint=bool(_get_or_default(cfg, "eval.use_best_checkpoint", DEFAULT_CONFIG["eval"].get("use_best_checkpoint", False))),
         batch_size=int(_get_or_default(cfg, "eval.batch_size", DEFAULT_CONFIG["eval"]["batch_size"])),
         num_beams=int(_get_or_default(cfg, "eval.num_beams", DEFAULT_CONFIG["eval"]["num_beams"])),
         max_new_tokens=int(_get_or_default(cfg, "eval.max_new_tokens", DEFAULT_CONFIG["eval"]["max_new_tokens"])),

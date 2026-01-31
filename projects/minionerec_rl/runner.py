@@ -482,6 +482,15 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                 reward_mean = float(np.mean(rewards)) if rewards.size else float("nan")
                 reward_rule_mean = float(np.mean(rewards_rule)) if rewards_rule.size else float("nan")
                 reward_ndcg_mean = float(np.mean(rewards_ndcg)) if rewards_ndcg.size else float("nan")
+                reward_std = (
+                    float(np.mean(np.std(rewards.reshape(prompt_batch, k), axis=1))) if rewards.size else float("nan")
+                )
+                cate_diversity = (
+                    float(np.mean([len(set(group)) / float(k) for group in preds_grouped])) if preds_grouped else float("nan")
+                )
+                tok_flat = completion_flat.reshape(-1)
+                tok_flat = tok_flat[tok_flat != pad_token_id]
+                token_diversity = float(len(np.unique(tok_flat)) / len(tok_flat)) if tok_flat.size else float("nan")
                 pass_at_1 = float(np.mean(correct.reshape(prompt_batch, k)[:, 0])) if correct.size else float("nan")
                 pass_at_k = float(np.mean(np.max(correct.reshape(prompt_batch, k), axis=1))) if correct.size else float("nan")
                 if jax.process_index() == 0:
@@ -493,14 +502,25 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                         f"pass@1={pass_at_1:.4f} pass@K={pass_at_k:.4f}"
                     )
                     if wandb is not None:
+                        completions_per_step = int(prompt_batch) * int(k)
                         wandb.log(
                             {
                                 "train/loss": last_loss,
                                 "train/kl": kl,
                                 "train/completion_length": completion_length,
+                                "train/prompt_batch_size": int(prompt_batch),
+                                "train/num_generations": int(k),
+                                "train/completions_per_step": completions_per_step,
+                                "train/grad_accum_steps": int(cfg.train.grad_accum_steps),
                                 "train/reward_mean": reward_mean,
                                 "train/reward_rule_mean": reward_rule_mean,
                                 "train/reward_ndcg_mean": reward_ndcg_mean,
+                                "reward": reward_mean,
+                                "reward_std": reward_std,
+                                "rewards/rule_reward": reward_rule_mean,
+                                "rewards/ndcg_rule_reward": reward_ndcg_mean,
+                                "categorical_diversity": cate_diversity,
+                                "token_diversity": token_diversity,
                                 "train/pass@1": pass_at_1,
                                 "train/pass@K": pass_at_k,
                             },

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from plugins.sample.sampling import build_chat_prompts, generate_answers_and_training_batch
+"""Compatibility re-export for GRPO-style synchronous rollout workflow.
 
-__all__ = ["build_chat_prompts", "generate_answers_and_training_batch"]
+Canonical location: `plugins.sample.sampling`.
+"""
 
+from plugins.sample.sampling import *  # noqa: F403
+from plugins.sample.sampling import __all__  # type: ignore  # noqa: E402,F401

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from plugins.sample.batching import ceil_div, infer_rollout_passes, round_up_passes_for_divisibility
+"""Compatibility re-export for rollout batching utilities.
 
-__all__ = [
-    "ceil_div",
-    "infer_rollout_passes",
-    "round_up_passes_for_divisibility",
-]
+Canonical location: `plugins.sample.batching`.
+"""
 
+from plugins.sample.batching import *  # noqa: F403
+from plugins.sample.batching import __all__  # type: ignore  # noqa: E402,F401

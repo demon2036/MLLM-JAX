@@ -88,6 +88,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enabled": True,
         # Which split to use for constrained-decoding evaluation: "test" (default) or "eval" (validation).
         "split": "test",
+        # If true and `train.save_best=true`, `train_eval` will evaluate the best checkpoint.
+        "use_best_checkpoint": False,
         "batch_size": 4,
         "num_beams": 50,
         "max_new_tokens": 64,

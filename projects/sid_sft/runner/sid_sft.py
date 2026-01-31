@@ -103,6 +103,12 @@ class SidSftEvalConfig:
     # - "test": use `data.test_file` (default; preserves historical behavior)
     # - "eval": use `data.eval_file` (validation)
     split: str = "test"
+    # If enabled and `train.save_best=true`, `train_eval` will load and evaluate
+    # the best checkpoint saved during training (instead of the last-step params).
+    #
+    # When `train.save_best=false` (or the best checkpoint does not exist), this
+    # flag is ignored and evaluation uses last-step params.
+    use_best_checkpoint: bool = False
     batch_size: int = 4
     num_beams: int = 50
     max_new_tokens: int = 64
@@ -545,6 +551,18 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
     # For non-eval-only runs, allow eval to use a checkpoint if no trained state is available.
     if state is None and cfg.train.resume_from_checkpoint and not loaded_from_checkpoint:
         payload = load_checkpoint(str(cfg.train.resume_from_checkpoint))
+        ckpt_params = payload.get("params")
+        if ckpt_params is not None:
+            ckpt_params = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), ckpt_params)
+            eval_params = jax.tree_util.tree_map(lambda x, sh: jax.device_put(jnp.asarray(x, dtype=param_dtype), sh), ckpt_params, shardings)
+    if (
+        run_mode_norm == "train_eval"
+        and cfg.eval.enabled
+        and bool(getattr(cfg.eval, "use_best_checkpoint", False))
+        and best_checkpoint_path is not None
+        and os.path.exists(best_checkpoint_path)
+    ):
+        payload = load_checkpoint(best_checkpoint_path)
         ckpt_params = payload.get("params")
         if ckpt_params is not None:
             ckpt_params = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), ckpt_params)

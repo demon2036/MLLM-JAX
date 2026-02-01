@@ -32,7 +32,7 @@ jax:
 
 rollout:
   prompt_batch_size: 256
-  prompt_micro_batch_size: 32
+  prompt_micro_batch_size: 64
   num_generations: 16
   prompt_pad_len: 256
   global_length: 512
@@ -81,4 +81,3 @@ wandb:
   project: minionerec-sid-rl
   mode: online
   name: null
-

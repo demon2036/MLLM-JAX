@@ -178,11 +178,11 @@ def _grpo_fused_forward_pallas_with_intermediates(
 
     # Flatten token-major to make the token block axis contiguous.
     logits_flat = logits.reshape((num_tokens, vocab_size))
-    ids_flat = completion_ids.reshape((num_tokens,))
-    old_logp_flat = old_logp.reshape((num_tokens,))
-    ref_logp_flat = ref_logp.reshape((num_tokens,))
-    mask_flat = completion_mask.reshape((num_tokens,))
-    adv_flat = jnp.broadcast_to(advantages[:, None], (bsz, seq_len)).reshape((num_tokens,))
+    ids_flat = completion_ids.reshape((num_tokens, 1))
+    old_logp_flat = old_logp.reshape((num_tokens, 1))
+    ref_logp_flat = ref_logp.reshape((num_tokens, 1))
+    mask_flat = completion_mask.reshape((num_tokens, 1))
+    adv_flat = jnp.broadcast_to(advantages[:, None], (bsz, seq_len)).reshape((num_tokens, 1))
 
     token_blocks = _ceil_div(num_tokens, BLOCK_T)
     vocab_blocks = _ceil_div(vocab_size, BLOCK_V)
@@ -217,7 +217,7 @@ def _grpo_fused_forward_pallas_with_intermediates(
         one_f = jnp.asarray(1.0, dtype=jnp.float32)
 
         t_start = pid_t * BLOCK_T
-        rows = t_start + jnp.arange(BLOCK_T, dtype=jnp.int32)
+        rows = t_start + jnp.arange(BLOCK_T, dtype=jnp.int32)[:, None]
         t_in_bounds = rows < num_tokens
         t_in_bounds_i32 = jax.lax.select(
             t_in_bounds,
@@ -228,7 +228,7 @@ def _grpo_fused_forward_pallas_with_intermediates(
         v_start = pid_v * BLOCK_V
 
         # Load current vocab tile and mask out padded tail.
-        cols = v_start + jnp.arange(BLOCK_V, dtype=jnp.int32)
+        cols = v_start + jnp.arange(BLOCK_V, dtype=jnp.int32)[None, :]
         v_in_bounds = cols < vocab_size
         v_in_bounds_i32 = jax.lax.select(
             v_in_bounds,
@@ -236,8 +236,8 @@ def _grpo_fused_forward_pallas_with_intermediates(
             jnp.zeros_like(cols, dtype=jnp.int32),
         )
 
-        tv_mask_i32 = jnp.broadcast_to(t_in_bounds_i32[:, None], (BLOCK_T, BLOCK_V))
-        v_mask_i32 = jnp.broadcast_to(v_in_bounds_i32[None, :], (BLOCK_T, BLOCK_V))
+        tv_mask_i32 = jnp.broadcast_to(t_in_bounds_i32, (BLOCK_T, BLOCK_V))
+        v_mask_i32 = jnp.broadcast_to(v_in_bounds_i32, (BLOCK_T, BLOCK_V))
         active_mask = (tv_mask_i32 != 0) & (v_mask_i32 != 0)
 
         logits_block = jnp.asarray(logits_ref[...])
@@ -250,9 +250,9 @@ def _grpo_fused_forward_pallas_with_intermediates(
 
         @pl.when(pid_v == 0)
         def _init_state():
-            m_scratch_ref[...] = jnp.full((BLOCK_T,), -jnp.inf, dtype=jnp.float32)
-            l_scratch_ref[...] = jnp.zeros((BLOCK_T,), dtype=jnp.float32)
-            token_logit_scratch_ref[...] = jnp.full((BLOCK_T,), -jnp.inf, dtype=jnp.float32)
+            m_scratch_ref[...] = jnp.full((BLOCK_T, 1), -jnp.inf, dtype=jnp.float32)
+            l_scratch_ref[...] = jnp.zeros((BLOCK_T, 1), dtype=jnp.float32)
+            token_logit_scratch_ref[...] = jnp.full((BLOCK_T, 1), -jnp.inf, dtype=jnp.float32)
 
         m_prev = jnp.asarray(m_scratch_ref[...]).astype(jnp.float32)
         l_prev = jnp.asarray(l_scratch_ref[...]).astype(jnp.float32)
@@ -265,11 +265,17 @@ def _grpo_fused_forward_pallas_with_intermediates(
         l_prev = jax.lax.select(t_in_bounds, l_prev, jnp.zeros_like(l_prev))
         token_prev = jax.lax.select(t_in_bounds, token_prev, jnp.zeros_like(token_prev))
 
-        block_m = jnp.max(logits_tile, axis=1)
+        # NOTE: TPU v4 Mosaic: avoid rank-1 vectors. keepdims keeps the
+        # reduction output at shape (BLOCK_T, 1) and compiles reliably.
+        block_m = jnp.max(logits_tile, axis=1, keepdims=True)
         block_m = jax.lax.select(t_in_bounds, block_m, jnp.zeros_like(block_m))
         m_next = jnp.maximum(m_prev, block_m)
         alpha = jnp.exp(m_prev - m_next)
-        l_next = l_prev * alpha + jnp.sum(jnp.exp(logits_tile - m_next[:, None]), axis=1)
+        l_next = l_prev * alpha + jnp.sum(
+            jnp.exp(logits_tile - m_next),
+            axis=1,
+            keepdims=True,
+        )
 
         # Update accumulators for the next vocab block.
         m_scratch_ref[...] = m_next
@@ -283,11 +289,12 @@ def _grpo_fused_forward_pallas_with_intermediates(
         ar = jnp.arange(BLOCK_V, dtype=jnp.int32)[None, :]
         selected = jnp.max(
             jax.lax.select(
-                ar == local_idx[:, None],
+                ar == local_idx,
                 logits_tile,
                 jnp.full_like(logits_tile, -jnp.inf),
             ),
             axis=1,
+            keepdims=True,
         )
         token_logit = jax.lax.select(in_block, selected, token_prev)
         token_logit_scratch_ref[...] = token_logit
@@ -357,16 +364,16 @@ def _grpo_fused_forward_pallas_with_intermediates(
             )
 
     out_shape = (
-        jax.ShapeDtypeStruct((num_tokens,), dtype=jnp.float32),  # m
-        jax.ShapeDtypeStruct((num_tokens,), dtype=jnp.float32),  # l
-        jax.ShapeDtypeStruct((num_tokens,), dtype=jnp.float32),  # token_logit
-        jax.ShapeDtypeStruct((num_tokens,), dtype=jnp.float32),  # loss
-        jax.ShapeDtypeStruct((num_tokens,), dtype=jnp.float32),  # kl
-        jax.ShapeDtypeStruct((num_tokens,), dtype=jnp.int32),  # is_clipped
+        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.float32),  # m
+        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.float32),  # l
+        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.float32),  # token_logit
+        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.float32),  # loss
+        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.float32),  # kl
+        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.int32),  # is_clipped
     )
 
     logits_spec = pl.BlockSpec((BLOCK_T, BLOCK_V), lambda pid_t, pid_v: (pid_t, pid_v))
-    token_spec = pl.BlockSpec((BLOCK_T,), lambda pid_t, pid_v: (pid_t,))
+    token_spec = pl.BlockSpec((BLOCK_T, 1), lambda pid_t, pid_v: (pid_t, 0))
 
     call = pl.pallas_call(
         kernel,
@@ -376,9 +383,9 @@ def _grpo_fused_forward_pallas_with_intermediates(
             in_specs=[logits_spec, token_spec, token_spec, token_spec, token_spec, token_spec],
             out_specs=[token_spec] * 6,
             scratch_shapes=[
-                pltpu.VMEM((BLOCK_T,), jnp.float32),  # m
-                pltpu.VMEM((BLOCK_T,), jnp.float32),  # l
-                pltpu.VMEM((BLOCK_T,), jnp.float32),  # token_logit
+                pltpu.VMEM((BLOCK_T, 1), jnp.float32),  # m
+                pltpu.VMEM((BLOCK_T, 1), jnp.float32),  # l
+                pltpu.VMEM((BLOCK_T, 1), jnp.float32),  # token_logit
             ],
         ),
         out_shape=out_shape,
@@ -388,7 +395,7 @@ def _grpo_fused_forward_pallas_with_intermediates(
         ),
     )
 
-    m_flat, l_flat, token_logit_flat, loss_flat, kl_flat, clipped_flat = call(
+    m_flat_2d, l_flat_2d, token_logit_flat_2d, loss_flat_2d, kl_flat_2d, clipped_flat_2d = call(
         logits_flat,
         ids_flat,
         old_logp_flat,
@@ -396,6 +403,13 @@ def _grpo_fused_forward_pallas_with_intermediates(
         adv_flat,
         mask_flat,
     )
+
+    m_flat = jnp.squeeze(m_flat_2d, axis=1)
+    l_flat = jnp.squeeze(l_flat_2d, axis=1)
+    token_logit_flat = jnp.squeeze(token_logit_flat_2d, axis=1)
+    loss_flat = jnp.squeeze(loss_flat_2d, axis=1)
+    kl_flat = jnp.squeeze(kl_flat_2d, axis=1)
+    clipped_flat = jnp.squeeze(clipped_flat_2d, axis=1)
 
     loss = loss_flat.reshape((bsz, seq_len))
     kl = kl_flat.reshape((bsz, seq_len))
@@ -453,12 +467,18 @@ def _grpo_fused_backward_pallas(
     num_tokens = bsz * seq_len
 
     logits_flat = logits_tokens.reshape((num_tokens, vocab_size))
-    ids_flat = completion_ids.reshape((num_tokens,))
-    old_logp_flat = old_logp.reshape((num_tokens,))
-    ref_logp_flat = ref_logp.reshape((num_tokens,))
-    mask_flat = completion_mask.reshape((num_tokens,))
-    dloss_flat = dloss.reshape((num_tokens,))
-    adv_flat = jnp.broadcast_to(advantages[:, None], (bsz, seq_len)).reshape((num_tokens,))
+    ids_flat = completion_ids.reshape((num_tokens, 1))
+    old_logp_flat = old_logp.reshape((num_tokens, 1))
+    ref_logp_flat = ref_logp.reshape((num_tokens, 1))
+    mask_flat = completion_mask.reshape((num_tokens, 1))
+    dloss_flat = dloss.reshape((num_tokens, 1))
+    adv_flat = jnp.broadcast_to(advantages[:, None], (bsz, seq_len)).reshape((num_tokens, 1))
+
+    # TPU v4 Mosaic: keep per-token intermediates as (num_tokens, 1) so the
+    # kernel avoids rank-1 vectors (which can trigger sublane-gather lowering).
+    m_flat = m_flat.reshape((num_tokens, 1))
+    l_flat = l_flat.reshape((num_tokens, 1))
+    token_logit_flat = token_logit_flat.reshape((num_tokens, 1))
 
     token_blocks = _ceil_div(num_tokens, BLOCK_T)
     vocab_blocks = _ceil_div(vocab_size, BLOCK_V)
@@ -488,7 +508,7 @@ def _grpo_fused_backward_pallas(
         one_f = jnp.asarray(1.0, dtype=jnp.float32)
 
         t_start = pid_t * BLOCK_T
-        rows = t_start + jnp.arange(BLOCK_T, dtype=jnp.int32)
+        rows = t_start + jnp.arange(BLOCK_T, dtype=jnp.int32)[:, None]
         t_in_bounds = rows < num_tokens
         t_in_bounds_i32 = jax.lax.select(
             t_in_bounds,
@@ -497,14 +517,14 @@ def _grpo_fused_backward_pallas(
         )
 
         v_start = pid_v * BLOCK_V
-        cols = v_start + jnp.arange(BLOCK_V, dtype=jnp.int32)
+        cols = v_start + jnp.arange(BLOCK_V, dtype=jnp.int32)[None, :]
         v_in_bounds = cols < vocab_size
         v_in_bounds_i32 = jax.lax.select(
             v_in_bounds,
             jnp.ones_like(cols, dtype=jnp.int32),
             jnp.zeros_like(cols, dtype=jnp.int32),
         )
-        v_mask_i32 = jnp.broadcast_to(v_in_bounds_i32[None, :], (BLOCK_T, BLOCK_V))
+        v_mask_i32 = jnp.broadcast_to(v_in_bounds_i32, (BLOCK_T, BLOCK_V))
 
         # Per-token inputs.
         token_ids = jnp.asarray(ids_ref[...]).astype(jnp.int32)
@@ -529,7 +549,7 @@ def _grpo_fused_backward_pallas(
         # which can trigger unsupported Mosaic shape-casts on TPU v6e.
         row_active_i32 = keep_i32 * t_in_bounds_i32
         row_active = row_active_i32 != 0
-        row_mask_i32 = jnp.broadcast_to(row_active_i32[:, None], (BLOCK_T, BLOCK_V))
+        row_mask_i32 = jnp.broadcast_to(row_active_i32, (BLOCK_T, BLOCK_V))
         active_mask = (row_mask_i32 != 0) & (v_mask_i32 != 0)
 
         # Zero out non-active scalars to keep exp() finite.
@@ -566,18 +586,19 @@ def _grpo_fused_backward_pallas(
             jnp.full_like(logits_tile, -jnp.inf),
         )
 
-        probs = jnp.exp(logits_tile - lse[:, None])
-        one_hot = (token_ids[:, None] == cols[None, :]) & active_mask
+        lse_safe = jax.lax.select(row_active, lse, jnp.zeros_like(lse))
+        probs = jnp.exp(logits_tile - lse_safe)
+        one_hot = (token_ids == cols) & active_mask
         one_hot_f32 = jax.lax.select(
             one_hot,
             jnp.ones_like(probs, dtype=jnp.float32),
             jnp.zeros_like(probs, dtype=jnp.float32),
         )
-        grad_f32 = (one_hot_f32 - probs) * scale[:, None]
+        grad_f32 = (one_hot_f32 - probs) * scale
         dlogits_ref[...] = grad_f32.astype(logits_block.dtype)
 
     logits_spec = pl.BlockSpec((BLOCK_T, BLOCK_V), lambda pid_t, pid_v: (pid_t, pid_v))
-    token_spec = pl.BlockSpec((BLOCK_T,), lambda pid_t, pid_v: (pid_t,))
+    token_spec = pl.BlockSpec((BLOCK_T, 1), lambda pid_t, pid_v: (pid_t, 0))
 
     out_shape = jax.ShapeDtypeStruct((num_tokens, vocab_size), dtype=logits.dtype)
     call = pl.pallas_call(

@@ -24,7 +24,13 @@ class TrainSftModule(nn.Module):
         attention_mask = inputs["attention_mask"]
         labels = inputs["labels"]
 
-        logits, _cache = self.model(input_ids=input_ids, attention_mask=attention_mask)
+        # HF-style position_ids derived from attention_mask:
+        # - Works for both left- and right-padding
+        # - Ensures the first non-pad token always has position_id=0
+        pos = jnp.cumsum(attention_mask.astype(jnp.int32), axis=1) - 1
+        position_ids = jnp.where(attention_mask.astype(bool), pos, 0).astype(jnp.int32)
+
+        logits, _cache = self.model(input_ids=input_ids, attention_mask=attention_mask, position_ids=position_ids, cache=None)
         # Shift for next-token prediction (matches HF causal LM loss).
         shift_logits = logits[:, :-1, :]
         shift_labels = labels[:, 1:]
@@ -46,4 +52,3 @@ class TrainSftModule(nn.Module):
 
 
 __all__ = ["TrainSftModule"]
-

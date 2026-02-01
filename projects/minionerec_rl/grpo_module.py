@@ -28,13 +28,17 @@ class MiniOneRecGrpoModule(nn.Module):
         attention_mask = inputs["attention_mask"]
         labels = inputs["labels"]
 
-        logits, _cache = self.model(input_ids=input_ids, attention_mask=attention_mask)
+        # HF-style position_ids derived from attention_mask (robust to padding_side).
+        pos = jnp.cumsum(attention_mask.astype(jnp.int32), axis=1) - 1
+        position_ids = jnp.where(attention_mask.astype(bool), pos, 0).astype(jnp.int32)
+
+        logits, _cache = self.model(input_ids=input_ids, attention_mask=attention_mask, position_ids=position_ids, cache=None)
 
         ref_logits = None
         if float(self.beta) != 0.0:
             if self.ref_model is None:
                 raise ValueError("beta != 0 requires ref_model")
-            ref_logits, _ref_cache = self.ref_model(input_ids=input_ids, attention_mask=attention_mask)
+            ref_logits, _ref_cache = self.ref_model(input_ids=input_ids, attention_mask=attention_mask, position_ids=position_ids, cache=None)
             ref_logits = jax.lax.stop_gradient(ref_logits)
 
         chosen_ids = input_ids[:, 1:]

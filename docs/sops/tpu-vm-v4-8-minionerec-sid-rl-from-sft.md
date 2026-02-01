@@ -132,6 +132,52 @@
   - HR@K: 3=`0.11231`, 5=`0.12732`, 10=`0.14850`
   - NDCG@K: 3=`0.10218`, 5=`0.10827`, 10=`0.11506`
 
+## Run 7: RL pb256 (per-device~64) via rollout micro-batching (2026-02-01)
+
+- Repo branch/commit: `nano-gpt-sft` @ `aeacf9c`
+- Background:
+  - Upstream `workdir/MiniOneRec/rl.sh` uses `train_batch_size=64`, `gradient_accumulation_steps=2`, `num_train_epochs=2`,
+    `reward_type=ranking`, `num_generations=16`, `sync_ref_model=True`, `beam_search=True`, `learning_rate=1e-5`, `beta=1e-3`.
+  - On TPU v4-8 (JAX `device_count=4`), we run `rollout.prompt_batch_size=256` so each device sees ~64 prompts after sharding.
+  - Constrained decoding is chunked with `rollout.prompt_micro_batch_size=64`.
+
+### 7.1) Train+Eval (RL, steps=20 smoke)
+
+- Config:
+  - `projects/minionerec_rl/configs/v4-8/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps20_pb256_ga2_mix_sync1_evalvalid_beam20_from_sft_rightpad_best_meshauto_20260201.yaml`
+- Command:
+  - `./scripts/ssh_tpu_vm_root.sh --name plugins-refactor-sid-sft-muon-260131052355 --zone us-central2-b --project civil-rarity-482610-s5 --env-file /root/.env --command 'bash -lc \"source /root/miniconda3/etc/profile.d/conda.sh && conda activate mllm-jax && cd /root/MLLM-JAX && rm -rf runs/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps20_pb256_ga2_mix_sync1_evalvalid_beam20_from_sft_rightpad_best_meshauto_20260201 && mkdir -p runs/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps20_pb256_ga2_mix_sync1_evalvalid_beam20_from_sft_rightpad_best_meshauto_20260201 && PYTHONUNBUFFERED=1 bash scripts/run_minionerec_rl.sh --config projects/minionerec_rl/configs/v4-8/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps20_pb256_ga2_mix_sync1_evalvalid_beam20_from_sft_rightpad_best_meshauto_20260201.yaml --run-mode train_eval 2>&1 | tee runs/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps20_pb256_ga2_mix_sync1_evalvalid_beam20_from_sft_rightpad_best_meshauto_20260201/tpu_train_eval.log\"'`
+- Output dir:
+  - `runs/minionerec_rl_jax_qwen25_1p5b_base_industrial_v4_8_steps20_pb256_ga2_mix_sync1_evalvalid_beam20_from_sft_rightpad_best_meshauto_20260201/`
+- Artifacts:
+  - `.../sft_state_rl_best.msgpack`
+  - `.../sft_state_rl_last.msgpack`
+  - `.../eval_predictions.metrics.json` (valid split)
+- W&B run: `johntitordemon2036/minionerec-sid-rl/runs/p9h4zfus` (mode=online)
+- Eval (valid split, beams=20, samples=4532, invalid=0):
+  - HR@K: 3=`0.11540`, 5=`0.13085`, 10=`0.15313`, 20=`0.17939`
+  - NDCG@K: 3=`0.10489`, 5=`0.11122`, 10=`0.11843`, 20=`0.12505`
+
+### 7.2) Eval on TEST split from the RL best checkpoint
+
+- Config:
+  - `projects/minionerec_rl/configs/v4-8/minionerec_rl_eval_test_beam20_from_steps20_rl_best_pb256_20260201.yaml`
+- Command:
+  - `./scripts/ssh_tpu_vm_root.sh --name plugins-refactor-sid-sft-muon-260131052355 --zone us-central2-b --project civil-rarity-482610-s5 --env-file /root/.env --command 'bash -lc \"source /root/miniconda3/etc/profile.d/conda.sh && conda activate mllm-jax && cd /root/MLLM-JAX && rm -rf runs/minionerec_rl_eval_test_beam20_from_steps20_rl_best_pb256_20260201 && mkdir -p runs/minionerec_rl_eval_test_beam20_from_steps20_rl_best_pb256_20260201 && PYTHONUNBUFFERED=1 bash scripts/run_minionerec_rl.sh --config projects/minionerec_rl/configs/v4-8/minionerec_rl_eval_test_beam20_from_steps20_rl_best_pb256_20260201.yaml --run-mode eval 2>&1 | tee runs/minionerec_rl_eval_test_beam20_from_steps20_rl_best_pb256_20260201/tpu_eval.log\"'`
+- Output dir:
+  - `runs/minionerec_rl_eval_test_beam20_from_steps20_rl_best_pb256_20260201/`
+- W&B run: `johntitordemon2036/minionerec-sid-rl/runs/1l1tyveq` (mode=online)
+- Eval (test split, beams=20, samples=4533, invalid=0):
+  - HR@K: 3=`0.10854`, 5=`0.12663`, 10=`0.15288`, 20=`0.18795`
+  - NDCG@K: 3=`0.09528`, 5=`0.10272`, 10=`0.11130`, 20=`0.12017`
+
+### Troubleshooting: "TPU is already in use by process pid=..."
+
+- Find active RL processes:
+  - `./scripts/ssh_tpu_vm_root.sh --name plugins-refactor-sid-sft-muon-260131052355 --zone us-central2-b --command 'ps -eo pid,cmd | grep run_minionerec_rl.py | grep -v grep || true'`
+- Kill the stuck process tree (replace PIDs):
+  - `./scripts/ssh_tpu_vm_root.sh --name plugins-refactor-sid-sft-muon-260131052355 --zone us-central2-b --command 'kill -9 <PID1> <PID2> <PID3> <PID4> 2>/dev/null || true'`
+
 ## Cleanup
 
 - Per task requirement, this run did **not** delete the TPU VM.

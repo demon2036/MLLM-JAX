@@ -364,7 +364,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
 
         data_sharding_2d = NamedSharding(mesh, P(("dp", "fsdp"), None))
         data_sharding_1d = NamedSharding(mesh, P(("dp", "fsdp"),))
-        train_step_fn = jax.jit(training_step, donate_argnums=(0,), out_shardings=(state_shardings, None))
+        train_step_fn = jax.jit(training_step, out_shardings=(state_shardings, None))
 
         rank_penalties = build_rank_penalties(k)
         indices = list(range(len(train_dataset)))

@@ -37,6 +37,54 @@ def create_mesh_from_config(mesh_shape: str) -> Mesh:
     return create_mesh(str(mesh_shape))
 
 
+def _iter_fixed_batch_indices(
+    *,
+    n: int,
+    batch_size: int,
+    seed: int,
+    shuffle: bool,
+    drop_last: bool,
+):
+    n = int(n)
+    batch_size = int(batch_size)
+    if n <= 0:
+        raise ValueError("n must be > 0")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be > 0")
+    if bool(drop_last) and n < batch_size:
+        raise ValueError(f"drop_last=true requires n >= batch_size (n={n}, batch_size={batch_size})")
+
+    epoch = 0
+    indices = iter_indices(n=n, seed=seed, shuffle=bool(shuffle))
+    cursor = 0
+
+    while True:
+        if cursor + batch_size <= n:
+            out = indices[cursor : cursor + batch_size]
+            cursor += batch_size
+            yield out
+            continue
+
+        if bool(drop_last):
+            epoch += 1
+            indices = iter_indices(n=n, seed=seed + epoch, shuffle=bool(shuffle))
+            cursor = 0
+            continue
+
+        # Pad the last batch by wrapping into the next epoch (DistributedSampler-style
+        # semantics; avoids silently dropping tail data).
+        batch: list[int] = []
+        while len(batch) < batch_size:
+            if cursor >= n:
+                epoch += 1
+                indices = iter_indices(n=n, seed=seed + epoch, shuffle=bool(shuffle))
+                cursor = 0
+            take = min(batch_size - len(batch), n - cursor)
+            batch.extend(indices[cursor : cursor + take])
+            cursor += take
+        yield batch
+
+
 def run_sft_train(
     *,
     mesh: Mesh,
@@ -58,6 +106,9 @@ def run_sft_train(
     micro_batch_size_per_replica: int,
     max_steps: int,
     seed: int,
+    shuffle: bool = True,
+    dataloader_drop_last: bool = True,
+    padding_side: str = "right",
     logging_steps: int,
     warmup_steps: int = 0,
     log_cb: Callable[[int, float, int, float], None] | None = None,
@@ -102,9 +153,15 @@ def run_sft_train(
     if n <= 0:
         raise ValueError("Empty train_dataset")
 
-    # Simple cycling iterator over shuffled indices; avoids epoch bookkeeping.
-    indices = iter_indices(n=n, seed=seed, shuffle=True)
-    cursor = 0
+    # DataLoader-style: epoch shuffle + (optional) tail padding instead of silently
+    # dropping smaller last batches.
+    batch_indices_iter = _iter_fixed_batch_indices(
+        n=n,
+        batch_size=int(global_micro_batch),
+        seed=int(seed),
+        shuffle=bool(shuffle),
+        drop_last=bool(dataloader_drop_last),
+    )
 
     last_loss = float("nan")
     micro_steps = 0
@@ -113,14 +170,15 @@ def run_sft_train(
         step_t0 = time.perf_counter()
         losses = []
         for _ in range(int(grad_accum_steps)):
-            if cursor + global_micro_batch > len(indices):
-                indices = iter_indices(n=n, seed=seed + step, shuffle=True)
-                cursor = 0
-            batch_idx = indices[cursor : cursor + global_micro_batch]
-            cursor += global_micro_batch
+            batch_idx = next(batch_indices_iter)
 
             examples = [train_dataset[i] for i in batch_idx]
-            batch_np = collate_sft_batch(examples, pad_token_id=int(pad_token_id), pad_to_length=pad_to_length)
+            batch_np = collate_sft_batch(
+                examples,
+                pad_token_id=int(pad_token_id),
+                pad_to_length=pad_to_length,
+                padding_side=str(padding_side),
+            )
             batch = {k: jax.device_put(v, data_sharding) for k, v in batch_np.as_dict().items()}
 
             bundle_state, metrics = train_step_fn(bundle.state, batch)

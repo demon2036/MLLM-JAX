@@ -161,6 +161,9 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> SidSftConfig:
             _get_or_default(cfg, "train.save_best_metric", DEFAULT_CONFIG["train"].get("save_best_metric") or "ndcg@10")
         ),
         group_by_length=bool(_get_or_default(cfg, "train.group_by_length", DEFAULT_CONFIG["train"]["group_by_length"])),
+        shuffle=bool(_get_or_default(cfg, "train.shuffle", DEFAULT_CONFIG["train"].get("shuffle", True))),
+        dataloader_drop_last=bool(_get_or_default(cfg, "train.dataloader_drop_last", DEFAULT_CONFIG["train"].get("dataloader_drop_last", True))),
+        padding_side=str(_get_or_default(cfg, "train.padding_side", DEFAULT_CONFIG["train"].get("padding_side", "right"))),
         freeze_LLM=bool(_get_or_default(cfg, "train.freeze_LLM", DEFAULT_CONFIG["train"]["freeze_LLM"])),
         train_from_scratch=bool(_get_or_default(cfg, "train.train_from_scratch", DEFAULT_CONFIG["train"]["train_from_scratch"])),
         resume_from_checkpoint=_get_or_default(cfg, "train.resume_from_checkpoint", DEFAULT_CONFIG["train"]["resume_from_checkpoint"]),

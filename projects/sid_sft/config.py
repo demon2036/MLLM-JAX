@@ -76,6 +76,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Metric name used for "best" selection. Examples: "ndcg@10", "hr@10".
         "save_best_metric": "ndcg@10",
         "group_by_length": False,
+        # DataLoader-style knobs (align with upstream HF Trainer defaults):
+        # - shuffle: shuffle training examples each epoch
+        # - dataloader_drop_last: whether to drop the smaller last batch of an epoch
+        # - padding_side: "left" (upstream default) or "right"
+        "shuffle": True,
+        "dataloader_drop_last": True,
+        "padding_side": "right",
         "freeze_LLM": False,
         "train_from_scratch": False,
         "resume_from_checkpoint": None,

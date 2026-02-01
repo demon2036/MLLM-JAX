@@ -124,6 +124,9 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> MiniOneRecRlConf
     train = MiniOneRecRlTrainConfig(
         num_train_epochs=float(_get_or_default(cfg, "train.num_train_epochs", DEFAULT_CONFIG["train"]["num_train_epochs"])),
         max_steps=int(_get_or_default(cfg, "train.max_steps", DEFAULT_CONFIG["train"]["max_steps"])),
+        gradient_accumulation_steps=int(
+            _get_or_default(cfg, "train.gradient_accumulation_steps", DEFAULT_CONFIG["train"].get("gradient_accumulation_steps", 1))
+        ),
         grad_accum_steps=int(_get_or_default(cfg, "train.grad_accum_steps", DEFAULT_CONFIG["train"]["grad_accum_steps"])),
         ppo_steps=int(_get_or_default(cfg, "train.ppo_steps", DEFAULT_CONFIG["train"]["ppo_steps"])),
         beta=float(_get_or_default(cfg, "train.beta", DEFAULT_CONFIG["train"]["beta"])),
@@ -131,12 +134,17 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> MiniOneRecRlConf
         sync_ref_model_every_steps=int(_get_or_default(cfg, "train.sync_ref_model_every_steps", DEFAULT_CONFIG["train"]["sync_ref_model_every_steps"])),
         sync_ref_model_mixup_alpha=float(_get_or_default(cfg, "train.sync_ref_model_mixup_alpha", DEFAULT_CONFIG["train"]["sync_ref_model_mixup_alpha"])),
         logging_steps=int(_get_or_default(cfg, "train.logging_steps", DEFAULT_CONFIG["train"]["logging_steps"])),
+        eval_steps=int(_get_or_default(cfg, "train.eval_steps", DEFAULT_CONFIG["train"].get("eval_steps", 0))),
         save_last=bool(_get_or_default(cfg, "train.save_last", DEFAULT_CONFIG["train"]["save_last"])),
+        save_best=bool(_get_or_default(cfg, "train.save_best", DEFAULT_CONFIG["train"].get("save_best", False))),
+        save_best_metric=str(_get_or_default(cfg, "train.save_best_metric", DEFAULT_CONFIG["train"].get("save_best_metric", "ndcg@10"))),
         optimizer=opt_cfg,
     )
 
     eval_cfg = MiniOneRecRlEvalConfig(
         enabled=bool(_get_or_default(cfg, "eval.enabled", DEFAULT_CONFIG["eval"]["enabled"])),
+        split=str(_get_or_default(cfg, "eval.split", DEFAULT_CONFIG["eval"].get("split") or "test")),
+        use_best_checkpoint=bool(_get_or_default(cfg, "eval.use_best_checkpoint", DEFAULT_CONFIG["eval"].get("use_best_checkpoint", False))),
         every_steps=int(_get_or_default(cfg, "eval.every_steps", DEFAULT_CONFIG["eval"]["every_steps"])),
         batch_size=int(_get_or_default(cfg, "eval.batch_size", DEFAULT_CONFIG["eval"]["batch_size"])),
         num_beams=int(_get_or_default(cfg, "eval.num_beams", DEFAULT_CONFIG["eval"]["num_beams"])),

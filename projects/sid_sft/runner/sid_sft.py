@@ -88,6 +88,13 @@ class SidSftTrainConfig:
     # - "eval/ndcg@10" (prefix is allowed)
     save_best_metric: str = "ndcg@10"
     group_by_length: bool = False
+    # DataLoader-style knobs (align with upstream HF Trainer defaults):
+    # - shuffle: shuffle training examples each epoch
+    # - dataloader_drop_last: whether to drop the smaller last batch of an epoch
+    # - padding_side: "left" (upstream default) or "right"
+    shuffle: bool = True
+    dataloader_drop_last: bool = True
+    padding_side: str = "right"
     freeze_LLM: bool = False
     train_from_scratch: bool = False
     resume_from_checkpoint: str | None = None
@@ -268,7 +275,7 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
 
     # Tokenizer + SID token extension (tokenizer-only; params resized below).
     tokenizer = AutoTokenizer.from_pretrained(cfg.base_model, trust_remote_code=True)
-    tokenizer, pad_token_id = prepare_tokenizer(tokenizer, padding_side="right")
+    tokenizer, pad_token_id = prepare_tokenizer(tokenizer, padding_side=str(getattr(cfg.train, "padding_side", "right")))
 
     extension = maybe_extend_tokenizer(tokenizer=tokenizer, sid_index_path=cfg.data.sid_index_path)
 
@@ -518,6 +525,9 @@ def _run_sid_sft_jax(cfg: SidSftConfig, *, run_mode_norm: str) -> dict[str, Any]
             micro_batch_size_per_replica=int(cfg.train.per_device_train_batch_size),
             max_steps=int(max_steps),
             seed=int(cfg.seed),
+            shuffle=bool(getattr(cfg.train, "shuffle", True)),
+            dataloader_drop_last=bool(getattr(cfg.train, "dataloader_drop_last", True)),
+            padding_side=str(getattr(cfg.train, "padding_side", "right")),
             logging_steps=int(cfg.train.logging_steps),
             warmup_steps=int(cfg.train.warmup_steps),
             log_cb=(

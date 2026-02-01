@@ -31,9 +31,14 @@ def collate_sft_batch(
     label_pad_id: int = -100,
     pad_to_multiple_of: int = 8,
     pad_to_length: int | None = None,
+    padding_side: str = "right",
 ) -> Batch:
     if not examples:
         raise ValueError("Empty batch")
+
+    padding_side_norm = str(padding_side or "right").strip().lower()
+    if padding_side_norm not in {"right", "left"}:
+        raise ValueError(f"Unsupported padding_side={padding_side!r} (expected 'left'|'right')")
 
     max_len = int(pad_to_length) if pad_to_length is not None and int(pad_to_length) > 0 else max(len(x["input_ids"]) for x in examples)
     max_len = _round_up(int(max_len), int(pad_to_multiple_of))
@@ -49,10 +54,22 @@ def collate_sft_batch(
         if ids.shape[0] != mask.shape[0] or ids.shape[0] != lab.shape[0]:
             raise ValueError("input_ids/attention_mask/labels length mismatch")
 
+        # Safety: if callers provide longer-than-max_len sequences, preserve the tail
+        # (aligns with MiniOneRec truncation style and avoids dropping completions).
+        if int(ids.shape[0]) > int(max_len):
+            ids = ids[-int(max_len) :]
+            mask = mask[-int(max_len) :]
+            lab = lab[-int(max_len) :]
+
         length = int(min(int(ids.shape[0]), int(max_len)))
-        input_ids[i, :length] = ids[:length]
-        attention_mask[i, :length] = mask[:length]
-        labels[i, :length] = lab[:length]
+        if padding_side_norm == "left":
+            start = int(max_len) - length
+        else:
+            start = 0
+        end = start + length
+        input_ids[i, start:end] = ids[:length]
+        attention_mask[i, start:end] = mask[:length]
+        labels[i, start:end] = lab[:length]
 
     return Batch(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
 

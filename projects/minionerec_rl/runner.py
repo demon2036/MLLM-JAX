@@ -71,6 +71,11 @@ class MiniOneRecRlRolloutConfig:
 class MiniOneRecRlTrainConfig:
     num_train_epochs: float = 2.0
     max_steps: int = -1
+    # Align with upstream TRL/Accelerate semantics: number of prompt-batches to
+    # accumulate before each optimizer update (effective batch multiplier).
+    gradient_accumulation_steps: int = 1
+    # Micro-batch splitting within a single prompt-batch to keep TPU compile/memory
+    # bounded (does NOT change the effective batch size).
     grad_accum_steps: int = 1
     ppo_steps: int = 1
     beta: float = 1e-3
@@ -78,13 +83,26 @@ class MiniOneRecRlTrainConfig:
     sync_ref_model_every_steps: int = 0
     sync_ref_model_mixup_alpha: float = 1.0
     logging_steps: int = 10
+    # Full constrained-decoding eval cadence during training (0 => once per epoch).
+    eval_steps: int = 0
     save_last: bool = True
+    # Optional: save the best checkpoint according to constrained-decoding eval
+    # metrics computed on `eval.split`.
+    save_best: bool = False
+    save_best_metric: str = "ndcg@10"
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
 
 
 @dataclass(frozen=True)
 class MiniOneRecRlEvalConfig:
     enabled: bool = True
+    # Which split to use for constrained-decoding evaluation:
+    # - "test": use `data.test_file` (default; preserves historical behavior)
+    # - "eval": use `data.eval_file` (validation)
+    split: str = "test"
+    # If enabled and `train.save_best=true`, `train_eval` will load and evaluate
+    # the best checkpoint saved during training (instead of the last-step params).
+    use_best_checkpoint: bool = False
     every_steps: int = 0
     batch_size: int = 2
     num_beams: int = 50
@@ -247,6 +265,10 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
 
     train_stats: dict[str, Any] | None = None
     state = None
+    best_metric_name = str(getattr(cfg.train, "save_best_metric", "ndcg@10") or "ndcg@10")
+    best_metric_value: float | None = None
+    best_metric_step: int | None = None
+    best_checkpoint_path: str | None = None
 
     if run_mode_norm in {"train", "train_eval"}:
         os.makedirs(cfg.output_dir, exist_ok=True)
@@ -255,6 +277,14 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
         k = int(cfg.rollout.num_generations)
         if prompt_batch <= 0 or k <= 0:
             raise ValueError("rollout.prompt_batch_size and rollout.num_generations must be > 0")
+
+        update_accum_steps = int(getattr(cfg.train, "gradient_accumulation_steps", 1) or 1)
+        if update_accum_steps <= 0:
+            raise ValueError("train.gradient_accumulation_steps must be > 0")
+
+        micro_splits = int(cfg.train.grad_accum_steps)
+        if micro_splits <= 0:
+            raise ValueError("train.grad_accum_steps must be > 0")
 
         # RL dataset: align with upstream by optionally mixing multiple prompt types.
         # Default keeps next-item-only to preserve historical behavior.
@@ -292,9 +322,10 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             raise ValueError("Empty train_dataset")
 
         # Steps: derive from epochs over prompt batches (paper uses 2 epochs).
+        prompts_per_update = int(prompt_batch) * int(update_accum_steps)
+        steps_per_epoch = int(math.ceil(len(train_dataset) / max(1, prompts_per_update)))
         max_steps = int(cfg.train.max_steps)
         if max_steps <= 0:
-            steps_per_epoch = int(math.ceil(len(train_dataset) / max(1, prompt_batch)))
             max_steps = int(math.ceil(float(cfg.train.num_train_epochs) * steps_per_epoch))
 
         tx = build_tx(training_steps=max_steps, cfg=cfg.train.optimizer)
@@ -312,8 +343,9 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             ref_params: Any | None = None
 
         def init_fn(p):
+            micro_in_mini = int(micro_splits) * int(update_accum_steps)
             grad_accum = None
-            if int(cfg.train.grad_accum_steps) > 1:
+            if int(micro_in_mini) > 1:
                 grad_accum = jax.tree_util.tree_map(jnp.zeros_like, p)
             return _TrainState.create(
                 apply_fn=train_module.apply,
@@ -321,7 +353,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                 tx=tx,
                 ref_params=copy.deepcopy(p) if float(cfg.train.beta) != 0.0 else None,
                 micro_step=0,
-                micro_in_mini=int(cfg.train.grad_accum_steps),
+                micro_in_mini=int(micro_in_mini),
                 grad_accum=grad_accum,
             )
 
@@ -339,6 +371,121 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
         rng_py = random.Random(int(cfg.seed))
         rng_py.shuffle(indices)
         cursor = 0
+
+        best_metric_name = str(getattr(cfg.train, "save_best_metric", "ndcg@10") or "ndcg@10")
+        best_metric_value: float | None = None
+        best_metric_step: int | None = None
+        best_checkpoint_path: str | None = None
+        eval_every_steps = 0
+
+        def _get_best_metric_value(metrics: Any) -> float:
+            key = str(best_metric_name or "").strip().lower()
+            if key.startswith("eval/"):
+                key = key[len("eval/") :]
+            if key.startswith("ndcg@"):
+                kk = int(key.split("@", 1)[1])
+                if int(kk) not in metrics.ndcg:
+                    raise KeyError(f"{best_metric_name!r} requested but eval.topk does not include {int(kk)}")
+                return float(metrics.ndcg[kk])
+            if key.startswith("hr@"):
+                kk = int(key.split("@", 1)[1])
+                if int(kk) not in metrics.hr:
+                    raise KeyError(f"{best_metric_name!r} requested but eval.topk does not include {int(kk)}")
+                return float(metrics.hr[kk])
+            raise ValueError(
+                f"Unsupported train.save_best_metric={best_metric_name!r}; expected 'ndcg@K' or 'hr@K' (e.g. 'ndcg@10')."
+            )
+
+        # Optional full constrained-decoding eval during training (at least once per epoch).
+        eval_wrapper = None
+        if run_mode_norm == "train_eval" and cfg.eval.enabled:
+            if int(jax.process_count()) != 1:
+                print("[eval] periodic eval requires single-process JAX; skipping.")
+            else:
+                eval_every_steps = int(getattr(cfg.train, "eval_steps", 0) or 0)
+                if eval_every_steps < 0:
+                    eval_every_steps = 0
+                elif eval_every_steps == 0:
+                    eval_every_steps = int(steps_per_epoch)
+
+                split = str(getattr(cfg.eval, "split", "test") or "test").strip().lower()
+                if split in {"eval", "valid", "val"}:
+                    eval_csv_path = str(cfg.data.eval_file)
+                    eval_sample = int(cfg.data.sample_eval)
+                elif split in {"test"}:
+                    eval_csv_path = str(cfg.data.test_file)
+                    eval_sample = int(cfg.data.sample_test)
+                else:
+                    raise ValueError(f"Unsupported eval.split={getattr(cfg.eval, 'split', None)!r} (expected 'eval'|'test')")
+
+                _eval_dataset = MiniOneRecNextItemRlDataset(
+                    csv_path=eval_csv_path,
+                    sample=eval_sample,
+                    seed=cfg.seed,
+                )
+
+                class _EvalWrapper:
+                    def __len__(self):
+                        return len(_eval_dataset)
+
+                    def __getitem__(self, idx: int):
+                        ids = list(tokenizer.encode(_eval_dataset[idx].prompt, add_special_tokens=False))
+                        return {"input_ids": ids, "attention_mask": [1] * len(ids)}
+
+                    def get_targets(self):
+                        return [_eval_dataset[i].target_sid for i in range(len(_eval_dataset))]
+
+                eval_wrapper = _EvalWrapper()
+
+        def full_eval_cb(step: int, st: Any) -> None:
+            nonlocal best_metric_value, best_metric_step, best_checkpoint_path
+            if eval_wrapper is None:
+                return
+            if int(jax.process_index()) != 0:
+                return
+
+            print(f"[eval] step={int(step)}/{int(max_steps)}")
+            output_predictions_json = None
+            if int(step) == int(max_steps) and bool(cfg.eval.save_predictions_json):
+                output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json")
+
+            _preds, metrics = evaluate_sid_next_item_jax(
+                model=model,
+                params=st.params,
+                tokenizer=tokenizer,
+                eval_dataset=eval_wrapper,
+                sid_index_path=cfg.data.sid_index_path,
+                info_file=cfg.data.info_file,
+                batch_size=int(cfg.eval.batch_size),
+                num_beams=int(cfg.eval.num_beams),
+                max_cache_length=int(cfg.jax.max_cache_length),
+                topk=list(cfg.eval.topk),
+                output_predictions_json=output_predictions_json,
+            )
+
+            if bool(getattr(cfg.train, "save_best", False)):
+                value = _get_best_metric_value(metrics)
+                improved = best_metric_value is None or value > float(best_metric_value)
+                if improved:
+                    best_metric_value = float(value)
+                    best_metric_step = int(step)
+                    best_checkpoint_path = save_checkpoint(output_dir=cfg.output_dir, state=st, name="rl_best")
+                    print(
+                        f"[eval] new best {best_metric_name}={best_metric_value:.6f} at step={int(step)} -> {best_checkpoint_path}"
+                    )
+
+            if wandb is not None:
+                log = {}
+                for kk, vv in metrics.hr.items():
+                    log[f"eval/hr@{kk}"] = vv
+                for kk, vv in metrics.ndcg.items():
+                    log[f"eval/ndcg@{kk}"] = vv
+                log["eval/invalid_prediction_count"] = metrics.invalid_prediction_count
+                if best_metric_value is not None:
+                    log["eval/best_metric_value"] = float(best_metric_value)
+                if best_metric_step is not None:
+                    log["eval/best_metric_step"] = int(best_metric_step)
+                wandb.log(log, step=int(step))
 
         prompt_pad_len = int(cfg.rollout.prompt_pad_len)
         global_len = int(cfg.rollout.global_length)
@@ -365,103 +512,134 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
 
         last_loss = float("nan")
         for step in range(1, max_steps + 1):
-            # Sample prompt batch (cycle).
-            if cursor + prompt_batch > len(indices):
-                rng_py.shuffle(indices)
-                cursor = 0
-            batch_idx = indices[cursor : cursor + prompt_batch]
-            cursor += prompt_batch
-
-            prompts = []
-            targets = []
-            for i in batch_idx:
-                ex = train_dataset[i]
-                prompts.append(ex.prompt)
-                targets.append(ex.target_sid)
-
-            prompt_ids_list = [list(tokenizer.encode(p, add_special_tokens=False))[-prompt_pad_len:] for p in prompts]
-            true_lens = np.asarray([len(x) for x in prompt_ids_list], dtype=np.int32)
-            pad_token_id = int(tokenizer.pad_token_id)
-            prompt_np = np.full((prompt_batch, prompt_pad_len), pad_token_id, dtype=np.int32)
-            for i, ids in enumerate(prompt_ids_list):
-                prompt_np[i, : len(ids)] = np.asarray(ids, dtype=np.int32)
-
-            prompt_arr = jnp.asarray(prompt_np, dtype=jnp.int32)
-            true_len_arr = jnp.asarray(true_lens, dtype=jnp.int32)
-
-            # Constrained generation: top-K SIDs.
-            tok = np.asarray(beam_search_jit(state.params, prompt_arr, true_len_arr))  # [B, K, 3]
-
-            preds_grouped: list[list[str]] = []
-            for i in range(prompt_batch):
-                preds_grouped.append([_decode_sid_triplet(tokenizer, tok[i, j]) for j in range(k)])
-
-            rewards, correct = compute_ranking_rewards(predictions=preds_grouped, targets=targets, rank_penalties=rank_penalties)
-            group_ids = np.repeat(np.arange(prompt_batch, dtype=np.int32), k)
-            advantages = compute_grpo_advantages_by_group_id(rewards=rewards, group_ids=group_ids)
-            rewards_rule = correct
-            rewards_ndcg = rewards - correct
-
-            # Build padded training sequences.
-            completion_ids = np.zeros((prompt_batch, k, 5), dtype=np.int32)
-            completion_ids[:, :, :3] = tok
-            completion_ids[:, :, 3] = int(newline_id)
-            completion_ids[:, :, 4] = int(tokenizer.eos_token_id)
-            completion_flat = completion_ids.reshape(prompt_batch * k, 5)
-
-            input_ids = np.full((prompt_batch * k, global_len), pad_token_id, dtype=np.int32)
-            attention_mask = np.zeros((prompt_batch * k, global_len), dtype=np.int32)
-            labels = np.zeros((prompt_batch * k, global_len), dtype=np.int32)
-
-            for i in range(prompt_batch):
-                p_ids = np.asarray(prompt_ids_list[i], dtype=np.int32)
-                p_len = int(p_ids.shape[0])
-                for j in range(k):
-                    row = i * k + j
-                    comp = completion_ids[i, j]
-                    seq_len = int(p_len + comp.shape[0])
-                    if seq_len > global_len:
-                        # Keep the tail (align with MiniOneRec truncation style).
-                        overflow = seq_len - global_len
-                        p_start = min(int(overflow), p_len)
-                        p_ids_trunc = p_ids[p_start:]
-                        comp_trunc = comp[: max(0, global_len - int(p_ids_trunc.shape[0]))]
-                        seq = np.concatenate([p_ids_trunc, comp_trunc], axis=0)
-                        p_len_eff = int(p_ids_trunc.shape[0])
-                        seq_len = int(seq.shape[0])
-                        input_ids[row, :seq_len] = seq
-                        attention_mask[row, :seq_len] = 1
-                        labels[row, p_len_eff:seq_len] = 1
-                    else:
-                        input_ids[row, :p_len] = p_ids
-                        input_ids[row, p_len:seq_len] = comp
-                        attention_mask[row, :seq_len] = 1
-                        labels[row, p_len:seq_len] = 1
-
-            batch = {
-                "input_ids": jax.device_put(jnp.asarray(input_ids, dtype=jnp.int32), data_sharding_2d),
-                "attention_mask": jax.device_put(jnp.asarray(attention_mask, dtype=jnp.int32), data_sharding_2d),
-                "labels": jax.device_put(jnp.asarray(labels, dtype=jnp.int32), data_sharding_2d),
-                "advantages": jax.device_put(jnp.asarray(advantages, dtype=jnp.float32), data_sharding_1d),
-            }
-
-            # Gradient accumulation over the full (prompt_batch*k) batch.
-            micro = int(prompt_batch * k) // int(cfg.train.grad_accum_steps)
-            if micro * int(cfg.train.grad_accum_steps) != int(prompt_batch * k):
-                raise ValueError("prompt_batch_size*num_generations must be divisible by grad_accum_steps")
-
             micro_metrics_sum: dict[str, float] = {}
-            for micro_idx in range(int(cfg.train.grad_accum_steps)):
-                sl = slice(micro_idx * micro, (micro_idx + 1) * micro)
-                micro_batch = {kk: vv[sl] for kk, vv in batch.items()}
-                state, metrics = train_step_fn(state, micro_batch)
-                for kk in ("loss", "kl", "completion_length"):
-                    if kk not in metrics:
-                        continue
-                    micro_metrics_sum[kk] = micro_metrics_sum.get(kk, 0.0) + float(np.asarray(metrics[kk]))
+            reward_mean_sum = 0.0
+            reward_rule_mean_sum = 0.0
+            reward_ndcg_mean_sum = 0.0
+            reward_std_sum = 0.0
+            cate_diversity_sum = 0.0
+            token_diversity_sum = 0.0
+            pass_at_1_sum = 0.0
+            pass_at_k_sum = 0.0
 
+            pad_token_id = int(tokenizer.pad_token_id)
+            eos_token_id = int(tokenizer.eos_token_id)
+
+            # Accumulate multiple prompt-batches before each optimizer update (TRL-style
+            # gradient_accumulation_steps semantics).
+            for _accum in range(int(update_accum_steps)):
+                # Sample prompt batch (cycle).
+                if cursor + prompt_batch > len(indices):
+                    rng_py.shuffle(indices)
+                    cursor = 0
+                batch_idx = indices[cursor : cursor + prompt_batch]
+                cursor += prompt_batch
+
+                prompts = []
+                targets = []
+                for i in batch_idx:
+                    ex = train_dataset[i]
+                    prompts.append(ex.prompt)
+                    targets.append(ex.target_sid)
+
+                prompt_ids_list = [list(tokenizer.encode(p, add_special_tokens=False))[-prompt_pad_len:] for p in prompts]
+                true_lens = np.asarray([len(x) for x in prompt_ids_list], dtype=np.int32)
+                prompt_np = np.full((prompt_batch, prompt_pad_len), pad_token_id, dtype=np.int32)
+                for i, ids in enumerate(prompt_ids_list):
+                    prompt_np[i, : len(ids)] = np.asarray(ids, dtype=np.int32)
+
+                prompt_arr = jnp.asarray(prompt_np, dtype=jnp.int32)
+                true_len_arr = jnp.asarray(true_lens, dtype=jnp.int32)
+
+                # Constrained generation: top-K SIDs.
+                tok = np.asarray(beam_search_jit(state.params, prompt_arr, true_len_arr))  # [B, K, 3]
+
+                preds_grouped: list[list[str]] = []
+                for i in range(prompt_batch):
+                    preds_grouped.append([_decode_sid_triplet(tokenizer, tok[i, j]) for j in range(k)])
+
+                rewards, correct = compute_ranking_rewards(predictions=preds_grouped, targets=targets, rank_penalties=rank_penalties)
+                group_ids = np.repeat(np.arange(prompt_batch, dtype=np.int32), k)
+                advantages = compute_grpo_advantages_by_group_id(rewards=rewards, group_ids=group_ids)
+                rewards_rule = correct
+                rewards_ndcg = rewards - correct
+
+                # Build padded training sequences.
+                completion_ids = np.zeros((prompt_batch, k, 5), dtype=np.int32)
+                completion_ids[:, :, :3] = tok
+                completion_ids[:, :, 3] = int(newline_id)
+                completion_ids[:, :, 4] = eos_token_id
+                completion_flat = completion_ids.reshape(prompt_batch * k, 5)
+
+                input_ids = np.full((prompt_batch * k, global_len), pad_token_id, dtype=np.int32)
+                attention_mask = np.zeros((prompt_batch * k, global_len), dtype=np.int32)
+                labels = np.zeros((prompt_batch * k, global_len), dtype=np.int32)
+
+                for i in range(prompt_batch):
+                    p_ids = np.asarray(prompt_ids_list[i], dtype=np.int32)
+                    p_len = int(p_ids.shape[0])
+                    for j in range(k):
+                        row = i * k + j
+                        comp = completion_ids[i, j]
+                        seq_len = int(p_len + comp.shape[0])
+                        if seq_len > global_len:
+                            # Keep the tail (align with MiniOneRec truncation style).
+                            overflow = seq_len - global_len
+                            p_start = min(int(overflow), p_len)
+                            p_ids_trunc = p_ids[p_start:]
+                            comp_trunc = comp[: max(0, global_len - int(p_ids_trunc.shape[0]))]
+                            seq = np.concatenate([p_ids_trunc, comp_trunc], axis=0)
+                            p_len_eff = int(p_ids_trunc.shape[0])
+                            seq_len = int(seq.shape[0])
+                            input_ids[row, :seq_len] = seq
+                            attention_mask[row, :seq_len] = 1
+                            labels[row, p_len_eff:seq_len] = 1
+                        else:
+                            input_ids[row, :p_len] = p_ids
+                            input_ids[row, p_len:seq_len] = comp
+                            attention_mask[row, :seq_len] = 1
+                            labels[row, p_len:seq_len] = 1
+
+                batch = {
+                    "input_ids": jax.device_put(jnp.asarray(input_ids, dtype=jnp.int32), data_sharding_2d),
+                    "attention_mask": jax.device_put(jnp.asarray(attention_mask, dtype=jnp.int32), data_sharding_2d),
+                    "labels": jax.device_put(jnp.asarray(labels, dtype=jnp.int32), data_sharding_2d),
+                    "advantages": jax.device_put(jnp.asarray(advantages, dtype=jnp.float32), data_sharding_1d),
+                }
+
+                # Micro-batch splitting within a single prompt-batch.
+                micro = int(prompt_batch * k) // int(micro_splits)
+                if micro * int(micro_splits) != int(prompt_batch * k):
+                    raise ValueError("prompt_batch_size*num_generations must be divisible by train.grad_accum_steps")
+
+                for micro_idx in range(int(micro_splits)):
+                    sl = slice(micro_idx * micro, (micro_idx + 1) * micro)
+                    micro_batch = {kk: vv[sl] for kk, vv in batch.items()}
+                    state, metrics = train_step_fn(state, micro_batch)
+                    for kk in ("loss", "kl", "completion_length"):
+                        if kk not in metrics:
+                            continue
+                        micro_metrics_sum[kk] = micro_metrics_sum.get(kk, 0.0) + float(np.asarray(metrics[kk]))
+
+                # Stats (accumulated across prompt-batches, averaged later).
+                reward_mean_sum += float(np.mean(rewards)) if rewards.size else float("nan")
+                reward_rule_mean_sum += float(np.mean(rewards_rule)) if rewards_rule.size else float("nan")
+                reward_ndcg_mean_sum += float(np.mean(rewards_ndcg)) if rewards_ndcg.size else float("nan")
+                reward_std_sum += (
+                    float(np.mean(np.std(rewards.reshape(prompt_batch, k), axis=1))) if rewards.size else float("nan")
+                )
+                cate_diversity_sum += (
+                    float(np.mean([len(set(group)) / float(k) for group in preds_grouped])) if preds_grouped else float("nan")
+                )
+                tok_flat = completion_flat.reshape(-1)
+                tok_flat = tok_flat[tok_flat != pad_token_id]
+                token_diversity_sum += float(len(np.unique(tok_flat)) / len(tok_flat)) if tok_flat.size else float("nan")
+                pass_at_1_sum += float(np.mean(correct.reshape(prompt_batch, k)[:, 0])) if correct.size else float("nan")
+                pass_at_k_sum += float(np.mean(np.max(correct.reshape(prompt_batch, k), axis=1))) if correct.size else float("nan")
+
+            denom_micro = float(int(micro_splits) * int(update_accum_steps))
             for kk in micro_metrics_sum:
-                micro_metrics_sum[kk] /= float(cfg.train.grad_accum_steps)
+                micro_metrics_sum[kk] /= max(denom_micro, 1.0)
             last_loss = float(micro_metrics_sum.get("loss", float("nan")))
 
             if (
@@ -482,21 +660,20 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                         )
                     )
 
+            # Full constrained-decoding eval (optional).
+            if eval_every_steps > 0 and (step % int(eval_every_steps) == 0 or step == max_steps):
+                full_eval_cb(int(step), state)
+
             if step % int(cfg.train.logging_steps) == 0 or step == 1 or step == max_steps:
-                reward_mean = float(np.mean(rewards)) if rewards.size else float("nan")
-                reward_rule_mean = float(np.mean(rewards_rule)) if rewards_rule.size else float("nan")
-                reward_ndcg_mean = float(np.mean(rewards_ndcg)) if rewards_ndcg.size else float("nan")
-                reward_std = (
-                    float(np.mean(np.std(rewards.reshape(prompt_batch, k), axis=1))) if rewards.size else float("nan")
-                )
-                cate_diversity = (
-                    float(np.mean([len(set(group)) / float(k) for group in preds_grouped])) if preds_grouped else float("nan")
-                )
-                tok_flat = completion_flat.reshape(-1)
-                tok_flat = tok_flat[tok_flat != pad_token_id]
-                token_diversity = float(len(np.unique(tok_flat)) / len(tok_flat)) if tok_flat.size else float("nan")
-                pass_at_1 = float(np.mean(correct.reshape(prompt_batch, k)[:, 0])) if correct.size else float("nan")
-                pass_at_k = float(np.mean(np.max(correct.reshape(prompt_batch, k), axis=1))) if correct.size else float("nan")
+                denom_accum = float(int(update_accum_steps))
+                reward_mean = reward_mean_sum / denom_accum
+                reward_rule_mean = reward_rule_mean_sum / denom_accum
+                reward_ndcg_mean = reward_ndcg_mean_sum / denom_accum
+                reward_std = reward_std_sum / denom_accum
+                cate_diversity = cate_diversity_sum / denom_accum
+                token_diversity = token_diversity_sum / denom_accum
+                pass_at_1 = pass_at_1_sum / denom_accum
+                pass_at_k = pass_at_k_sum / denom_accum
                 if jax.process_index() == 0:
                     kl = micro_metrics_sum.get("kl", float("nan"))
                     completion_length = micro_metrics_sum.get("completion_length", float("nan"))
@@ -506,7 +683,8 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                         f"pass@1={pass_at_1:.4f} pass@K={pass_at_k:.4f}"
                     )
                     if wandb is not None:
-                        completions_per_step = int(prompt_batch) * int(k)
+                        prompts_per_step = int(prompt_batch) * int(update_accum_steps)
+                        completions_per_step = int(prompt_batch) * int(k) * int(update_accum_steps)
                         wandb.log(
                             {
                                 "train/loss": last_loss,
@@ -514,8 +692,10 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                                 "train/completion_length": completion_length,
                                 "train/prompt_batch_size": int(prompt_batch),
                                 "train/num_generations": int(k),
+                                "train/gradient_accumulation_steps": int(update_accum_steps),
+                                "train/prompts_per_step": int(prompts_per_step),
                                 "train/completions_per_step": completions_per_step,
-                                "train/grad_accum_steps": int(cfg.train.grad_accum_steps),
+                                "train/grad_accum_steps": int(micro_splits),
                                 "train/reward_mean": reward_mean,
                                 "train/reward_rule_mean": reward_rule_mean,
                                 "train/reward_ndcg_mean": reward_ndcg_mean,
@@ -554,12 +734,22 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
         if bool(cfg.train.save_last) and jax.process_index() == 0:
             save_checkpoint(output_dir=cfg.output_dir, state=state, name="rl_last")
 
-    # Eval (full test HR/NDCG) on final params.
+    # Eval (full HR/NDCG) on configured split.
     eval_metrics = None
     if run_mode_norm in {"eval", "train_eval"} and cfg.eval.enabled:
+        split = str(getattr(cfg.eval, "split", "test") or "test").strip().lower()
+        if split in {"eval", "valid", "val"}:
+            csv_path = cfg.data.eval_file
+            sample = cfg.data.sample_eval
+        elif split in {"test"}:
+            csv_path = cfg.data.test_file
+            sample = cfg.data.sample_test
+        else:
+            raise ValueError(f"Unsupported eval.split={getattr(cfg.eval, 'split', None)!r} (expected 'eval'|'test')")
+
         eval_dataset = MiniOneRecNextItemRlDataset(
-            csv_path=cfg.data.test_file,
-            sample=cfg.data.sample_test,
+            csv_path=str(csv_path),
+            sample=int(sample),
             seed=cfg.seed,
         )
 
@@ -577,9 +767,29 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                 return [eval_dataset[i].target_sid for i in range(len(eval_dataset))]
 
         output_predictions_json = os.path.join(cfg.output_dir, "eval_predictions.json") if cfg.eval.save_predictions_json else None
+        eval_params = state.params if state is not None else params
+        eval_step = int(getattr(state, "step", 0) or 0)
+        if (
+            run_mode_norm == "train_eval"
+            and bool(getattr(cfg.eval, "use_best_checkpoint", False))
+            and best_checkpoint_path is not None
+            and os.path.exists(best_checkpoint_path)
+        ):
+            payload = load_checkpoint(best_checkpoint_path)
+            ckpt_params = payload.get("params")
+            if ckpt_params is None:
+                raise ValueError("Best checkpoint payload missing 'params'")
+            ckpt_params = jax.tree_util.tree_map(lambda x: np.asarray(x, dtype=np.dtype(param_dtype)), ckpt_params)
+            eval_params = jax.tree_util.tree_map(
+                lambda x, sh: jax.device_put(jnp.asarray(x, dtype=param_dtype), sh),
+                ckpt_params,
+                shardings,
+            )
+            eval_step = int(best_metric_step or eval_step)
+
         _preds, eval_metrics = evaluate_sid_next_item_jax(
             model=model,
-            params=state.params if state is not None else params,
+            params=eval_params,
             tokenizer=tokenizer,
             eval_dataset=_EvalWrapper(),
             sid_index_path=cfg.data.sid_index_path,
@@ -597,7 +807,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
             for kk, vv in eval_metrics.ndcg.items():
                 log[f"eval/ndcg@{kk}"] = vv
             log["eval/invalid_prediction_count"] = eval_metrics.invalid_prediction_count
-            wandb.log(log)
+            wandb.log(log, step=eval_step)
 
     if wandb is not None:
         wandb.finish()
@@ -608,6 +818,14 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
         "vocab_resize": asdict(vocab_resize),
         "train": train_stats,
         "eval": asdict(eval_metrics) if eval_metrics else None,
+        "best_checkpoint": {
+            "metric": str(best_metric_name),
+            "value": best_metric_value,
+            "step": best_metric_step,
+            "path": best_checkpoint_path,
+        }
+        if bool(getattr(cfg.train, "save_best", False))
+        else None,
     }
 
 

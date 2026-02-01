@@ -47,6 +47,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "train": {
         "num_train_epochs": 0.0,
         "max_steps": 100,
+        "gradient_accumulation_steps": 1,
         "grad_accum_steps": 1,
         "ppo_steps": 1,
         "beta": 1e-3,
@@ -54,7 +55,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "sync_ref_model_every_steps": 0,
         "sync_ref_model_mixup_alpha": 1.0,
         "logging_steps": 10,
+        "eval_steps": 0,
         "save_last": True,
+        "save_best": False,
+        "save_best_metric": "ndcg@10",
         "optimizer": {
             "name": "lion",
             "clip_norm": 1.0,
@@ -71,6 +75,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "eval": {
         "enabled": True,
+        "split": "test",
+        "use_best_checkpoint": False,
         "every_steps": 0,
         "batch_size": 4,
         "num_beams": 50,

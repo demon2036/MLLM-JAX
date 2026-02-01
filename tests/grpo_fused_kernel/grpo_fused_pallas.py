@@ -24,14 +24,65 @@ def _ceil_div(a: int, b: int) -> int:
     return (a + b - 1) // b
 
 
-# Kernel tile sizes. BLOCK_T=128 matches the TPU-friendly 1D block constraint for
-# fp32 outputs.
+# Kernel tile sizes.
+#
+# Default to a small token tile to keep interpret-mode CPU tests fast, but on
+# TPU v6/v6e match XLA's 1D layout tiling (T(1024)) for token-major operands
+# (e.g. ids[num_tokens]) to avoid Mosaic layout verification errors.
 #
 # NOTE: On TPU v3, large BLOCK_V values can trigger Mosaic lowering patterns
 # involving sublane gathers (e.g. during row-wise reductions like max/sum) that
 # are not supported. Keep BLOCK_V small and a multiple of 128.
-BLOCK_T = 128
-BLOCK_V = 128
+
+
+def _select_block_t() -> int:
+    if not FUSED_AVAILABLE:
+        return 128
+
+    try:
+        import jax
+    except Exception:
+        return 128
+
+    try:
+        device_kind = (jax.devices()[0].device_kind or "").lower()
+    except Exception:
+        return 128
+
+    return 1024 if "v6" in device_kind else 128
+
+
+BLOCK_T = _select_block_t()
+
+
+def _select_block_v() -> int:
+    """Select vocab tile size (multiple of 128).
+
+    Keep interpret-mode CPU tests fast with a small tile, but use larger tiles
+    on newer TPUs to reduce the number of vocab reduction steps.
+    """
+
+    if not FUSED_AVAILABLE:
+        return 128
+
+    try:
+        import jax
+    except Exception:
+        return 128
+
+    try:
+        device_kind = (jax.devices()[0].device_kind or "").lower()
+    except Exception:
+        return 128
+
+    if "v6" in device_kind:
+        return 512
+    if "v4" in device_kind:
+        return 256
+    return 128
+
+
+BLOCK_V = _select_block_v()
 
 
 def _is_tpu_runtime() -> bool:
@@ -147,7 +198,11 @@ def _grpo_fused_forward_pallas_with_intermediates(
         loss_ref,
         kl_ref,
         is_clipped_ref,
+        m_scratch_ref,
+        l_scratch_ref,
+        token_logit_scratch_ref,
     ):
+        pid_t = pl.program_id(0)
         pid_v = pl.program_id(1)
 
         # Hyperparams may be traced scalars under jax.jit; keep them as JAX
@@ -158,45 +213,68 @@ def _grpo_fused_forward_pallas_with_intermediates(
         beta_f = jnp.asarray(beta, dtype=jnp.float32)
         one_f = jnp.asarray(1.0, dtype=jnp.float32)
 
+        t_start = pid_t * BLOCK_T
+        rows = t_start + jnp.arange(BLOCK_T, dtype=jnp.int32)
+        t_in_bounds = rows < num_tokens
+        t_in_bounds_i32 = jax.lax.select(
+            t_in_bounds,
+            jnp.ones_like(rows, dtype=jnp.int32),
+            jnp.zeros_like(rows, dtype=jnp.int32),
+        )
+
         v_start = pid_v * BLOCK_V
 
         # Load current vocab tile and mask out padded tail.
-        logits_tile = jnp.asarray(logits_ref[...]).astype(jnp.float32) / temp
         cols = v_start + jnp.arange(BLOCK_V, dtype=jnp.int32)
         v_in_bounds = cols < vocab_size
-        v_mask = jnp.broadcast_to(v_in_bounds[None, :], logits_tile.shape)
+        v_in_bounds_i32 = jax.lax.select(
+            v_in_bounds,
+            jnp.ones_like(cols, dtype=jnp.int32),
+            jnp.zeros_like(cols, dtype=jnp.int32),
+        )
+
+        tv_mask_i32 = jnp.broadcast_to(t_in_bounds_i32[:, None], (BLOCK_T, BLOCK_V))
+        v_mask_i32 = jnp.broadcast_to(v_in_bounds_i32[None, :], (BLOCK_T, BLOCK_V))
+        active_mask = (tv_mask_i32 != 0) & (v_mask_i32 != 0)
+
+        logits_block = jnp.asarray(logits_ref[...])
+        logits_tile = logits_block.astype(jnp.float32) / temp
         logits_tile = jax.lax.select(
-            v_mask,
+            active_mask,
             logits_tile,
             jnp.full_like(logits_tile, -jnp.inf),
         )
 
+        @pl.when(pid_v == 0)
+        def _init_state():
+            m_scratch_ref[...] = jnp.full((BLOCK_T,), -jnp.inf, dtype=jnp.float32)
+            l_scratch_ref[...] = jnp.zeros((BLOCK_T,), dtype=jnp.float32)
+            token_logit_scratch_ref[...] = jnp.full((BLOCK_T,), -jnp.inf, dtype=jnp.float32)
+
+        m_prev = jnp.asarray(m_scratch_ref[...]).astype(jnp.float32)
+        l_prev = jnp.asarray(l_scratch_ref[...]).astype(jnp.float32)
+        token_prev = jnp.asarray(token_logit_scratch_ref[...]).astype(jnp.float32)
+
+        # Avoid NaNs on out-of-bounds token padding by forcing a valid running
+        # state. (These lanes won't be written back due to out-of-bounds
+        # masking in the BlockSpec.)
+        m_prev = jax.lax.select(t_in_bounds, m_prev, jnp.zeros_like(m_prev))
+        l_prev = jax.lax.select(t_in_bounds, l_prev, jnp.zeros_like(l_prev))
+        token_prev = jax.lax.select(t_in_bounds, token_prev, jnp.zeros_like(token_prev))
+
         block_m = jnp.max(logits_tile, axis=1)
-
-        def _init(_):
-            m0 = jnp.full((BLOCK_T,), -jnp.inf, dtype=jnp.float32)
-            l0 = jnp.zeros((BLOCK_T,), dtype=jnp.float32)
-            t0 = jnp.full((BLOCK_T,), -jnp.inf, dtype=jnp.float32)
-            return m0, l0, t0
-
-        def _load_prev(_):
-            return (
-                jnp.asarray(m_ref[...]),
-                jnp.asarray(l_ref[...]),
-                jnp.asarray(token_logit_ref[...]),
-            )
-
-        m_prev, l_prev, token_prev = jax.lax.cond(pid_v == 0, _init, _load_prev, operand=0)
+        block_m = jax.lax.select(t_in_bounds, block_m, jnp.zeros_like(block_m))
         m_next = jnp.maximum(m_prev, block_m)
         alpha = jnp.exp(m_prev - m_next)
         l_next = l_prev * alpha + jnp.sum(jnp.exp(logits_tile - m_next[:, None]), axis=1)
 
         # Update accumulators for the next vocab block.
-        m_ref[...] = m_next
-        l_ref[...] = l_next
+        m_scratch_ref[...] = m_next
+        l_scratch_ref[...] = l_next
 
         # Track the selected logit for each token during the reduction.
         token_ids = jnp.asarray(ids_ref[...]).astype(jnp.int32)
+        token_ids = jax.lax.select(t_in_bounds, token_ids, jnp.zeros_like(token_ids))
         local_idx = token_ids - v_start
         in_block = (local_idx >= 0) & (local_idx < BLOCK_V)
         ar = jnp.arange(BLOCK_V, dtype=jnp.int32)[None, :]
@@ -209,19 +287,41 @@ def _grpo_fused_forward_pallas_with_intermediates(
             axis=1,
         )
         token_logit = jax.lax.select(in_block, selected, token_prev)
-        token_logit_ref[...] = token_logit
+        token_logit_scratch_ref[...] = token_logit
 
-        def _write_final(_):
-            lse = m_next + jnp.log(l_next)
-            logp = token_logit - lse
+        @pl.when(pid_v == vocab_blocks - 1)
+        def _write_final():
+            # Persist final reduction state for the backward pass.
+            m_ref[...] = m_next
+            l_ref[...] = l_next
+            token_logit_ref[...] = token_logit
 
-            old = jnp.asarray(old_logp_ref[...]).astype(jnp.float32)
-            ratio = jnp.exp(logp - old)
-            clipped_ratio = jnp.minimum(
-                jnp.maximum(ratio, one_f - eps_low_f), one_f + eps_high_f
+            # Make padded rows numerically safe; we will drop them via keep_i32.
+            m_safe = jax.lax.select(t_in_bounds, m_next, jnp.zeros_like(m_next))
+            l_safe = jax.lax.select(t_in_bounds, l_next, jnp.ones_like(l_next))
+            token_logit_safe = jax.lax.select(
+                t_in_bounds,
+                token_logit,
+                jnp.zeros_like(token_logit),
             )
 
-            adv = adv_ref[...].astype(jnp.float32)
+            lse = m_safe + jnp.log(l_safe)
+            logp = token_logit_safe - lse
+
+            old = jnp.asarray(old_logp_ref[...]).astype(jnp.float32)
+            ref = jnp.asarray(ref_logp_ref[...]).astype(jnp.float32)
+            adv = jnp.asarray(adv_ref[...]).astype(jnp.float32)
+
+            old = jax.lax.select(t_in_bounds, old, jnp.zeros_like(old))
+            ref = jax.lax.select(t_in_bounds, ref, jnp.zeros_like(ref))
+            adv = jax.lax.select(t_in_bounds, adv, jnp.zeros_like(adv))
+
+            ratio = jnp.exp(logp - old)
+            clipped_ratio = jnp.minimum(
+                jnp.maximum(ratio, one_f - eps_low_f),
+                one_f + eps_high_f,
+            )
+
             per_token_loss1 = ratio * adv
             per_token_loss2 = clipped_ratio * adv
             loss = -jnp.minimum(per_token_loss1, per_token_loss2)
@@ -230,12 +330,12 @@ def _grpo_fused_forward_pallas_with_intermediates(
             is_high_clipped = (ratio > one_f + eps_high_f) & (adv > 0.0)
             is_clipped = is_low_clipped | is_high_clipped
 
-            ref = jnp.asarray(ref_logp_ref[...]).astype(jnp.float32)
             delta = ref - logp
             kl = jnp.exp(delta) - delta - one_f
             loss = loss + beta_f * kl
 
             keep_i32 = jnp.asarray(mask_ref[...]).astype(jnp.int32)
+            keep_i32 = jax.lax.select(t_in_bounds, keep_i32, jnp.zeros_like(keep_i32))
             keep = keep_i32 != 0
 
             loss_ref[...] = jax.lax.select(keep, loss, jnp.zeros_like(loss))
@@ -253,8 +353,6 @@ def _grpo_fused_forward_pallas_with_intermediates(
                 jnp.zeros_like(is_clipped_i32),
             )
 
-        jax.lax.cond(pid_v == vocab_blocks - 1, _write_final, lambda _: None, operand=None)
-
     out_shape = (
         jax.ShapeDtypeStruct((num_tokens,), dtype=jnp.float32),  # m
         jax.ShapeDtypeStruct((num_tokens,), dtype=jnp.float32),  # l
@@ -269,10 +367,18 @@ def _grpo_fused_forward_pallas_with_intermediates(
 
     call = pl.pallas_call(
         kernel,
-        grid=(token_blocks, vocab_blocks),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            grid=(token_blocks, vocab_blocks),
+            in_specs=[logits_spec, token_spec, token_spec, token_spec, token_spec, token_spec],
+            out_specs=[token_spec] * 6,
+            scratch_shapes=[
+                pltpu.VMEM((BLOCK_T,), jnp.float32),  # m
+                pltpu.VMEM((BLOCK_T,), jnp.float32),  # l
+                pltpu.VMEM((BLOCK_T,), jnp.float32),  # token_logit
+            ],
+        ),
         out_shape=out_shape,
-        in_specs=[logits_spec, token_spec, token_spec, token_spec, token_spec, token_spec],
-        out_specs=[token_spec] * 6,
         interpret=interpret,
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("parallel", "arbitrary"),

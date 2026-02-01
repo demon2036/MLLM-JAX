@@ -32,6 +32,68 @@ def _block_tree(tree: object) -> None:
     _block_until_ready(tree)
 
 
+def _format_bytes(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    units = ("KiB", "MiB", "GiB", "TiB", "PiB")
+    f = float(n)
+    for unit in units:
+        f /= 1024.0
+        if f < 1024.0:
+            return f"{f:.2f} {unit}"
+    return f"{f:.2f} EiB"
+
+
+def _devices_summary(devices: list[object]) -> str:
+    parts = []
+    for d in devices:
+        platform = getattr(d, "platform", "unknown")
+        device_kind = getattr(d, "device_kind", None)
+        device_id = getattr(d, "id", None)
+        s = str(platform)
+        if device_kind:
+            s += f":{device_kind}"
+        if device_id is not None:
+            s += f":{device_id}"
+        parts.append(s)
+    return ", ".join(parts)
+
+
+def _print_env_info(*, jax_mod: object, devices: list[object]) -> None:
+    jax_version = getattr(jax_mod, "__version__", "unknown")
+    jaxlib_version = None
+    try:
+        import jaxlib  # type: ignore
+
+        jaxlib_version = getattr(jaxlib, "__version__", None)
+    except Exception:
+        jaxlib_version = None
+
+    print("env:")
+    print(f"  jax:    {jax_version}")
+    if jaxlib_version is None:
+        print("  jaxlib: <unknown>")
+    else:
+        print(f"  jaxlib: {jaxlib_version}")
+    print(f"  devices ({len(devices)}): {_devices_summary(devices)}")
+
+
+def _print_memory_analysis(*, label: str, compiled: object) -> None:
+    mem_fn = getattr(compiled, "memory_analysis", None)
+    if not callable(mem_fn):
+        print(f"{label}: memory_analysis() unavailable for this JAX executable")
+        return
+
+    stats = mem_fn()
+    print(f"{label}:")
+    for field in ("argument_size_in_bytes", "output_size_in_bytes", "temp_size_in_bytes"):
+        v = getattr(stats, field, None)
+        if v is None:
+            continue
+        v_int = int(v)
+        print(f"    {field}: {v_int} ({_format_bytes(v_int)})")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="GRPO fused-kernel sandbox benchmark (TPU-only)")
     _ = parser.add_argument(
@@ -40,7 +102,7 @@ def main() -> int:
         default="both",
         help="Benchmark forward, backward (value_and_grad), or both.",
     )
-    _ = parser.add_argument("--batch", type=int, default=16)
+    _ = parser.add_argument("--batch", type=int, default=1)
     _ = parser.add_argument("--seq-len", type=int, default=4096)
     _ = parser.add_argument("--vocab", type=int, default=151936)
     _ = parser.add_argument("--iters", type=int, default=10)
@@ -51,7 +113,7 @@ def main() -> int:
     class Args(argparse.Namespace):
         # Defaults match the parser defaults; argparse will overwrite them.
         mode: str = "both"
-        batch: int = 16
+        batch: int = 1
         seq_len: int = 4096
         vocab: int = 151936
         iters: int = 10
@@ -69,11 +131,19 @@ def main() -> int:
         print("JAX is required for the benchmark. Install JAX and run on TPU.")
         return 0
 
-    if not any(d.platform == "tpu" for d in jax.devices()):
+    devices = list(jax.devices())
+    _print_env_info(jax_mod=jax, devices=devices)
+
+    if not any(getattr(d, "platform", None) == "tpu" for d in devices):
         print("TPU required. Set PJRT_DEVICE=TPU (or equivalent) and rerun on a TPU runtime.")
         return 0
 
     bsz, seq_len, vocab = args.batch, args.seq_len, args.vocab
+    print(
+        "config:"
+        f" mode={args.mode} batch={bsz} seq_len={seq_len} vocab={vocab}"
+        f" iters={args.iters} logits_dtype=bf16"
+    )
     key = jax.random.PRNGKey(0)
     k1, k2, k3 = jax.random.split(key, 3)
     # Logits are large at the target shape; bf16 keeps memory manageable.
@@ -175,13 +245,24 @@ def main() -> int:
     if args.mode in ("forward", "both"):
         ref_fn, fused_fn = _make_forward_fns()
 
-        # Warmup
-        _block_tree(ref_fn(logits, old_logp, ref_logp, completion_ids, advantages))
-        _block_tree(fused_fn(logits, old_logp, ref_logp, completion_ids, advantages))
+        ref_compiled = ref_fn.lower(logits, old_logp, ref_logp, completion_ids, advantages).compile()
+        fused_compiled = fused_fn.lower(
+            logits, old_logp, ref_logp, completion_ids, advantages
+        ).compile()
 
-        out_ref, ref_ms = _time_loop(ref_fn, logits, old_logp, ref_logp, completion_ids, advantages)
+        print("forward memory (compiled):")
+        _print_memory_analysis(label="  ref", compiled=ref_compiled)
+        _print_memory_analysis(label="  fused", compiled=fused_compiled)
+
+        # Warmup
+        _block_tree(ref_compiled(logits, old_logp, ref_logp, completion_ids, advantages))
+        _block_tree(fused_compiled(logits, old_logp, ref_logp, completion_ids, advantages))
+
+        out_ref, ref_ms = _time_loop(
+            ref_compiled, logits, old_logp, ref_logp, completion_ids, advantages
+        )
         out_fused, fused_ms = _time_loop(
-            fused_fn, logits, old_logp, ref_logp, completion_ids, advantages
+            fused_compiled, logits, old_logp, ref_logp, completion_ids, advantages
         )
 
         print("forward:")
@@ -202,14 +283,19 @@ def main() -> int:
     if args.mode in ("grad", "both"):
         ref_vg, fused_vg = _make_grad_fns()
 
-        # Warmup
-        _block_tree(ref_vg(logits, old_logp, ref_logp, completion_ids, advantages))
-        _block_tree(fused_vg(logits, old_logp, ref_logp, completion_ids, advantages))
+        ref_compiled = ref_vg.lower(logits, old_logp, ref_logp, completion_ids, advantages).compile()
+        fused_compiled = fused_vg.lower(logits, old_logp, ref_logp, completion_ids, advantages).compile()
 
-        out_ref, ref_ms = _time_loop(ref_vg, logits, old_logp, ref_logp, completion_ids, advantages)
-        out_fused, fused_ms = _time_loop(
-            fused_vg, logits, old_logp, ref_logp, completion_ids, advantages
-        )
+        print("grad memory (compiled):")
+        _print_memory_analysis(label="  ref", compiled=ref_compiled)
+        _print_memory_analysis(label="  fused", compiled=fused_compiled)
+
+        # Warmup
+        _block_tree(ref_compiled(logits, old_logp, ref_logp, completion_ids, advantages))
+        _block_tree(fused_compiled(logits, old_logp, ref_logp, completion_ids, advantages))
+
+        out_ref, ref_ms = _time_loop(ref_compiled, logits, old_logp, ref_logp, completion_ids, advantages)
+        out_fused, fused_ms = _time_loop(fused_compiled, logits, old_logp, ref_logp, completion_ids, advantages)
 
         (ref_loss_s, ref_grad), (fused_loss_s, fused_grad) = out_ref, out_fused
         loss_diff = jnp.abs(jnp.asarray(ref_loss_s) - jnp.asarray(fused_loss_s)).item()

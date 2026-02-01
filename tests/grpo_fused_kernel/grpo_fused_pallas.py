@@ -231,16 +231,16 @@ def _grpo_fused_forward_pallas_with_intermediates(
         )
         l_block = jax.lax.select(t_in_bounds, l_block, jnp.zeros_like(l_block))
 
-        m_block_ref[...] = block_m
-        l_block_ref[...] = l_block
+        m_block_ref[...] = block_m[None, :, :]
+        l_block_ref[...] = l_block[None, :, :]
 
     out_shape = (
-        jax.ShapeDtypeStruct((num_tokens, vocab_blocks), dtype=jnp.float32),  # m_blocks
-        jax.ShapeDtypeStruct((num_tokens, vocab_blocks), dtype=jnp.float32),  # l_blocks
+        jax.ShapeDtypeStruct((vocab_blocks, num_tokens, 1), dtype=jnp.float32),  # m_blocks
+        jax.ShapeDtypeStruct((vocab_blocks, num_tokens, 1), dtype=jnp.float32),  # l_blocks
     )
 
     logits_spec = pl.BlockSpec((BLOCK_T, BLOCK_V), lambda pid_t, pid_v: (pid_t, pid_v))
-    ml_spec = pl.BlockSpec((BLOCK_T, 1), lambda pid_t, pid_v: (pid_t, pid_v))
+    ml_spec = pl.BlockSpec((1, BLOCK_T, 1), lambda pid_t, pid_v: (pid_v, pid_t, 0))
 
     call = pl.pallas_call(
         kernel,
@@ -258,12 +258,14 @@ def _grpo_fused_forward_pallas_with_intermediates(
     )
 
     m_blocks, l_blocks = call(logits_flat)
+    m_blocks_sq = jnp.squeeze(m_blocks, axis=2)
+    l_blocks_sq = jnp.squeeze(l_blocks, axis=2)
 
     # Reduce block-wise logsumexp state on the JAX side:
     #   m = max_i m_i
     #   l = sum_i l_i * exp(m_i - m)
-    m_flat = jnp.max(m_blocks, axis=1)
-    l_flat = jnp.sum(l_blocks * jnp.exp(m_blocks - m_flat[:, None]), axis=1)
+    m_flat = jnp.max(m_blocks_sq, axis=0)
+    l_flat = jnp.sum(l_blocks_sq * jnp.exp(m_blocks_sq - m_flat[None, :]), axis=0)
 
     # Gather the selected token logit outside the kernel (avoid per-block
     # one_hot / max selection logic inside Pallas).

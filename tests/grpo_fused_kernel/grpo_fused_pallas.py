@@ -78,10 +78,12 @@ def _select_block_v() -> int:
     if "v6" in device_kind:
         return 512
     if "v4" in device_kind:
-        # TPU v4 Mosaic: wider reduce (e.g. 256) can lower to unsupported
-        # sublane-gather patterns for row-wise reductions (max/sum). Keep the
-        # reduction width at 128 for maximum compatibility.
-        return 128
+        # On TPU v4, the forward uses a streaming logsumexp reduction over the
+        # vocab axis (`dimension_semantics=("parallel","arbitrary")`). Increase
+        # BLOCK_V to reduce the number of sequential vocab blocks, but implement
+        # row-wise reductions via 128-wide segmented reductions to avoid Mosaic
+        # sublane-gather lowering.
+        return 1024
     return 128
 
 
@@ -188,10 +190,16 @@ def _grpo_fused_forward_pallas_with_intermediates(
     vocab_blocks = _ceil_div(vocab_size, BLOCK_V)
 
     # Kernel captures shapes and hyperparameters as static values.
+    #
+    # Forward kernel only computes the streaming logsumexp state (m, l). The
+    # selected token logit and the GRPO objective are computed on the JAX side
+    # to keep the kernel lightweight and avoid extra HBM traffic.
     def kernel(
         logits_ref,
-        m_block_ref,
-        l_block_ref,
+        m_ref,
+        l_ref,
+        m_scratch_ref,
+        l_scratch_ref,
     ):
         pid_t = pl.program_id(0)
         pid_v = pl.program_id(1)
@@ -219,28 +227,60 @@ def _grpo_fused_forward_pallas_with_intermediates(
             jnp.full_like(logits_tile, -jnp.inf),
         )
 
-        # NOTE: TPU v4 Mosaic: avoid rank-1 vectors. keepdims keeps the
-        # reduction output at shape (BLOCK_T, 1) and compiles reliably.
-        block_m = jnp.max(logits_tile, axis=1, keepdims=True)
+        @pl.when(pid_v == 0)
+        def _init_state():
+            m_scratch_ref[...] = jnp.full((BLOCK_T, 1), -jnp.inf, dtype=jnp.float32)
+            l_scratch_ref[...] = jnp.zeros((BLOCK_T, 1), dtype=jnp.float32)
+
+        m_prev = jnp.asarray(m_scratch_ref[...]).astype(jnp.float32)
+        l_prev = jnp.asarray(l_scratch_ref[...]).astype(jnp.float32)
+
+        # Avoid NaNs on out-of-bounds token padding by forcing a valid running
+        # state. (These lanes won't be written back due to out-of-bounds
+        # masking in the BlockSpec.)
+        m_prev = jax.lax.select(t_in_bounds, m_prev, jnp.zeros_like(m_prev))
+        l_prev = jax.lax.select(t_in_bounds, l_prev, jnp.zeros_like(l_prev))
+
+        # Segmented row-wise reductions: reshape into (SEG, 128) chunks to keep
+        # TPU v4 reductions at width 128 (avoid sublane-gather lowering).
+        seg = BLOCK_V // 128
+        logits_seg = logits_tile.reshape((BLOCK_T, seg, 128))
+        seg_max = jnp.max(logits_seg, axis=2, keepdims=True)  # (BLOCK_T, seg, 1)
+        block_m = jnp.max(seg_max, axis=1, keepdims=True)  # (BLOCK_T, 1, 1)
+        block_m = block_m.reshape((BLOCK_T, 1))
+
         # Avoid (-inf) - (-inf) -> NaN on padded token rows.
         block_m = jax.lax.select(t_in_bounds, block_m, jnp.zeros_like(block_m))
-        l_block = jnp.sum(
-            jnp.exp(logits_tile - block_m),
-            axis=1,
-            keepdims=True,
-        )
-        l_block = jax.lax.select(t_in_bounds, l_block, jnp.zeros_like(l_block))
 
-        m_block_ref[...] = block_m[None, :, :]
-        l_block_ref[...] = l_block[None, :, :]
+        m_next = jnp.maximum(m_prev, block_m)
+        alpha = jnp.exp(m_prev - m_next)
+
+        logits_minus = (logits_tile - m_next).reshape((BLOCK_T, seg, 128))
+        seg_sum = jnp.sum(jnp.exp(logits_minus), axis=2, keepdims=True)  # (BLOCK_T, seg, 1)
+        block_l = jnp.sum(seg_sum, axis=1, keepdims=True)  # (BLOCK_T, 1, 1)
+        block_l = block_l.reshape((BLOCK_T, 1))
+        block_l = jax.lax.select(t_in_bounds, block_l, jnp.zeros_like(block_l))
+
+        l_next = l_prev * alpha + block_l
+
+        # Update accumulators for the next vocab block.
+        m_scratch_ref[...] = m_next
+        l_scratch_ref[...] = l_next
+
+        @pl.when(pid_v == vocab_blocks - 1)
+        def _write_final():
+            m_safe = jax.lax.select(t_in_bounds, m_next, jnp.zeros_like(m_next))
+            l_safe = jax.lax.select(t_in_bounds, l_next, jnp.ones_like(l_next))
+            m_ref[...] = m_safe
+            l_ref[...] = l_safe
 
     out_shape = (
-        jax.ShapeDtypeStruct((vocab_blocks, num_tokens, 1), dtype=jnp.float32),  # m_blocks
-        jax.ShapeDtypeStruct((vocab_blocks, num_tokens, 1), dtype=jnp.float32),  # l_blocks
+        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.float32),  # m
+        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.float32),  # l
     )
 
     logits_spec = pl.BlockSpec((BLOCK_T, BLOCK_V), lambda pid_t, pid_v: (pid_t, pid_v))
-    ml_spec = pl.BlockSpec((1, BLOCK_T, 1), lambda pid_t, pid_v: (pid_v, pid_t, 0))
+    token_spec = pl.BlockSpec((BLOCK_T, 1), lambda pid_t, pid_v: (pid_t, 0))
 
     call = pl.pallas_call(
         kernel,
@@ -248,24 +288,22 @@ def _grpo_fused_forward_pallas_with_intermediates(
             num_scalar_prefetch=0,
             grid=(token_blocks, vocab_blocks),
             in_specs=[logits_spec],
-            out_specs=[ml_spec, ml_spec],
+            out_specs=[token_spec, token_spec],
+            scratch_shapes=[
+                pltpu.VMEM((BLOCK_T, 1), jnp.float32),  # m
+                pltpu.VMEM((BLOCK_T, 1), jnp.float32),  # l
+            ],
         ),
         out_shape=out_shape,
         interpret=interpret,
         compiler_params=pltpu.CompilerParams(
-            dimension_semantics=("parallel", "parallel"),
+            dimension_semantics=("parallel", "arbitrary"),
         ),
     )
 
-    m_blocks, l_blocks = call(logits_flat)
-    m_blocks_sq = jnp.squeeze(m_blocks, axis=2)
-    l_blocks_sq = jnp.squeeze(l_blocks, axis=2)
-
-    # Reduce block-wise logsumexp state on the JAX side:
-    #   m = max_i m_i
-    #   l = sum_i l_i * exp(m_i - m)
-    m_flat = jnp.max(m_blocks_sq, axis=0)
-    l_flat = jnp.sum(l_blocks_sq * jnp.exp(m_blocks_sq - m_flat[None, :]), axis=0)
+    m_flat_2d, l_flat_2d = call(logits_flat)
+    m_flat = jnp.squeeze(m_flat_2d, axis=1)
+    l_flat = jnp.squeeze(l_flat_2d, axis=1)
 
     # Gather the selected token logit outside the kernel (avoid per-block
     # one_hot / max selection logic inside Pallas).

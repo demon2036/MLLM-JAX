@@ -78,7 +78,10 @@ def _select_block_v() -> int:
     if "v6" in device_kind:
         return 512
     if "v4" in device_kind:
-        return 256
+        # TPU v4 Mosaic: wider reduce (e.g. 256) can lower to unsupported
+        # sublane-gather patterns for row-wise reductions (max/sum). Keep the
+        # reduction width at 128 for maximum compatibility.
+        return 128
     return 128
 
 

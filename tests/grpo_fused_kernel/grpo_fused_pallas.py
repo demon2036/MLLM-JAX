@@ -190,20 +190,8 @@ def _grpo_fused_forward_pallas_with_intermediates(
     # Kernel captures shapes and hyperparameters as static values.
     def kernel(
         logits_ref,
-        ids_ref,
-        old_logp_ref,
-        ref_logp_ref,
-        adv_ref,
-        mask_ref,
-        m_ref,
-        l_ref,
-        token_logit_ref,
-        loss_ref,
-        kl_ref,
-        is_clipped_ref,
-        m_scratch_ref,
-        l_scratch_ref,
-        token_logit_scratch_ref,
+        m_block_ref,
+        l_block_ref,
     ):
         pid_t = pl.program_id(0)
         pid_v = pl.program_id(1)
@@ -211,34 +199,17 @@ def _grpo_fused_forward_pallas_with_intermediates(
         # Hyperparams may be traced scalars under jax.jit; keep them as JAX
         # scalars inside the kernel (no Python float() / Python branching).
         temp = jnp.asarray(temperature, dtype=jnp.float32)
-        eps_low_f = jnp.asarray(eps_low, dtype=jnp.float32)
-        eps_high_f = jnp.asarray(eps_high, dtype=jnp.float32)
-        beta_f = jnp.asarray(beta, dtype=jnp.float32)
-        one_f = jnp.asarray(1.0, dtype=jnp.float32)
 
         t_start = pid_t * BLOCK_T
         rows = t_start + jnp.arange(BLOCK_T, dtype=jnp.int32)[:, None]
         t_in_bounds = rows < num_tokens
-        t_in_bounds_i32 = jax.lax.select(
-            t_in_bounds,
-            jnp.ones_like(rows, dtype=jnp.int32),
-            jnp.zeros_like(rows, dtype=jnp.int32),
-        )
 
         v_start = pid_v * BLOCK_V
 
         # Load current vocab tile and mask out padded tail.
         cols = v_start + jnp.arange(BLOCK_V, dtype=jnp.int32)[None, :]
         v_in_bounds = cols < vocab_size
-        v_in_bounds_i32 = jax.lax.select(
-            v_in_bounds,
-            jnp.ones_like(cols, dtype=jnp.int32),
-            jnp.zeros_like(cols, dtype=jnp.int32),
-        )
-
-        tv_mask_i32 = jnp.broadcast_to(t_in_bounds_i32, (BLOCK_T, BLOCK_V))
-        v_mask_i32 = jnp.broadcast_to(v_in_bounds_i32, (BLOCK_T, BLOCK_V))
-        active_mask = (tv_mask_i32 != 0) & (v_mask_i32 != 0)
+        active_mask = t_in_bounds & v_in_bounds
 
         logits_block = jnp.asarray(logits_ref[...])
         logits_tile = logits_block.astype(jnp.float32) / temp
@@ -248,172 +219,109 @@ def _grpo_fused_forward_pallas_with_intermediates(
             jnp.full_like(logits_tile, -jnp.inf),
         )
 
-        @pl.when(pid_v == 0)
-        def _init_state():
-            m_scratch_ref[...] = jnp.full((BLOCK_T, 1), -jnp.inf, dtype=jnp.float32)
-            l_scratch_ref[...] = jnp.zeros((BLOCK_T, 1), dtype=jnp.float32)
-            token_logit_scratch_ref[...] = jnp.full((BLOCK_T, 1), -jnp.inf, dtype=jnp.float32)
-
-        m_prev = jnp.asarray(m_scratch_ref[...]).astype(jnp.float32)
-        l_prev = jnp.asarray(l_scratch_ref[...]).astype(jnp.float32)
-        token_prev = jnp.asarray(token_logit_scratch_ref[...]).astype(jnp.float32)
-
-        # Avoid NaNs on out-of-bounds token padding by forcing a valid running
-        # state. (These lanes won't be written back due to out-of-bounds
-        # masking in the BlockSpec.)
-        m_prev = jax.lax.select(t_in_bounds, m_prev, jnp.zeros_like(m_prev))
-        l_prev = jax.lax.select(t_in_bounds, l_prev, jnp.zeros_like(l_prev))
-        token_prev = jax.lax.select(t_in_bounds, token_prev, jnp.zeros_like(token_prev))
-
         # NOTE: TPU v4 Mosaic: avoid rank-1 vectors. keepdims keeps the
         # reduction output at shape (BLOCK_T, 1) and compiles reliably.
         block_m = jnp.max(logits_tile, axis=1, keepdims=True)
+        # Avoid (-inf) - (-inf) -> NaN on padded token rows.
         block_m = jax.lax.select(t_in_bounds, block_m, jnp.zeros_like(block_m))
-        m_next = jnp.maximum(m_prev, block_m)
-        alpha = jnp.exp(m_prev - m_next)
-        l_next = l_prev * alpha + jnp.sum(
-            jnp.exp(logits_tile - m_next),
+        l_block = jnp.sum(
+            jnp.exp(logits_tile - block_m),
             axis=1,
             keepdims=True,
         )
+        l_block = jax.lax.select(t_in_bounds, l_block, jnp.zeros_like(l_block))
 
-        # Update accumulators for the next vocab block.
-        m_scratch_ref[...] = m_next
-        l_scratch_ref[...] = l_next
-
-        # Track the selected logit for each token during the reduction.
-        token_ids = jnp.asarray(ids_ref[...]).astype(jnp.int32)
-        token_ids = jax.lax.select(t_in_bounds, token_ids, jnp.zeros_like(token_ids))
-        local_idx = token_ids - v_start
-        in_block = (local_idx >= 0) & (local_idx < BLOCK_V)
-        ar = jnp.arange(BLOCK_V, dtype=jnp.int32)[None, :]
-        selected = jnp.max(
-            jax.lax.select(
-                ar == local_idx,
-                logits_tile,
-                jnp.full_like(logits_tile, -jnp.inf),
-            ),
-            axis=1,
-            keepdims=True,
-        )
-        token_logit = jax.lax.select(in_block, selected, token_prev)
-        token_logit_scratch_ref[...] = token_logit
-
-        @pl.when(pid_v == vocab_blocks - 1)
-        def _write_final():
-            # Persist final reduction state for the backward pass.
-            m_ref[...] = m_next
-            l_ref[...] = l_next
-            token_logit_ref[...] = token_logit
-
-            # Make padded rows numerically safe; we will drop them via keep_i32.
-            m_safe = jax.lax.select(t_in_bounds, m_next, jnp.zeros_like(m_next))
-            l_safe = jax.lax.select(t_in_bounds, l_next, jnp.ones_like(l_next))
-            token_logit_safe = jax.lax.select(
-                t_in_bounds,
-                token_logit,
-                jnp.zeros_like(token_logit),
-            )
-
-            lse = m_safe + jnp.log(l_safe)
-            logp = token_logit_safe - lse
-
-            old = jnp.asarray(old_logp_ref[...]).astype(jnp.float32)
-            ref = jnp.asarray(ref_logp_ref[...]).astype(jnp.float32)
-            adv = jnp.asarray(adv_ref[...]).astype(jnp.float32)
-
-            old = jax.lax.select(t_in_bounds, old, jnp.zeros_like(old))
-            ref = jax.lax.select(t_in_bounds, ref, jnp.zeros_like(ref))
-            adv = jax.lax.select(t_in_bounds, adv, jnp.zeros_like(adv))
-
-            ratio = jnp.exp(logp - old)
-            clipped_ratio = jnp.minimum(
-                jnp.maximum(ratio, one_f - eps_low_f),
-                one_f + eps_high_f,
-            )
-
-            per_token_loss1 = ratio * adv
-            per_token_loss2 = clipped_ratio * adv
-            loss = -jnp.minimum(per_token_loss1, per_token_loss2)
-
-            is_low_clipped = (ratio < one_f - eps_low_f) & (adv < 0.0)
-            is_high_clipped = (ratio > one_f + eps_high_f) & (adv > 0.0)
-            is_clipped = is_low_clipped | is_high_clipped
-
-            delta = ref - logp
-            kl = jnp.exp(delta) - delta - one_f
-            loss = loss + beta_f * kl
-
-            keep_i32 = jnp.asarray(mask_ref[...]).astype(jnp.int32)
-            keep_i32 = jax.lax.select(t_in_bounds, keep_i32, jnp.zeros_like(keep_i32))
-            keep = keep_i32 != 0
-
-            loss_ref[...] = jax.lax.select(keep, loss, jnp.zeros_like(loss))
-            kl_ref[...] = jax.lax.select(keep, kl, jnp.zeros_like(kl))
-
-            # Avoid i32->i1 truncation (Mosaic) by never doing astype(bool_).
-            is_clipped_i32 = jax.lax.select(
-                is_clipped,
-                jnp.ones_like(keep_i32, dtype=jnp.int32),
-                jnp.zeros_like(keep_i32, dtype=jnp.int32),
-            )
-            is_clipped_ref[...] = jax.lax.select(
-                keep,
-                is_clipped_i32,
-                jnp.zeros_like(is_clipped_i32),
-            )
+        m_block_ref[...] = block_m
+        l_block_ref[...] = l_block
 
     out_shape = (
-        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.float32),  # m
-        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.float32),  # l
-        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.float32),  # token_logit
-        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.float32),  # loss
-        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.float32),  # kl
-        jax.ShapeDtypeStruct((num_tokens, 1), dtype=jnp.int32),  # is_clipped
+        jax.ShapeDtypeStruct((num_tokens, vocab_blocks), dtype=jnp.float32),  # m_blocks
+        jax.ShapeDtypeStruct((num_tokens, vocab_blocks), dtype=jnp.float32),  # l_blocks
     )
 
     logits_spec = pl.BlockSpec((BLOCK_T, BLOCK_V), lambda pid_t, pid_v: (pid_t, pid_v))
-    token_spec = pl.BlockSpec((BLOCK_T, 1), lambda pid_t, pid_v: (pid_t, 0))
+    ml_spec = pl.BlockSpec((BLOCK_T, 1), lambda pid_t, pid_v: (pid_t, pid_v))
 
     call = pl.pallas_call(
         kernel,
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             grid=(token_blocks, vocab_blocks),
-            in_specs=[logits_spec, token_spec, token_spec, token_spec, token_spec, token_spec],
-            out_specs=[token_spec] * 6,
-            scratch_shapes=[
-                pltpu.VMEM((BLOCK_T, 1), jnp.float32),  # m
-                pltpu.VMEM((BLOCK_T, 1), jnp.float32),  # l
-                pltpu.VMEM((BLOCK_T, 1), jnp.float32),  # token_logit
-            ],
+            in_specs=[logits_spec],
+            out_specs=[ml_spec, ml_spec],
         ),
         out_shape=out_shape,
         interpret=interpret,
         compiler_params=pltpu.CompilerParams(
-            dimension_semantics=("parallel", "arbitrary"),
+            dimension_semantics=("parallel", "parallel"),
         ),
     )
 
-    m_flat_2d, l_flat_2d, token_logit_flat_2d, loss_flat_2d, kl_flat_2d, clipped_flat_2d = call(
-        logits_flat,
-        ids_flat,
-        old_logp_flat,
-        ref_logp_flat,
-        adv_flat,
-        mask_flat,
+    m_blocks, l_blocks = call(logits_flat)
+
+    # Reduce block-wise logsumexp state on the JAX side:
+    #   m = max_i m_i
+    #   l = sum_i l_i * exp(m_i - m)
+    m_flat = jnp.max(m_blocks, axis=1)
+    l_flat = jnp.sum(l_blocks * jnp.exp(m_blocks - m_flat[:, None]), axis=1)
+
+    # Gather the selected token logit outside the kernel (avoid per-block
+    # one_hot / max selection logic inside Pallas).
+    temp = jnp.asarray(temperature, dtype=jnp.float32)
+    token_logit_flat = (
+        jnp.take_along_axis(logits_flat, ids_flat, axis=1)[:, 0].astype(jnp.float32) / temp
     )
 
-    m_flat = jnp.squeeze(m_flat_2d, axis=1)
-    l_flat = jnp.squeeze(l_flat_2d, axis=1)
-    token_logit_flat = jnp.squeeze(token_logit_flat_2d, axis=1)
-    loss_flat = jnp.squeeze(loss_flat_2d, axis=1)
-    kl_flat = jnp.squeeze(kl_flat_2d, axis=1)
-    clipped_flat = jnp.squeeze(clipped_flat_2d, axis=1)
+    lse = m_flat + jnp.log(l_flat)
+    logp = token_logit_flat - lse
+
+    old = jnp.squeeze(old_logp_flat, axis=1)
+    ref = jnp.squeeze(ref_logp_flat, axis=1)
+    adv = jnp.squeeze(adv_flat, axis=1)
+    keep_i32 = jnp.squeeze(mask_flat, axis=1)
+
+    eps_low_f = jnp.asarray(eps_low, dtype=jnp.float32)
+    eps_high_f = jnp.asarray(eps_high, dtype=jnp.float32)
+    beta_f = jnp.asarray(beta, dtype=jnp.float32)
+    one_f = jnp.asarray(1.0, dtype=jnp.float32)
+
+    ratio = jnp.exp(logp - old)
+    clipped_ratio = jnp.minimum(
+        jnp.maximum(ratio, one_f - eps_low_f),
+        one_f + eps_high_f,
+    )
+
+    per_token_loss1 = ratio * adv
+    per_token_loss2 = clipped_ratio * adv
+    loss_flat = -jnp.minimum(per_token_loss1, per_token_loss2)
+
+    is_low_clipped = (ratio < one_f - eps_low_f) & (adv < 0.0)
+    is_high_clipped = (ratio > one_f + eps_high_f) & (adv > 0.0)
+    is_clipped_bool = is_low_clipped | is_high_clipped
+
+    delta = ref - logp
+    kl_flat = jnp.exp(delta) - delta - one_f
+    loss_flat = loss_flat + beta_f * kl_flat
+
+    keep = keep_i32 != 0
+    loss_flat = jax.lax.select(keep, loss_flat, jnp.zeros_like(loss_flat))
+    kl_flat = jax.lax.select(keep, kl_flat, jnp.zeros_like(kl_flat))
+
+    # Avoid i32->i1 truncation (Mosaic) by never doing astype(bool_).
+    is_clipped_i32_flat = jax.lax.select(
+        is_clipped_bool,
+        jnp.ones_like(keep_i32, dtype=jnp.int32),
+        jnp.zeros_like(keep_i32, dtype=jnp.int32),
+    )
+    is_clipped_i32_flat = jax.lax.select(
+        keep,
+        is_clipped_i32_flat,
+        jnp.zeros_like(is_clipped_i32_flat),
+    )
 
     loss = loss_flat.reshape((bsz, seq_len))
     kl = kl_flat.reshape((bsz, seq_len))
-    is_clipped = clipped_flat.reshape((bsz, seq_len))
+    is_clipped = is_clipped_i32_flat.reshape((bsz, seq_len))
     return loss, kl, is_clipped, m_flat, l_flat, token_logit_flat
 
 

@@ -183,3 +183,50 @@
 - Per task requirement, this run did **not** delete the TPU VM.
   When you want to stop billing:
   - `./scripts/delete_tpu_vm.sh --name plugins-refactor-sid-sft-muon-260131052355 --zone us-central2-b`
+
+## Extra: Beam=50 TEST eval (Top-K up to 50)
+
+> Use these to compare against upstream-reported Top-K lists that include 50.
+> On v4-8, set `eval.batch_size=1` for `num_beams=50` to avoid OOM.
+
+### SFT-only: right-pad best checkpoint (beam=50, test split)
+
+- Config:
+  - `projects/sid_sft/configs/eval/v4-8/sid_sft_jax_eval_test_beam50_from_rightpad_best_20260201.yaml`
+- Command:
+  - `./scripts/ssh_tpu_vm_root.sh --name plugins-refactor-sid-sft-muon-260131052355 --zone us-central2-b --project civil-rarity-482610-s5 --env-file /root/.env --command 'bash -lc \"set -euo pipefail; export PYTHONUNBUFFERED=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; rm -rf runs/sid_sft_jax_eval_test_beam50_from_rightpad_best_20260201; mkdir -p runs/sid_sft_jax_eval_test_beam50_from_rightpad_best_20260201; bash scripts/run_sid_sft.sh --config projects/sid_sft/configs/eval/v4-8/sid_sft_jax_eval_test_beam50_from_rightpad_best_20260201.yaml --run-mode eval 2>&1 | tee runs/sid_sft_jax_eval_test_beam50_from_rightpad_best_20260201/tpu_eval.log\"''`
+- Output dir:
+  - `runs/sid_sft_jax_eval_test_beam50_from_rightpad_best_20260201/`
+- W&B run (online):
+  - `johntitordemon2036/minionerec-sid-sft/runs/o2bochmf`
+- Eval (test split, beams=50, samples=4533, invalid=0):
+  - HR@10=`0.14560`, NDCG@10=`0.10660`, HR@50=`0.23759`
+
+### RL: 20-step smoke best checkpoint (beam=50, test split)
+
+- Config:
+  - `projects/minionerec_rl/configs/v4-8/minionerec_rl_eval_test_beam50_from_steps20_rl_best_pb256_20260201.yaml`
+- Command:
+  - `./scripts/ssh_tpu_vm_root.sh --name plugins-refactor-sid-sft-muon-260131052355 --zone us-central2-b --project civil-rarity-482610-s5 --env-file /root/.env --command 'bash -lc \"set -euo pipefail; export PYTHONUNBUFFERED=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; rm -rf runs/minionerec_rl_eval_test_beam50_from_steps20_rl_best_pb256_20260201; mkdir -p runs/minionerec_rl_eval_test_beam50_from_steps20_rl_best_pb256_20260201; bash scripts/run_minionerec_rl.sh --config projects/minionerec_rl/configs/v4-8/minionerec_rl_eval_test_beam50_from_steps20_rl_best_pb256_20260201.yaml --run-mode eval 2>&1 | tee runs/minionerec_rl_eval_test_beam50_from_steps20_rl_best_pb256_20260201/tpu_eval.log\"''`
+- Output dir:
+  - `runs/minionerec_rl_eval_test_beam50_from_steps20_rl_best_pb256_20260201/`
+- W&B run (online):
+  - `johntitordemon2036/minionerec-sid-rl/runs/2idlw8jy`
+- Eval (test split, beams=50, samples=4533, invalid=0):
+  - HR@10=`0.15420`, NDCG@10=`0.11175`, HR@50=`0.24200`
+
+### RL: pb256 e2 run epoch1 best@step=104 (beam=50, test split) — regressed
+
+- Config:
+  - `projects/minionerec_rl/configs/v4-8/minionerec_rl_eval_test_beam50_from_rl_best_pb256_meshauto_20260201.yaml`
+- Output dir:
+  - `runs/minionerec_rl_eval_test_beam50_from_rl_best_pb256_meshauto_20260201/`
+- W&B run (online):
+  - `johntitordemon2036/minionerec-sid-rl/runs/0jgwdr9q`
+- Eval (test split, beams=50, samples=4533, invalid=0):
+  - HR@10=`0.13501`, NDCG@10=`0.09851`, HR@50=`0.21046`
+
+### Note: best-checkpoint selection frequency matters
+
+- The pb256 `e2` config evaluates only once per epoch (`train.eval_steps: 0` → `steps_per_epoch`), so it can miss earlier peaks.
+- Upstream `rl.sh` uses `--eval_step 0.0999` (≈10 evals/epoch); to align, set `train.eval_steps` to ~`10` or `20` in our YAML.

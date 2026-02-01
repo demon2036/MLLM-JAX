@@ -83,7 +83,7 @@ def _select_block_v() -> int:
         # BLOCK_V to reduce the number of sequential vocab blocks, but implement
         # row-wise reductions via 128-wide segmented reductions to avoid Mosaic
         # sublane-gather lowering.
-        return 2048
+        return 4096
     return 128
 
 

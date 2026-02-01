@@ -36,6 +36,21 @@
 - Cross-check HR/NDCG with upstream `calc.py` (same predictions JSON):
   - `scripts/ssh_tpu_vm_root.sh --name "$TPU_NAME" --zone us-central2-b --project "$(gcloud config get-value project)" --command 'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; python workdir/MiniOneRec/calc.py --path runs/sid_sft_jax_smoke_qwen25_1p5b_instruct_industrial_tpu/eval_predictions.json --item_path workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt'`
 
+## Extra: Eval TEST split from a saved SFT checkpoint (v4-8, beam=20)
+
+- Config:
+  - `projects/sid_sft/configs/eval/v4-8/sid_sft_jax_eval_test_beam20_from_rightpad_best_20260201.yaml`
+- Command:
+  - `scripts/ssh_tpu_vm_root.sh --name plugins-refactor-sid-sft-muon-260131052355 --zone us-central2-b --project civil-rarity-482610-s5 --env-file /root/.env --command 'bash -lc "set -euo pipefail; export PYTHONUNBUFFERED=1; export HF_HUB_ENABLE_HF_TRANSFER=1; rm -f /tmp/libtpu_lockfile || true; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; cd /root/MLLM-JAX; rm -rf runs/sid_sft_jax_eval_test_beam20_from_rightpad_best_20260201; mkdir -p runs/sid_sft_jax_eval_test_beam20_from_rightpad_best_20260201; bash scripts/run_sid_sft.sh --config projects/sid_sft/configs/eval/v4-8/sid_sft_jax_eval_test_beam20_from_rightpad_best_20260201.yaml --run-mode eval 2>&1 | tee runs/sid_sft_jax_eval_test_beam20_from_rightpad_best_20260201/tpu_eval.log"'`
+- Output dir:
+  - `runs/sid_sft_jax_eval_test_beam20_from_rightpad_best_20260201/`
+- W&B run (online):
+  - `johntitordemon2036/minionerec-sid-sft/runs/pwdgs5sf`
+- Eval (test split, beams=20, samples=4533, invalid=0):
+  - HR@3=`0.10457`, NDCG@3=`0.09172`
+  - HR@5=`0.11891`, NDCG@5=`0.09772`
+  - HR@10=`0.14648`, NDCG@10=`0.10658`
+
 ## Expected Result
 
 - TPU run exits `0` and writes under `output_dir`:

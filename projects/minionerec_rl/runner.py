@@ -62,6 +62,9 @@ class MiniOneRecRlJaxConfig:
 @dataclass(frozen=True)
 class MiniOneRecRlRolloutConfig:
     prompt_batch_size: int = 32  # prompts per update (global)
+    # Optional: split constrained decoding (beam search) into prompt micro-batches
+    # of this size (0 => no split).
+    prompt_micro_batch_size: int = 0
     num_generations: int = 16
     prompt_pad_len: int = 256  # fixed prompt padding (no length bucketing)
     global_length: int = 512  # fixed training padding
@@ -495,6 +498,12 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
         if global_len < prompt_pad_len + 8:
             raise ValueError("rollout.global_length too small for prompt_pad_len + completion")
 
+        prompt_micro = int(getattr(cfg.rollout, "prompt_micro_batch_size", 0) or 0)
+        if prompt_micro < 0:
+            raise ValueError("rollout.prompt_micro_batch_size must be >= 0")
+        if prompt_micro > 0 and prompt_micro > int(prompt_batch):
+            raise ValueError("rollout.prompt_micro_batch_size must be <= rollout.prompt_batch_size")
+
         def _beam_search(params_in: Any, prompt_input_ids: jax.Array, prompt_true_lens: jax.Array):
             out = constrained_beam_search_sid3_prefill(
                 model=model,
@@ -552,7 +561,15 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                 true_len_arr = jnp.asarray(true_lens, dtype=jnp.int32)
 
                 # Constrained generation: top-K SIDs.
-                tok = np.asarray(beam_search_jit(state.params, prompt_arr, true_len_arr))  # [B, K, 3]
+                if prompt_micro <= 0 or prompt_micro >= int(prompt_batch):
+                    tok = np.asarray(beam_search_jit(state.params, prompt_arr, true_len_arr))  # [B, K, 3]
+                else:
+                    if int(prompt_batch) % int(prompt_micro) != 0:
+                        raise ValueError("rollout.prompt_batch_size must be divisible by rollout.prompt_micro_batch_size")
+                    tok = np.empty((int(prompt_batch), int(k), 3), dtype=np.int32)
+                    for start in range(0, int(prompt_batch), int(prompt_micro)):
+                        sl = slice(start, start + int(prompt_micro))
+                        tok[sl] = np.asarray(beam_search_jit(state.params, prompt_arr[sl], true_len_arr[sl]))
 
                 preds_grouped: list[list[str]] = []
                 for i in range(prompt_batch):
@@ -691,6 +708,7 @@ def _run_minionerec_rl_jax(cfg: MiniOneRecRlConfig, *, run_mode_norm: str) -> di
                                 "train/kl": kl,
                                 "train/completion_length": completion_length,
                                 "train/prompt_batch_size": int(prompt_batch),
+                                "train/prompt_micro_batch_size": int(prompt_micro),
                                 "train/num_generations": int(k),
                                 "train/gradient_accumulation_steps": int(update_accum_steps),
                                 "train/prompts_per_step": int(prompts_per_step),

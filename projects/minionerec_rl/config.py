@@ -40,6 +40,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "rollout": {
         "prompt_batch_size": 16,
+        # Optional: split constrained decoding into prompt micro-batches to fit
+        # TPU memory while keeping a larger effective prompt_batch_size.
+        "prompt_micro_batch_size": 0,
         "num_generations": 16,
         "prompt_pad_len": 256,
         "global_length": 512,

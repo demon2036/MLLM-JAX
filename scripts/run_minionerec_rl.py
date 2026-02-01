@@ -111,6 +111,9 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> MiniOneRecRlConf
 
     rollout = MiniOneRecRlRolloutConfig(
         prompt_batch_size=int(_get_or_default(cfg, "rollout.prompt_batch_size", DEFAULT_CONFIG["rollout"]["prompt_batch_size"])),
+        prompt_micro_batch_size=int(
+            _get_or_default(cfg, "rollout.prompt_micro_batch_size", DEFAULT_CONFIG["rollout"].get("prompt_micro_batch_size", 0))
+        ),
         num_generations=int(_get_or_default(cfg, "rollout.num_generations", DEFAULT_CONFIG["rollout"]["num_generations"])),
         prompt_pad_len=int(_get_or_default(cfg, "rollout.prompt_pad_len", DEFAULT_CONFIG["rollout"]["prompt_pad_len"])),
         global_length=int(_get_or_default(cfg, "rollout.global_length", DEFAULT_CONFIG["rollout"]["global_length"])),

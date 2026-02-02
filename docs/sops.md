@@ -61,6 +61,7 @@
 - jit8 GRPO/GSM8K YAML config (deprecated): `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 - GRPO runner batch size semantics: `docs/sops/grpo-gsm8k-runner-batch-size.md`
 - GRPO runner metrics: `docs/sops/grpo-gsm8k-metrics.md`
+- TrainGRPOModule fused GRPO kernel (env gate): `docs/sops/grpo-trainmodule-fused-kernel.md`
 - GRPO length + eval knobs: `docs/sops/grpo-gsm8k-length-and-eval.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
 - GRPO rollout backend abstraction (naive): `docs/sops/grpo-rollout-backend-abstraction-naive.md`

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Callable, Any
 
 import flax.linen as nn
@@ -77,6 +78,38 @@ def get_advantages(rewards,groups,alpha=0.2,avg_entropy_per_sample=None,entropy_
     return advantages
 
 
+def _parse_env_bool(value: str) -> bool:
+    lowered = value.strip().lower()
+    if lowered in ("1", "true", "t", "yes", "y", "on"):
+        return True
+    if lowered in ("0", "false", "f", "no", "n", "off"):
+        return False
+    raise ValueError(f"Invalid boolean env value: {value!r}")
+
+
+def _is_tpu_runtime() -> bool:
+    try:
+        return any(d.platform == "tpu" for d in jax.devices())
+    except Exception:
+        return False
+
+
+def _should_use_grpo_fused_kernel() -> bool:
+    """Return whether TrainGRPOModule should use the fused GRPO kernel path.
+
+    Env override:
+      - MLLM_JAX_GRPO_FUSED=1 enables fused
+      - MLLM_JAX_GRPO_FUSED=0 disables fused
+
+    When unset, default to TPU-only (safer).
+    """
+
+    env = os.environ.get("MLLM_JAX_GRPO_FUSED")
+    if env is not None and env.strip() != "":
+        return _parse_env_bool(env)
+    return _is_tpu_runtime()
+
+
 
 
 
@@ -116,30 +149,70 @@ class TrainGRPOModule(nn.Module):
         # --- Calculate Log Probs and Mask ---
         chosen_ids = input_ids[:, 1:]  # (B, L-1)
         # *** IMPORTANT: Use pad_token_id to create the mask correctly ***
-        mask_loss = labels[:, 1:] # Shape: [B, L-1]
+        mask_loss = labels[:, 1:].astype(jnp.int32) # Shape: [B, L-1]
         # Avoid division by zero for counts
 
-        # Log probs of chosen tokens under current policy
-        per_token_logps = jnp.take_along_axis(  # [B, L-1]
-            jax.nn.log_softmax(logits[..., :-1, :], axis=-1), chosen_ids[..., None], axis=-1
-        )[..., 0] / self.temperature
+        use_fused = _should_use_grpo_fused_kernel()
+        mask_loss_f32 = mask_loss.astype(jnp.float32)
 
-        # Log probs under reference policy (if applicable)
-        if self.beta != 0 and self.ref_model is not None:
-            ref_per_token_logps = jnp.take_along_axis(  # [B, L-1]
-                jax.nn.log_softmax(ref_logits[..., :-1, :], axis=-1), chosen_ids[..., None], axis=-1
-            )[..., 0]
+        if use_fused:
+            from plugins.training.rl.grpo import grpo_loss_logp_entropy
 
-        # --- Calculate Entropy and Rank-Based Advantages ---
-        # 1. Per-token entropy
-        probs = jax.nn.softmax(logits[..., :-1, :] / self.temperature, axis=-1)
-        # Add epsilon for numerical stability inside log
-        token_entropy = -jnp.sum(probs * jax.lax.log(probs + 1e-9), axis=-1)  # Shape: [B, L-1]
+            per_token_loss, per_token_logps, token_entropy = grpo_loss_logp_entropy(
+                logits,
+                old_logp=inputs.get("old_per_token_logps"),
+                ref_logp=None,
+                completion_ids=chosen_ids,
+                advantages=inputs["advantages"],
+                completion_mask=mask_loss,
+                temperature=float(self.temperature),
+                beta=0.0,  # keep legacy TrainGRPOModule behavior (no KL penalty in loss)
+                eps_low=float(self.epsilon_low),
+                eps_high=float(self.epsilon_high),
+                use_fused=True,
+            )
+        else:
+            # Log probs of chosen tokens under current policy
+            per_token_logps = jnp.take_along_axis(  # [B, L-1]
+                jax.nn.log_softmax(logits[..., :-1, :], axis=-1),
+                chosen_ids[..., None],
+                axis=-1,
+            )[..., 0] / self.temperature
+
+            # Log probs under reference policy (if applicable)
+            if self.beta != 0 and self.ref_model is not None:
+                ref_per_token_logps = jnp.take_along_axis(  # [B, L-1]
+                    jax.nn.log_softmax(ref_logits[..., :-1, :], axis=-1),
+                    chosen_ids[..., None],
+                    axis=-1,
+                )[..., 0]
+
+            # --- Calculate Entropy and Rank-Based Advantages ---
+            # 1. Per-token entropy
+            probs = jax.nn.softmax(logits[..., :-1, :] / self.temperature, axis=-1)
+            # Add epsilon for numerical stability inside log
+            token_entropy = -jnp.sum(probs * jax.lax.log(probs + 1e-9), axis=-1)  # Shape: [B, L-1]
+
+            # --- PPO Loss Calculation ---
+            if "old_per_token_logps" in inputs:
+                old_per_token_logps = inputs["old_per_token_logps"]
+            else:
+                old_per_token_logps = jax.lax.stop_gradient(per_token_logps)
+
+            ratio = jnp.exp(per_token_logps - old_per_token_logps)
+            clipped_ratio = jnp.clip(ratio, 1.0 - self.epsilon_low, 1.0 + self.epsilon_high)
+
+            adv_broadcast = inputs["advantages"][..., None]
+            per_token_loss1 = ratio * adv_broadcast
+            per_token_loss2 = clipped_ratio * adv_broadcast
+            per_token_ppo_loss = jnp.minimum(per_token_loss1, per_token_loss2) # Shape: [B, L-1]
+
+            per_token_loss = -per_token_ppo_loss
 
         # 2. Average entropy per sample (using the correct mask)
-        masked_token_entropy = token_entropy * mask_loss
+        masked_token_entropy = token_entropy * mask_loss_f32
         sum_entropy_per_sample = masked_token_entropy.sum(axis=-1) # Shape: [B]
-        avg_entropy_per_sample = sum_entropy_per_sample / mask_loss.sum(axis=-1) # Shape: [B]
+        avg_entropy_per_sample = sum_entropy_per_sample / mask_loss_f32.sum(axis=-1) # Shape: [B]
 
         # --- Monitoring Metrics (Optional: Original entropy/entropy_loss calculation) ---
         # These are NOT part of the main loss calculation anymore, just for logging.
@@ -155,28 +228,8 @@ class TrainGRPOModule(nn.Module):
         sum_entropy_per_sample_truncated = masked_token_entropy_truncated.sum(axis=-1)  # Shape: [B]
         avg_entropy_per_sample_truncated = sum_entropy_per_sample_truncated / entropy_calc_mask.sum(axis=-1)  # Shape: [B]
 
-        # --- PPO Loss Calculation (using the NEW rank_based_advantages) ---
-        # Get old log probs (from previous iteration or stop grad)
-        if "old_per_token_logps" in inputs:
-            old_per_token_logps = inputs["old_per_token_logps"]
-            # print(f'Using provided old_per_token_logps {old_per_token_logps.shape=}') # Removed print
-        else:
-            old_per_token_logps = jax.lax.stop_gradient(per_token_logps)
-            # print(f'Using calculated old_per_token_logps {old_per_token_logps.shape=}') # Removed print
-
-        # PPO ratio and clipping
-        ratio = jnp.exp(per_token_logps - old_per_token_logps)
-        clipped_ratio = jnp.clip(ratio, 1.0 - self.epsilon_low, 1.0 + self.epsilon_high)
-
-        # Advantages shape [B] -> [B, 1] for broadcasting
-        adv_broadcast=inputs['advantages'][...,None]
-        per_token_loss1 = ratio * adv_broadcast
-        per_token_loss2 = clipped_ratio * adv_broadcast
-        per_token_ppo_loss = jnp.minimum(per_token_loss1, per_token_loss2) # Shape: [B, L-1]
-
-        per_token_loss=-per_token_ppo_loss
         total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
-        loss = ((per_token_loss * mask_loss).sum()) / total_valid_token_count
+        loss = ((per_token_loss * mask_loss_f32).sum()) / total_valid_token_count
 
 
         # --- Return Dictionary ---

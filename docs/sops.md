@@ -54,6 +54,7 @@
 - TPU v4-8 timing (len=1024, 20 steps, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`
 - TPU v4-8 timing (bs=32, len=1024, k=1, micro_batch=4, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-bs32-len1024-k1-mb4-20steps-timing.md`
 - TPU v4-8 GRPO fused-kernel benchmark (B=1, L=4096, V=151936; forward + grad): `docs/sops/tpu-vm-v4-8-grpo-fused-kernel-bench-b1l4096v151936.md`
+- TPU v4-8 TrainGRPOModule baseline vs fused-kernel microbench (B=1, L=4096, V=151936): `docs/sops/tpu-vm-v4-8-grpo-trainmodule-kernel-bench.md`
 - TPU v4-16 GRPO train (20 steps, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-20steps.md`
 - TPU v4-16 GRPO train (100 steps, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-100steps.md`
 - TPU v4-16 GRPO micro-batch smoke run (1 step): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
@@ -108,6 +109,7 @@
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-bs32-len1024-k1-mb4-20steps-timing.md`
 - `docs/sops/tpu-vm-v4-8-grpo-fused-kernel-bench-b1l4096v151936.md`
+- `docs/sops/tpu-vm-v4-8-grpo-trainmodule-kernel-bench.md`
 - `docs/sops/tpu-vm-bootstrap.md`
 - `docs/sops/tpu-vm-delete-all.md`
 - `docs/sops/tpu-vm-lifecycle.md`

@@ -77,6 +77,16 @@ PY
 python -m pytest -q tests/grpo_fused_kernel
 ```
 
+### 3) TPU microbench (TrainGRPOModule baseline vs fused kernel)
+
+- See: `docs/sops/tpu-vm-v4-8-grpo-trainmodule-kernel-bench.md`
+- Summary (this run, TPU v4-8, commit `a9f6046`, `WANDB_MODE=disabled`):
+  - forward timing: baseline 5.322 ms/iter, fused 9.744 ms/iter
+  - value_and_grad timing: baseline 18.839 ms/iter, fused 15.923 ms/iter
+  - temp_size_in_bytes (forward): baseline 1244917760, fused 1244885504
+  - temp_size_in_bytes (value_and_grad): baseline 1245192704, fused 1244788736
+- Note: v6e-8 TPU creation in `us-central2-b` failed due to quota limit 0 (details in the TPU SOP).
+
 ## Expected result
 
 - The smoke-test prints finite `loss/logp/entropy` and a gradient array with shape `[B, L+1, V]`.
@@ -87,6 +97,8 @@ python -m pytest -q tests/grpo_fused_kernel
 - If you hit Pallas import errors: set `MLLM_JAX_GRPO_FUSED=0` to force the legacy path.
 - If you see TPU Mosaic lowering errors: check the kernel notes in
   `.sisyphus/notepads/grpo-trainmodule-kernel/learnings.md`.
+- If you cannot create a v6e-8 TPU due to quota `Limit: 0`, use v4-8 (or request v6e quota) and run
+  the v4-8 microbench SOP first.
 
 ## References
 

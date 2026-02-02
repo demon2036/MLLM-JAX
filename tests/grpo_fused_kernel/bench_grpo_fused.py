@@ -8,6 +8,7 @@ import math
 import os
 import sys
 import time
+from collections.abc import Mapping
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
@@ -78,6 +79,83 @@ def _print_env_info(*, jax_mod: object, devices: list[object]) -> None:
     print(f"  devices ({len(devices)}): {_devices_summary(devices)}")
 
 
+def _read_host_rss_bytes() -> int | None:
+    # Prefer /proc (Linux) to avoid optional deps like psutil.
+    try:
+        with open("/proc/self/statm", encoding="utf-8") as f:
+            parts = f.read().strip().split()
+        if len(parts) < 2:
+            return None
+        rss_pages = int(parts[1])
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        return rss_pages * page_size
+    except Exception:
+        return None
+
+
+def _print_host_rss(*, label: str) -> None:
+    rss = _read_host_rss_bytes()
+    if rss is None:
+        print(f"{label}: host_rss_bytes: <unavailable>")
+        return
+    print(f"{label}: host_rss_bytes: {rss} ({_format_bytes(rss)})")
+
+
+def _print_device_memory_stats(*, label: str, devices: list[object]) -> None:
+    # Best-effort: not all JAX backends expose memory_stats().
+    preferred_keys = (
+        "bytes_in_use",
+        "peak_bytes_in_use",
+        "bytes_reserved",
+        "peak_bytes_reserved",
+        "bytes_limit",
+        "largest_free_block_bytes",
+    )
+
+    any_printed = False
+    for d in devices:
+        mem_fn = getattr(d, "memory_stats", None)
+        if not callable(mem_fn):
+            continue
+        try:
+            stats = mem_fn()
+        except Exception:
+            continue
+        if not isinstance(stats, Mapping):
+            continue
+
+        keys = [k for k in preferred_keys if k in stats]
+        if not keys:
+            continue
+        if not any_printed:
+            print(f"{label}: device_memory_stats (best-effort):")
+            any_printed = True
+
+        platform = getattr(d, "platform", "unknown")
+        device_kind = getattr(d, "device_kind", None)
+        device_id = getattr(d, "id", None)
+        name = f"{platform}"
+        if device_kind:
+            name += f":{device_kind}"
+        if device_id is not None:
+            name += f":{device_id}"
+
+        line_parts: list[str] = [f"  {name}"]
+        for k in keys:
+            try:
+                v = int(stats[k])  # type: ignore[arg-type]
+            except Exception:
+                continue
+            line_parts.append(f"{k}={_format_bytes(v)}")
+        print(" ".join(line_parts))
+
+
+def _print_mem_snapshot(*, stage: str, devices: list[object]) -> None:
+    print(f"mem_snapshot: {stage}")
+    _print_host_rss(label="  host")
+    _print_device_memory_stats(label="  tpu", devices=devices)
+
+
 def _print_memory_analysis(*, label: str, compiled: object) -> None:
     mem_fn = getattr(compiled, "memory_analysis", None)
     if not callable(mem_fn):
@@ -138,6 +216,8 @@ def main() -> int:
         print("TPU required. Set PJRT_DEVICE=TPU (or equivalent) and rerun on a TPU runtime.")
         return 0
 
+    _print_mem_snapshot(stage="startup", devices=devices)
+
     bsz, seq_len, vocab = args.batch, args.seq_len, args.vocab
     print(
         "config:"
@@ -162,6 +242,8 @@ def main() -> int:
         jnp.full((bsz, seq_len), approx_logp, dtype=jnp.float32)
     )
     ref_logp = jax.lax.stop_gradient(old_logp + 0.3)
+
+    _print_mem_snapshot(stage="after_inputs", devices=devices)
 
     def _make_forward_fns():
         ref_fn = jax.jit(
@@ -253,10 +335,12 @@ def main() -> int:
         print("forward memory (compiled):")
         _print_memory_analysis(label="  ref", compiled=ref_compiled)
         _print_memory_analysis(label="  fused", compiled=fused_compiled)
+        _print_mem_snapshot(stage="after_compile_forward", devices=devices)
 
         # Warmup
         _block_tree(ref_compiled(logits, old_logp, ref_logp, completion_ids, advantages))
         _block_tree(fused_compiled(logits, old_logp, ref_logp, completion_ids, advantages))
+        _print_mem_snapshot(stage="after_warmup_forward", devices=devices)
 
         out_ref, ref_ms = _time_loop(
             ref_compiled, logits, old_logp, ref_logp, completion_ids, advantages
@@ -264,6 +348,7 @@ def main() -> int:
         out_fused, fused_ms = _time_loop(
             fused_compiled, logits, old_logp, ref_logp, completion_ids, advantages
         )
+        _print_mem_snapshot(stage="after_bench_forward", devices=devices)
 
         print("forward:")
         print(f"ref:   {ref_ms:.3f} ms/iter")
@@ -289,13 +374,16 @@ def main() -> int:
         print("grad memory (compiled):")
         _print_memory_analysis(label="  ref", compiled=ref_compiled)
         _print_memory_analysis(label="  fused", compiled=fused_compiled)
+        _print_mem_snapshot(stage="after_compile_grad", devices=devices)
 
         # Warmup
         _block_tree(ref_compiled(logits, old_logp, ref_logp, completion_ids, advantages))
         _block_tree(fused_compiled(logits, old_logp, ref_logp, completion_ids, advantages))
+        _print_mem_snapshot(stage="after_warmup_grad", devices=devices)
 
         out_ref, ref_ms = _time_loop(ref_compiled, logits, old_logp, ref_logp, completion_ids, advantages)
         out_fused, fused_ms = _time_loop(fused_compiled, logits, old_logp, ref_logp, completion_ids, advantages)
+        _print_mem_snapshot(stage="after_bench_grad", devices=devices)
 
         (ref_loss_s, ref_grad), (fused_loss_s, fused_grad) = out_ref, out_fused
         loss_diff = jnp.abs(jnp.asarray(ref_loss_s) - jnp.asarray(fused_loss_s)).item()

@@ -33,6 +33,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "top_p": 0.95,
         "top_k": 50,
         "prompt_token": "<|sid_begin|>",
+        # Optional msgpack checkpoint path produced by openonerec_train
+        # (`plugins/training/core/checkpoint/msgpack.py`).
+        # When set, eval loads checkpoint params instead of HF base weights.
+        "params_checkpoint_path": None,
         # Optional template for replay inputs, e.g.:
         # memory/.../smoke_replay/{task}_{split}_generated.json
         "replay_path_template": None,

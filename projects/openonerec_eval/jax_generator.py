@@ -3,13 +3,16 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from flax import serialization
 
 from plugins.sample.backends.mllm_jax_sampler import get_model
+from plugins.training.core.checkpoint.msgpack import load_checkpoint
 from plugins.training.sft.jax.train import create_mesh_from_config
 
 SUPPORTED_RECOMMENDATION_TASKS = {"video", "ad", "product", "label_cond", "interactive"}
@@ -35,11 +38,21 @@ class OpenOneRecJaxGenerator:
         self.top_p = float(getattr(generation_cfg, "top_p", 1.0) or 1.0)
         self.top_k = int(getattr(generation_cfg, "top_k", 50) or 50)
         self.prompt_token = str(getattr(generation_cfg, "prompt_token", "") or "")
+        self.params_checkpoint_path = getattr(generation_cfg, "params_checkpoint_path", None)
 
         # get_model() reads param dtype from env variable.
         os.environ["MLLM_JAX_PARAM_DTYPE"] = str(getattr(jax_cfg, "param_dtype", "float32"))
         self.mesh = create_mesh_from_config(str(getattr(jax_cfg, "mesh_shape", "1,-1,1")))
         self.model, self.params, self.tokenizer = get_model(mesh=self.mesh, model_path=self.base_model)
+        if self.params_checkpoint_path:
+            checkpoint_path = Path(str(self.params_checkpoint_path)).expanduser().resolve()
+            if not checkpoint_path.exists():
+                raise FileNotFoundError(f"params_checkpoint_path not found: {checkpoint_path}")
+            checkpoint = load_checkpoint(str(checkpoint_path))
+            ckpt_params = checkpoint.get("params")
+            if ckpt_params is None:
+                raise KeyError(f"Checkpoint has no 'params' key: {checkpoint_path}")
+            self.params = serialization.from_state_dict(self.params, ckpt_params)
 
         eos_id = getattr(self.tokenizer, "eos_token_id", None)
         self.eos_token_id = int(eos_id) if eos_id is not None else -1

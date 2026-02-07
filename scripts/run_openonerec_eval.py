@@ -78,6 +78,11 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> OpenOneRecEvalCo
             top_p=float(_get_or_default(cfg, "generation.top_p", DEFAULT_CONFIG["generation"]["top_p"])),
             top_k=int(_get_or_default(cfg, "generation.top_k", DEFAULT_CONFIG["generation"]["top_k"])),
             prompt_token=str(_get_or_default(cfg, "generation.prompt_token", DEFAULT_CONFIG["generation"]["prompt_token"])),
+            params_checkpoint_path=_get_or_default(
+                cfg,
+                "generation.params_checkpoint_path",
+                DEFAULT_CONFIG["generation"].get("params_checkpoint_path"),
+            ),
             replay_path_template=_get_or_default(
                 cfg,
                 "generation.replay_path_template",

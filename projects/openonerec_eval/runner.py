@@ -49,6 +49,7 @@ class OpenOneRecEvalGenerationConfig:
     top_k: int = 50
     prompt_token: str = "<|sid_begin|>"
     replay_path_template: str | None = None
+    params_checkpoint_path: str | None = None
 
 
 @dataclass(frozen=True)

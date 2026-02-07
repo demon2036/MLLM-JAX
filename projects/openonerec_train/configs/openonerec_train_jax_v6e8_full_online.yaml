@@ -1,0 +1,36 @@
+openonerec_root: workdir/OpenOneRec
+base_model: OpenOneRec/OneRec-1.7B
+output_dir: memory/20260207_openonerec_jax_full_align/tpu_v6e8_train_full_online
+seed: 42
+
+data:
+  benchmark_data_dir: workdir/OpenOneRec/benchmarks/data
+  task_types: [video, ad, product, label_cond, interactive]
+  split: test
+  sample_size: full
+  max_len: 512
+
+jax:
+  mesh_shape: "1,-1,1"
+  param_dtype: float32
+  compute_dtype: bfloat16
+  max_cache_length: 2048
+
+train:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 1
+  max_steps: 1000
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  optimizer: adamw
+  logging_steps: 10
+  warmup_steps: 0
+  shuffle: true
+  dataloader_drop_last: true
+  padding_side: right
+  save_last: true
+
+wandb:
+  project: openonerec-train
+  mode: online
+  name: openonerec-1p7b-v6e8-full-train

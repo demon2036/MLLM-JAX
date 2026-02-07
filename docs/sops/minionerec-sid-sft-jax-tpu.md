@@ -92,6 +92,16 @@
   - Config must set `wandb.mode=online`.
   - If running via `scripts/ssh_tpu_vm_root.sh`, pass `--env-file /root/.env` so `WANDB_API_KEY` is available (do not commit secrets).
 
+- Official `evaluate.py` padding sensitivity (Office subset64 drift root-cause):
+  - Upstream `evaluate.py` batches **mixed prompt lengths** and **left-pads** within each batch; torch generate outputs are **not padding-invariant** (padding amount can change beam ordering / target rank).
+  - Concrete evidence: on Office subset64, `idx=4` and `idx=56` change target rank when running torch generate with **no padding** (e.g. `batch_size=1`) vs the mixed-length padded batch.
+  - Recommendation: use `scripts/torch_eval_minionerec_sid_len_bucketed.py` as a stable torch baseline for alignment (default `--bucket-by-length`: group by prompt_len so each batch has pad_len=0).
+  - Gotcha: **right padding breaks constraints** — MiniOneRec’s `ConstrainedLogitsProcessor` hashes the suffix tokens (`sent[-...]`), so right-pad would make the suffix include pad tokens instead of the prompt’s “### Response:” prefix.
+  - Observed (Office subset64, beam=50, JAX float32+fixedprefill):
+    - Official torch JSON vs JAX: HR@50 torch=`0.296875` vs jax=`0.312500`; NDCG@50 torch=`0.202798` vs jax=`0.204654`.
+    - Length-bucketed torch JSON vs JAX: HR@50 torch=`0.312500` vs jax=`0.312500`; NDCG@50 torch=`0.206650` vs jax=`0.204654`; delta_ndcg@50=`-0.0019968103`.
+    - Bucketed torch runtime: `real 45m0.920s`.
+
 - 1) Official torch eval (CPU) for Industrial first64, beam=50:
   - Command:
     ```bash

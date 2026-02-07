@@ -1,0 +1,36 @@
+openonerec_root: workdir/OpenOneRec
+base_model: memory/20260207_openonerec_jax_full_align/smoke_model
+output_dir: memory/20260207_openonerec_jax_full_align/smoke_train_out
+seed: 7
+
+data:
+  benchmark_data_dir: memory/20260207_openonerec_jax_full_align/smoke_data
+  task_types: [video]
+  split: test
+  sample_size: 2
+  max_len: 128
+
+jax:
+  mesh_shape: "1,-1,1"
+  param_dtype: float32
+  compute_dtype: float32
+  max_cache_length: 256
+
+train:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 1
+  max_steps: 2
+  learning_rate: 0.001
+  weight_decay: 0.0
+  optimizer: adamw
+  logging_steps: 1
+  warmup_steps: 0
+  shuffle: true
+  dataloader_drop_last: false
+  padding_side: right
+  save_last: true
+
+wandb:
+  project: openonerec-train
+  mode: disabled
+  name: null

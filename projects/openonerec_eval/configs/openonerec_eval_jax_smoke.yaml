@@ -1,0 +1,38 @@
+openonerec_root: workdir/OpenOneRec
+base_model: memory/20260207_openonerec_jax_full_align/smoke_model
+output_dir: memory/20260207_openonerec_jax_full_align/smoke_out
+seed: 7
+
+eval:
+  task_types: [video]
+  splits: [test]
+  sample_size: 2
+  overwrite: true
+  enable_thinking: false
+  run_official_evaluator: true
+  evaluation_mode: sid
+
+generation:
+  mode: replay
+  batch_size: 1
+  num_beams: 4
+  num_return_sequences: 4
+  max_new_tokens: 3
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 16
+  prompt_token: "<|sid_begin|>"
+  replay_path_template: memory/20260207_openonerec_jax_full_align/smoke_replay/{task}_{split}_generated.json
+
+jax:
+  mesh_shape: "1,-1,1"
+  max_cache_length: 256
+  param_dtype: float32
+
+data:
+  benchmark_data_dir: memory/20260207_openonerec_jax_full_align/smoke_data
+
+wandb:
+  project: openonerec-eval
+  mode: disabled
+  name: null

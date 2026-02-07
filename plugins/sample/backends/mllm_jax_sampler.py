@@ -98,12 +98,12 @@ def get_model(mesh: Any, model_path: str = "Qwen/Qwen2.5-14B", *, only_model: bo
 
     jax_config = LlamaJaxConfig(mesh=mesh)
     model_type = str(getattr(config, "model_type", "") or "")
-    if model_type in {"qwen2"}:
+    if model_type in {"qwen2", "qwen3"}:
         model = Qwen2ForCausalLM(config, jax_config)
     elif model_type in {"llama"}:
         model = LlamaForCausalLM(config, jax_config=jax_config)
     else:
-        raise ValueError(f"Unsupported model_type={model_type!r} for Sampler (expected qwen2/llama)")
+        raise ValueError(f"Unsupported model_type={model_type!r} for Sampler (expected qwen2/qwen3/llama)")
 
     if only_model:
         return model

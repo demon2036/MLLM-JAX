@@ -83,6 +83,81 @@
 - Windows `gcloud` (PuTTY/plink) host-key prompt blocks automation:
   - Use `--ssh-flag=-batch --ssh-flag=-hostkey --ssh-flag=SHA256:<HOSTKEY>` (fingerprint printed by prompt) on `gcloud ... tpu-vm ssh`, and `--scp-flag=...` on `gcloud ... tpu-vm scp`.
 
+## Extra: Compare official `evaluate.py` (torch) vs JAX eval (Industrial `first64.csv`, beam=50)
+
+- What runs where:
+  - TPU VM **CPU**: `workdir/MiniOneRec/evaluate.py` (torch generate) writes `workdir/align/*.json`.
+  - TPU **devices**: JAX eval via `./scripts/run_sid_sft.sh ... --run-mode eval` writes `runs/*/eval_predictions.json`.
+- W&B requirement (for JAX runs):
+  - Config must set `wandb.mode=online`.
+  - If running via `scripts/ssh_tpu_vm_root.sh`, pass `--env-file /root/.env` so `WANDB_API_KEY` is available (do not commit secrets).
+
+- 1) Official torch eval (CPU) for Industrial first64, beam=50:
+  - Command:
+    ```bash
+    cd /root/MLLM-JAX && bash -lc "set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; export PYTHONUNBUFFERED=1; time python workdir/MiniOneRec/evaluate.py --base_model workdir/hf_ckpts/kkknight_MiniOneRec/Industrial_ckpt --train_file workdir/MiniOneRec/data/Amazon/train/Industrial_and_Scientific_5_2016-10-2018-11.csv --info_file workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt --category Industrial_and_Scientific --test_data_path workdir/MiniOneRec/data/Amazon/test_subsets/Industrial_and_Scientific_5_2016-10-2018-11.first64.csv --result_json_data workdir/align/torch_eval_industrial_first64_beam50.json --batch_size 4 --K 0 --seed 42 --length_penalty 0.0 --max_new_tokens 32 --num_beams 50 2>&1 | tee workdir/align/torch_eval_industrial_first64_beam50.log"
+    ```
+  - Result (verified):
+    - Exit: `0`
+    - `real 52m40.899s`
+    - Output: `workdir/align/torch_eval_industrial_first64_beam50.json` (64 rows)
+
+- 2) Compare torch vs baseline JAX bf16 bucket output (existing file):
+  - Command:
+    ```bash
+    cd /root/MLLM-JAX && source /root/miniconda3/etc/profile.d/conda.sh && conda activate mllm-jax && python scripts/compare_minionerec_official_vs_jax_eval.py --torch-json workdir/align/torch_eval_industrial_first64_beam50.json --jax-json runs/sid_sft_jax_eval_official_minionerec_industrial_ckpt_subset64/eval_predictions.json --info-file workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt --out-json workdir/align/compare_torch_vs_jax_first64.report.json
+    ```
+  - Summary:
+    ```
+    top1: 60/64 (0.9375)
+    overlap ... jaccard_mean=0.9452
+    hr@50: torch=0.234375 jax=0.218750
+    ndcg@50: torch=0.158845 jax=0.155667
+    ```
+
+- 3) JAX eval (bf16) with fixed prefill on TPU (config: `projects/sid_sft/configs/sid_sft_jax_eval_official_minionerec_industrial_ckpt_subset64_fixedprefill.yaml`):
+  - Command:
+    ```bash
+    cd /root/MLLM-JAX && source /root/miniconda3/etc/profile.d/conda.sh && conda activate mllm-jax && ./scripts/run_sid_sft.sh --config projects/sid_sft/configs/sid_sft_jax_eval_official_minionerec_industrial_ckpt_subset64_fixedprefill.yaml --run-mode eval 2>&1 | tee workdir/align/jax_eval_industrial_first64_beam50_fixedprefill.tpu.log
+    ```
+  - W&B run (online): `https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/xj0x1y9s`
+
+- 4) Compare torch vs JAX fixed-prefill output:
+  - Command:
+    ```bash
+    cd /root/MLLM-JAX && python scripts/compare_minionerec_official_vs_jax_eval.py --torch-json workdir/align/torch_eval_industrial_first64_beam50.json --jax-json runs/sid_sft_jax_eval_official_minionerec_industrial_ckpt_subset64_fixedprefill/eval_predictions.json --info-file workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt --out-json workdir/align/compare_torch_vs_jax_industrial_first64_fixedprefill.report.json
+    ```
+  - Summary:
+    ```
+    top1: 63/64 (0.9844)
+    hr@50: torch=0.234375 jax=0.218750
+    ```
+
+- 5) JAX eval (float32 params/compute) on TPU (config: `projects/sid_sft/configs/sid_sft_jax_eval_official_minionerec_industrial_ckpt_subset64_f32.yaml`):
+  - Command:
+    ```bash
+    cd /root/MLLM-JAX && source /root/miniconda3/etc/profile.d/conda.sh && conda activate mllm-jax && ./scripts/run_sid_sft.sh --config projects/sid_sft/configs/sid_sft_jax_eval_official_minionerec_industrial_ckpt_subset64_f32.yaml --run-mode eval 2>&1 | tee workdir/align/jax_eval_industrial_first64_beam50_f32.tpu.log
+    ```
+  - W&B run (online): `https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/cy4tj485`
+
+- 6) Compare torch vs JAX float32 output:
+  - Command:
+    ```bash
+    cd /root/MLLM-JAX && python scripts/compare_minionerec_official_vs_jax_eval.py --torch-json workdir/align/torch_eval_industrial_first64_beam50.json --jax-json runs/sid_sft_jax_eval_official_minionerec_industrial_ckpt_subset64_f32/eval_predictions.json --info-file workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt --out-json workdir/align/compare_torch_vs_jax_industrial_first64_f32.report.json
+    ```
+  - Summary:
+    ```
+    top1: 63/64 (0.9844)
+    overlap ... jaccard_mean=0.9596
+    hr@50: torch=0.234375 jax=0.234375
+    ndcg@50: torch=0.158845 jax=0.158841
+    ```
+
+- Interpretation:
+  - bf16 JAX differs slightly at K=50.
+  - float32 JAX matches torch HR@50 and nearly matches NDCG@50.
+  - Full top-50 ordering still differs (top1 < 64/64, jaccard_mean < 1.0).
+
 ## Extra: Eval official MiniOneRec HF checkpoints (v6e-8, full test)
 
 - Download checkpoints on TPU (only once per VM):

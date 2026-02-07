@@ -153,9 +153,40 @@
     ndcg@50: torch=0.158845 jax=0.158841
     ```
 
+- 7) JAX eval (float32 params/compute + fixed prefill) on TPU (config: `projects/sid_sft/configs/sid_sft_jax_eval_official_minionerec_industrial_ckpt_subset64_f32_fixedprefill.yaml`):
+  - Command:
+    ```bash
+    cd /root/MLLM-JAX && source /root/miniconda3/etc/profile.d/conda.sh && conda activate mllm-jax && ./scripts/run_sid_sft.sh --config projects/sid_sft/configs/sid_sft_jax_eval_official_minionerec_industrial_ckpt_subset64_f32_fixedprefill.yaml --run-mode eval 2>&1 | tee workdir/align/jax_eval_industrial_first64_beam50_f32_fixedprefill.tpu.log
+    ```
+  - W&B run (online): `https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/uxvsmb58`
+
+- 8) Compare torch vs JAX float32 fixed-prefill output:
+  - Command:
+    ```bash
+    cd /root/MLLM-JAX && python scripts/compare_minionerec_official_vs_jax_eval.py --torch-json workdir/align/torch_eval_industrial_first64_beam50.json --jax-json runs/sid_sft_jax_eval_official_minionerec_industrial_ckpt_subset64_f32_fixedprefill/eval_predictions.json --info-file workdir/MiniOneRec/data/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt --out-json workdir/align/compare_torch_vs_jax_industrial_first64_f32_fixedprefill.report.json
+    ```
+  - Summary:
+    ```
+    top1: 63/64 (0.9844)
+    hr@50: torch=0.234375 jax=0.234375
+    ndcg@50: torch=0.158845 jax=0.158841
+    top1_mismatch_indices: 1 (first=18)
+    ```
+
+- Office (subset64 `first64.csv`, beam=50, float32 params/compute + fixed prefill):
+  - JAX eval config: `projects/sid_sft/configs/sid_sft_jax_eval_official_minionerec_office_ckpt_subset64_f32_fixedprefill.yaml`
+  - W&B run (online): `https://wandb.ai/johntitordemon2036/minionerec-sid-sft/runs/th8ugw4q`
+  - Compare summary (torch vs JAX):
+    ```
+    top1: 64/64 (1.0000)
+    hr@50: torch=0.296875 jax=0.312500
+    ndcg@50: torch=0.202798 jax=0.204654
+    ```
+
 - Interpretation:
   - bf16 JAX differs slightly at K=50.
   - float32 JAX matches torch HR@50 and nearly matches NDCG@50.
+  - Remaining mismatch cases are typically top1/top2 swaps (beam boundary sensitivity to tiny score differences across dtype/hardware).
   - Full top-50 ordering still differs (top1 < 64/64, jaccard_mean < 1.0).
 
 ## Extra: Eval official MiniOneRec HF checkpoints (v6e-8, full test)

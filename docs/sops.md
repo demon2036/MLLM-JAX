@@ -159,3 +159,7 @@
 - List SOP files: `find docs/sops -maxdepth 1 -type f -name '*.md' -print | sort`
 - Find SOP titles: `rg -n '^- \\*\\*Title\\*\\*:' docs/sops`
 - Find "juice": `rg -n '\\bjuice\\b' docs/sops`
+
+### OpenOneRec
+
+- OpenOneRec JAX full-align run on TPU v6e-8 (eval + train + post-train eval): `docs/sops/openonerec-jax-v6e-full-align.md`

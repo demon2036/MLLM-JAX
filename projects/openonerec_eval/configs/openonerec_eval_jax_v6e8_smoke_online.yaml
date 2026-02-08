@@ -1,0 +1,38 @@
+openonerec_root: workdir/OpenOneRec
+base_model: OpenOneRec/OneRec-1.7B
+output_dir: memory/20260207_openonerec_jax_full_align/tpu_v6e8_eval_jax_smoke_online
+seed: 42
+
+eval:
+  task_types: [video]
+  splits: [test]
+  sample_size: 64
+  overwrite: true
+  enable_thinking: false
+  run_official_evaluator: true
+  evaluation_mode: null
+
+generation:
+  mode: jax
+  batch_size: 8
+  num_beams: 32
+  num_return_sequences: 32
+  max_new_tokens: 3
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 50
+  prompt_token: "<|sid_begin|>"
+  replay_path_template: null
+
+jax:
+  mesh_shape: "1,-1,1"
+  max_cache_length: 512
+  param_dtype: float32
+
+data:
+  benchmark_data_dir: workdir/OpenOneRec/benchmarks/data
+
+wandb:
+  project: openonerec-eval
+  mode: online
+  name: openonerec-1p7b-v6e8-jax-smoke

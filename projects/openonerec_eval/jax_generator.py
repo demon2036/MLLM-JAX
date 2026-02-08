@@ -71,7 +71,41 @@ class OpenOneRecJaxGenerator:
             ckpt_params = checkpoint.get("params")
             if ckpt_params is None:
                 raise KeyError(f"Checkpoint has no 'params' key: {checkpoint_path}")
+
+            model_vocab_size = self._infer_vocab_size_from_params(self.params)
+            ckpt_vocab_size = self._infer_vocab_size_from_params(ckpt_params)
+            if (
+                model_vocab_size is not None
+                and ckpt_vocab_size is not None
+                and int(model_vocab_size) != int(ckpt_vocab_size)
+            ):
+                self.model.config.vocab_size = int(ckpt_vocab_size)
+                print(
+                    "[eval] align model vocab_size to checkpoint "
+                    f"({int(model_vocab_size)} -> {int(ckpt_vocab_size)})"
+                )
+
             self.params = serialization.from_state_dict(self.params, ckpt_params)
+
+    @staticmethod
+    def _infer_vocab_size_from_params(params: Any) -> int | None:
+        try:
+            emb = params["model"]["embed_tokens"]["embedding"]
+            emb_shape = np.asarray(emb).shape
+            if len(emb_shape) >= 1:
+                return int(emb_shape[0])
+        except Exception:
+            pass
+
+        try:
+            lm_head = params["lm_head"]["kernel"]
+            lm_shape = np.asarray(lm_head).shape
+            if len(lm_shape) == 2:
+                return int(max(lm_shape[0], lm_shape[1]))
+        except Exception:
+            pass
+
+        return None
 
     @staticmethod
     def _mapping_filename_for_task(task_name: str) -> str:

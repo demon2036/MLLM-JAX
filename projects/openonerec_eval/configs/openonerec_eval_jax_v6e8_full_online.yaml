@@ -26,7 +26,7 @@ generation:
 
 jax:
   mesh_shape: "1,-1,1"
-  max_cache_length: 512
+  max_cache_length: 8192
   param_dtype: float32
 
 data:

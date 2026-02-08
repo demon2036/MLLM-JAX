@@ -55,7 +55,7 @@ class OpenOneRecEvalGenerationConfig:
 @dataclass(frozen=True)
 class OpenOneRecEvalJaxConfig:
     mesh_shape: str = "1,-1,1"
-    max_cache_length: int = 512
+    max_cache_length: int = 8192
     param_dtype: str = "float32"
 
 

@@ -41,7 +41,7 @@ class OpenOneRecEvalEvalConfig:
 class OpenOneRecEvalGenerationConfig:
     mode: str = "jax"  # jax | replay
     batch_size: int = 4
-    num_beams: int = 16
+    num_beams: int = 32
     num_return_sequences: int = 32
     max_new_tokens: int = 3
     temperature: float = 0.6
@@ -254,7 +254,7 @@ def run_openonerec_eval(cfg: OpenOneRecEvalConfig, *, run_mode: str = "eval") ->
         raise ValueError(f"Unsupported generation.mode={cfg.generation.mode!r} (expected jax|replay)")
 
     if mode_norm == "jax":
-        generator = OpenOneRecJaxGenerator(base_model=cfg.base_model, generation_cfg=cfg.generation, jax_cfg=cfg.jax)
+        generator = OpenOneRecJaxGenerator(base_model=cfg.base_model, generation_cfg=cfg.generation, jax_cfg=cfg.jax, benchmark_data_dir=str(cfg.data.benchmark_data_dir))
         tokenizer = generator.tokenizer
     else:
         generator = None

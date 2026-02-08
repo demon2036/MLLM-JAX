@@ -26,7 +26,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # "replay": read generations from replay JSON
         "mode": "jax",
         "batch_size": 4,
-        "num_beams": 16,
+        "num_beams": 32,
         "num_return_sequences": 32,
         "max_new_tokens": 3,
         "temperature": 0.6,

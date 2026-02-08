@@ -1,0 +1,206 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>plugins2 GRPO Observability</title>
+    <style>
+      body {
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 20px;
+        background: #f8fafc;
+      }
+      h1 {
+        margin: 0 0 14px 0;
+      }
+      .panel {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 14px;
+        margin-bottom: 14px;
+      }
+      label {
+        font-weight: 600;
+        font-size: 13px;
+      }
+      textarea, input {
+        width: 100%;
+        margin-top: 6px;
+        margin-bottom: 12px;
+        padding: 8px;
+        box-sizing: border-box;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+      }
+      button {
+        border: none;
+        border-radius: 6px;
+        padding: 10px 16px;
+        font-weight: 600;
+        background: #2563eb;
+        color: white;
+        cursor: pointer;
+      }
+      button:disabled {
+        background: #94a3b8;
+        cursor: not-allowed;
+      }
+      pre {
+        overflow-x: auto;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 8px;
+      }
+      th, td {
+        border: 1px solid #e2e8f0;
+        padding: 6px;
+        font-size: 12px;
+        vertical-align: top;
+      }
+      th {
+        background: #f1f5f9;
+      }
+      .sample-title {
+        font-weight: 700;
+        margin-top: 8px;
+      }
+      .error {
+        color: #b91c1c;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>plugins2 · GRPO Token Observability</h1>
+
+    <div class="panel">
+      <label for="system_prompt">System Prompt</label>
+      <textarea id="system_prompt" rows="6"></textarea>
+
+      <label for="user_prompt">User Prompt</label>
+      <textarea id="user_prompt" rows="4">If Alice has 3 apples and buys 5 more, how many apples does she have?</textarea>
+
+      <label for="label">Label (GSM8K answer)</label>
+      <input id="label" value="8" />
+
+      <label for="k">K (num generations)</label>
+      <input id="k" type="number" value="8" min="1" max="64" />
+
+      <button id="run_btn" onclick="runObservability()">Run GRPO + Backprop</button>
+    </div>
+
+    <div class="panel">
+      <h3>Run Summary</h3>
+      <pre id="summary" class="mono"></pre>
+    </div>
+
+    <div id="samples"></div>
+
+    <script>
+      async function bootstrap() {
+        const info = await fetch('/api/engine').then((resp) => resp.json());
+        document.getElementById('summary').textContent = JSON.stringify(info, null, 2);
+      }
+
+      async function runObservability() {
+        const runBtn = document.getElementById('run_btn');
+        runBtn.disabled = true;
+        const summary = document.getElementById('summary');
+        const samplesRoot = document.getElementById('samples');
+        samplesRoot.innerHTML = '';
+        summary.textContent = 'Running...';
+
+        try {
+          const payload = {
+            system_prompt: document.getElementById('system_prompt').value,
+            user_prompt: document.getElementById('user_prompt').value,
+            label: document.getElementById('label').value,
+            k: Number(document.getElementById('k').value || 8),
+          };
+          const response = await fetch('/api/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.error || ('HTTP ' + response.status));
+          }
+
+          summary.textContent = JSON.stringify(data.summary, null, 2);
+          renderSamples(data.samples || []);
+        } catch (error) {
+          summary.innerHTML = '<span class="error">' + escapeHtml(String(error)) + '</span>';
+        } finally {
+          runBtn.disabled = false;
+        }
+      }
+
+      function renderSamples(samples) {
+        const samplesRoot = document.getElementById('samples');
+        samplesRoot.innerHTML = '';
+
+        samples.forEach((sample) => {
+          const panel = document.createElement('div');
+          panel.className = 'panel';
+
+          const reward = sample.reward || {};
+          panel.innerHTML = `
+            <div class="sample-title">Sample #${sample.sample_index}</div>
+            <div><b>Reward total:</b> ${Number(reward.total || 0).toFixed(6)}</div>
+            <div><b>Reward components:</b> ${escapeHtml(JSON.stringify(reward))}</div>
+            <div><b>Answer:</b></div>
+            <pre class="mono">${escapeHtml(sample.answer || '')}</pre>
+          `;
+
+          const table = document.createElement('table');
+          table.innerHTML = `
+            <thead>
+              <tr>
+                <th>pos</th>
+                <th>token_id</th>
+                <th>token_text</th>
+                <th>prob</th>
+                <th>logprob</th>
+                <th>grad_logprob</th>
+                <th>loss_contrib</th>
+              </tr>
+            </thead>
+          `;
+          const tbody = document.createElement('tbody');
+          (sample.tokens || []).forEach((token) => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+              <td>${token.position}</td>
+              <td>${token.token_id}</td>
+              <td class="mono">${escapeHtml(String(token.token_text || ''))}</td>
+              <td>${Number(token.prob || 0).toExponential(4)}</td>
+              <td>${Number(token.logprob || 0).toFixed(6)}</td>
+              <td>${Number(token.grad_logprob || 0).toExponential(4)}</td>
+              <td>${Number(token.loss_contrib || 0).toExponential(4)}</td>
+            `;
+            tbody.appendChild(row);
+          });
+          table.appendChild(tbody);
+          panel.appendChild(table);
+          samplesRoot.appendChild(panel);
+        });
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#039;');
+      }
+
+      bootstrap();
+    </script>
+  </body>
+</html>

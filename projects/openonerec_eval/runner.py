@@ -44,6 +44,7 @@ class OpenOneRecEvalGenerationConfig:
     num_beams: int = 32
     num_return_sequences: int = 32
     max_new_tokens: int = 3
+    max_prompt_tokens: int = 1024
     temperature: float = 0.6
     top_p: float = 0.95
     top_k: int = 50
@@ -55,7 +56,7 @@ class OpenOneRecEvalGenerationConfig:
 @dataclass(frozen=True)
 class OpenOneRecEvalJaxConfig:
     mesh_shape: str = "1,-1,1"
-    max_cache_length: int = 8192
+    max_cache_length: int = 2048
     param_dtype: str = "float32"
 
 

@@ -163,3 +163,4 @@
 ### OpenOneRec
 
 - OpenOneRec JAX full-align run on TPU v6e-8 (eval + train + post-train eval): `docs/sops/openonerec-jax-v6e-full-align.md`
+- OpenOneRec eval v6e-8 OOM fix (prompt truncation + cache 2048): `docs/sops/openonerec-eval-v6e8-oom-fix-prompt-truncate-cache2048.md`

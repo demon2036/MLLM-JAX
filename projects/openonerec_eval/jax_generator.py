@@ -34,6 +34,7 @@ class OpenOneRecJaxGenerator:
         self.num_beams = int(getattr(generation_cfg, "num_beams", 4))
         self.num_return_sequences = int(getattr(generation_cfg, "num_return_sequences", 4))
         self.max_new_tokens = int(getattr(generation_cfg, "max_new_tokens", 3))
+        self.max_prompt_tokens = int(getattr(generation_cfg, "max_prompt_tokens", 1024) or 1024)
         self.temperature = float(getattr(generation_cfg, "temperature", 1.0) or 1.0)
         self.top_p = float(getattr(generation_cfg, "top_p", 1.0) or 1.0)
         self.top_k = int(getattr(generation_cfg, "top_k", 50) or 50)
@@ -46,6 +47,8 @@ class OpenOneRecJaxGenerator:
             raise ValueError(f"sid_second_cap must be > 0, got {self.sid_second_cap}")
         if self.sid_third_cap <= 0:
             raise ValueError(f"sid_third_cap must be > 0, got {self.sid_third_cap}")
+        if self.max_prompt_tokens <= 0:
+            raise ValueError(f"max_prompt_tokens must be > 0, got {self.max_prompt_tokens}")
 
         self.benchmark_data_dir = Path(benchmark_data_dir).expanduser().resolve()
         self.max_cache_length = int(getattr(jax_cfg, "max_cache_length", 512))
@@ -333,7 +336,12 @@ class OpenOneRecJaxGenerator:
         if not isinstance(prompt_ids_raw, list):
             raise TypeError("Tokenizer output missing input_ids list for batched prompts")
 
-        prompt_ids = [[int(x) for x in ids] for ids in prompt_ids_raw]
+        prompt_ids: list[list[int]] = []
+        for ids in prompt_ids_raw:
+            int_ids = [int(x) for x in ids]
+            if len(int_ids) > self.max_prompt_tokens:
+                int_ids = int_ids[-self.max_prompt_tokens :]
+            prompt_ids.append(int_ids)
         prompt_lens = [len(ids) for ids in prompt_ids]
         buckets = self._prefill_buckets(prompt_lens)
 

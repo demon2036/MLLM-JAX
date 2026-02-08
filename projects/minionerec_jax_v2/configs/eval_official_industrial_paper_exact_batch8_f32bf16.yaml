@@ -1,0 +1,49 @@
+checkpoint:
+  repo_id: kkknight/MiniOneRec
+  revision: main
+  local_root: /tmp/hf_minionerec_meta
+  subdir: Industrial_ckpt
+  trust_remote_code: true
+
+dataset:
+  source_root: /tmp/hf_minionerec_meta/Amazon
+  dataset_name: industrial
+  test_file: /tmp/hf_minionerec_meta/Amazon/test/Industrial_and_Scientific_5_2016-10-2018-11.csv
+  info_file: /tmp/hf_minionerec_meta/Amazon/info/Industrial_and_Scientific_5_2016-10-2018-11.txt
+  sid_index_path: /tmp/hf_minionerec_meta/Amazon/index/Industrial_and_Scientific.index.json
+  max_len: 2560
+  sample_test: -1
+  dedup: false
+  truncate_to_max_len: false
+
+decode:
+  batch_size: 8
+  num_beams: 50
+  length_penalty: 0.0
+  max_new_tokens: 256
+  prefill_mode: exact
+  fixed_prefill_len: null
+  do_sample: false
+  temperature: 1.0
+
+eval:
+  topk: [3, 5, 10]
+  save_predictions_json: true
+  output_predictions_name: eval_predictions_industrial_exact.json
+  show_progress: false
+
+runtime:
+  output_dir: runs/minionerec_jax_v2_eval_official_industrial_exact
+  run_mode: eval
+  seed: 42
+
+jax:
+  mesh_shape: "4,1,1"
+  param_dtype: float32
+  compute_dtype: bfloat16
+  max_cache_length: 4096
+
+wandb:
+  project: minionerec-jax-v2
+  mode: disabled
+  name: official-industrial-paper-exact

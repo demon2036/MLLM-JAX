@@ -164,14 +164,14 @@ PY
       python - <<"PY"
 import json
 from pathlib import Path
-payload = json.loads(Path('/tmp/plugins2_run.json').read_text())
-assert 'summary' in payload, 'missing summary'
-assert 'samples' in payload and len(payload['samples']) == 8, 'expected 8 samples'
-for sample in payload['samples']:
-    assert 'tokens' in sample and len(sample['tokens']) > 0, 'sample has no token rows'
-print('validated_samples=', len(payload['samples']))
-print('loss_before_update=', payload['summary'].get('loss_before_update'))
-print('grad_l2=', payload['summary'].get('grad_l2'))
+payload = json.loads(Path("/tmp/plugins2_run.json").read_text())
+assert "summary" in payload, "missing summary"
+assert "samples" in payload and len(payload["samples"]) == 8, "expected 8 samples"
+for sample in payload["samples"]:
+    assert "tokens" in sample and len(sample["tokens"]) > 0, "sample has no token rows"
+print("validated_samples=", len(payload["samples"]))
+print("loss_before_update=", payload["summary"].get("loss_before_update"))
+print("grad_l2=", payload["summary"].get("grad_l2"))
 PY
 
       kill $(cat /tmp/plugins2_web.pid) || true
@@ -185,8 +185,8 @@ PY
       python - <<"PY"
 import json
 from pathlib import Path
-payload = json.loads(Path('/tmp/plugins2_run.json').read_text())
-print(json.dumps(payload.get('summary', {}), ensure_ascii=False, indent=2))
+payload = json.loads(Path("/tmp/plugins2_run.json").read_text())
+print(json.dumps(payload.get("summary", {}), ensure_ascii=False, indent=2))
 PY
     ' >"${log_prefix}_run.log" 2>&1
 

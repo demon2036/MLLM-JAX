@@ -14,7 +14,7 @@ eval:
 
 generation:
   mode: jax
-  batch_size: 4
+  batch_size: 8
   num_beams: 32
   num_return_sequences: 32
   max_new_tokens: 3

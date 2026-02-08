@@ -39,6 +39,13 @@ class OpenOneRecJaxGenerator:
         self.top_k = int(getattr(generation_cfg, "top_k", 50) or 50)
         self.prompt_token = str(getattr(generation_cfg, "prompt_token", "") or "")
         self.params_checkpoint_path = getattr(generation_cfg, "params_checkpoint_path", None)
+        self.sid_second_cap = int(getattr(generation_cfg, "sid_second_cap", 128) or 128)
+        self.sid_third_cap = int(getattr(generation_cfg, "sid_third_cap", 64) or 64)
+
+        if self.sid_second_cap <= 0:
+            raise ValueError(f"sid_second_cap must be > 0, got {self.sid_second_cap}")
+        if self.sid_third_cap <= 0:
+            raise ValueError(f"sid_third_cap must be > 0, got {self.sid_third_cap}")
 
         self.benchmark_data_dir = Path(benchmark_data_dir).expanduser().resolve()
         self.max_cache_length = int(getattr(jax_cfg, "max_cache_length", 512))
@@ -122,10 +129,10 @@ class OpenOneRecJaxGenerator:
             return token_id
 
         first: set[int] = set()
-        second: dict[int, set[int]] = {}
-        third: dict[tuple[int, int], set[int]] = {}
+        second_scores: dict[int, dict[int, float]] = {}
+        third_scores: dict[tuple[int, int], dict[int, float]] = {}
 
-        for raw_key in mapping.keys():
+        for raw_key, raw_value in mapping.items():
             try:
                 sid_code = int(raw_key)
             except Exception as exc:  # pragma: no cover - defensive
@@ -141,24 +148,53 @@ class OpenOneRecJaxGenerator:
             t2 = _token_to_id(tok2, raw_key=raw_key)
             t3 = _token_to_id(tok3, raw_key=raw_key)
 
+            score = 1.0
+            if isinstance(raw_value, list) and raw_value and isinstance(raw_value[0], dict):
+                first_item = raw_value[0]
+                score_raw = first_item.get("count_after_downsample", first_item.get("count", 1))
+                try:
+                    score = float(score_raw)
+                except (TypeError, ValueError):
+                    score = 1.0
+
             first.add(t1)
-            second.setdefault(t1, set()).add(t2)
-            third.setdefault((t1, t2), set()).add(t3)
+            second_for_t1 = second_scores.setdefault(t1, {})
+            second_for_t1[t2] = float(second_for_t1.get(t2, 0.0)) + float(score)
+
+            third_key = (t1, t2)
+            third_for_pair = third_scores.setdefault(third_key, {})
+            third_for_pair[t3] = float(third_for_pair.get(t3, 0.0)) + float(score)
 
         if not first:
             raise ValueError(f"No valid SID keys found in mapping file: {mapping_path}")
 
+        def _select_top_tokens(score_map: dict[int, float], cap: int) -> list[int]:
+            ranked = sorted(score_map.items(), key=lambda item: (-float(item[1]), int(item[0])))
+            return [int(token_id) for token_id, _ in ranked[: int(cap)]]
+
+        selected_second: dict[int, list[int]] = {}
+        selected_third: dict[tuple[int, int], list[int]] = {}
+        for t1 in sorted(first):
+            selected_t2 = _select_top_tokens(second_scores.get(int(t1), {}), int(self.sid_second_cap))
+            selected_second[int(t1)] = selected_t2
+            for t2 in selected_t2:
+                selected_t3 = _select_top_tokens(
+                    third_scores.get((int(t1), int(t2)), {}),
+                    int(self.sid_third_cap),
+                )
+                selected_third[(int(t1), int(t2))] = selected_t3
+
         pad_id = -1
-        first_ids = np.asarray(sorted(first), dtype=np.int32)
+        first_ids = np.asarray(sorted(selected_second.keys()), dtype=np.int32)
         second_keys = first_ids
 
-        max_second = max(len(second.get(int(t1), set())) for t1 in second_keys)
+        max_second = max(len(selected_second.get(int(t1), [])) for t1 in second_keys)
         if int(max_second) <= 0:
             raise ValueError(f"No second-level SID transitions found in mapping file: {mapping_path}")
 
         second_table = np.full((len(second_keys), int(max_second)), int(pad_id), dtype=np.int32)
         for i, t1 in enumerate(second_keys):
-            vals = sorted(second.get(int(t1), set()))
+            vals = selected_second.get(int(t1), [])
             if vals:
                 second_table[i, : len(vals)] = np.asarray(vals, dtype=np.int32)
 
@@ -168,7 +204,7 @@ class OpenOneRecJaxGenerator:
                 t2 = int(second_table[i, j])
                 if t2 == int(pad_id):
                     continue
-                max_third = max(max_third, len(third.get((int(t1), t2), set())))
+                max_third = max(max_third, len(selected_third.get((int(t1), t2), [])))
 
         if int(max_third) <= 0:
             raise ValueError(f"No third-level SID transitions found in mapping file: {mapping_path}")
@@ -179,9 +215,14 @@ class OpenOneRecJaxGenerator:
                 t2 = int(second_table[i, j])
                 if t2 == int(pad_id):
                     continue
-                vals = sorted(third.get((int(t1), t2), set()))
+                vals = selected_third.get((int(t1), t2), [])
                 if vals:
                     third_table[i, j, : len(vals)] = np.asarray(vals, dtype=np.int32)
+
+        print(
+            f"[eval] trie task={task_key} first={len(first_ids)} "
+            f"max_second={int(max_second)} max_third={int(max_third)}"
+        )
 
         trie = SidTrie(
             pad_id=int(pad_id),

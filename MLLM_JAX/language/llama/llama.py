@@ -542,6 +542,10 @@ class LlamaAttention(nn.Module):
         self.k_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=config.attention_bias)
         self.v_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=config.attention_bias)
         self.o_proj = nn.Dense(self.hidden_size, use_bias=config.attention_bias)
+        self.use_qk_norm = bool(getattr(config, "model_type", None) == "qwen3")
+        if self.use_qk_norm:
+            self.q_norm = LlamaRMSNorm(self.head_dim, eps=config.rms_norm_eps)
+            self.k_norm = LlamaRMSNorm(self.head_dim, eps=config.rms_norm_eps)
 
     def _jax_attention_spec(self) -> AttentionSpec:
         return AttentionSpec()
@@ -572,6 +576,9 @@ class LlamaAttention(nn.Module):
         query_states = einops.rearrange(query_states, 'b n (h d)->b h n  d ', d=self.head_dim)
         key_states = einops.rearrange(key_states, 'b n (h d)->b h n  d ', d=self.head_dim)
         value_states = einops.rearrange(value_states, 'b n (h d)->b h n  d ', d=self.head_dim)
+        if getattr(self, "use_qk_norm", False):
+            query_states = self.q_norm(query_states)
+            key_states = self.k_norm(key_states)
 
         """
         if self.jax_config is not None:

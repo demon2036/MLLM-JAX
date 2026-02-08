@@ -44,6 +44,10 @@ class Qwen2Attention(LlamaAttention):
         self.k_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=use_bias,dtype=dtype,param_dtype=param_dtype)
         self.v_proj = nn.Dense(self.num_key_value_heads * self.head_dim, use_bias=use_bias,dtype=dtype,param_dtype=param_dtype)
         self.o_proj = nn.Dense(self.hidden_size, use_bias=False,dtype=dtype,param_dtype=param_dtype)
+        self.use_qk_norm = bool(getattr(config, "model_type", None) == "qwen3")
+        if self.use_qk_norm:
+            self.q_norm = LlamaRMSNorm(self.head_dim, eps=config.rms_norm_eps)
+            self.k_norm = LlamaRMSNorm(self.head_dim, eps=config.rms_norm_eps)
     def _jax_attention_use_block_sizes(self) -> bool:
         return False
 

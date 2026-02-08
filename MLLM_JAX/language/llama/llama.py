@@ -544,8 +544,8 @@ class LlamaAttention(nn.Module):
         self.o_proj = nn.Dense(self.hidden_size, use_bias=config.attention_bias)
         self.use_qk_norm = bool(getattr(config, "model_type", None) == "qwen3")
         if self.use_qk_norm:
-            self.q_norm = LlamaRMSNorm(self.head_dim, eps=config.rms_norm_eps)
-            self.k_norm = LlamaRMSNorm(self.head_dim, eps=config.rms_norm_eps)
+            self.q_norm = LlamaRMSNorm(eps=config.rms_norm_eps)
+            self.k_norm = LlamaRMSNorm(eps=config.rms_norm_eps)
 
     def _jax_attention_spec(self) -> AttentionSpec:
         return AttentionSpec()

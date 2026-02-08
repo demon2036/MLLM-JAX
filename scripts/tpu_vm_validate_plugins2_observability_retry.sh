@@ -8,7 +8,7 @@ Validate plugins2 GRPO observability web app on TPU VM with retry-on-preemption.
 Usage:
   bash scripts/tpu_vm_validate_plugins2_observability_retry.sh \
     --config <yaml> [--type v4-8] [--zone us-central2-b] [--project <gcp-project>] \
-    [--git-ref <branch-or-sha>] [--max-attempts 0]
+    [--git-ref <branch-or-sha>] [--max-attempts 0] [--on-demand]
 
 Defaults:
   --config projects/plugins2_grpo_observability/configs/plugins2_grpo_observability_gsm8k_qwen25_0p5b_v4_8_no_wandb.yaml
@@ -16,6 +16,7 @@ Defaults:
   --zone us-central2-b
   --git-ref <current local branch>
   --max-attempts 0  (0 means infinite retry until success)
+  --on-demand use on-demand TPU instead of spot
 
 Result artifacts (local):
   memory/20260208_plugins2_grpo_tpu_observability/evidence/
@@ -33,6 +34,7 @@ ZONE="us-central2-b"
 PROJECT=""
 GIT_REF="$(git rev-parse --abbrev-ref HEAD)"
 MAX_ATTEMPTS="0"
+ON_DEMAND="0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,6 +50,8 @@ while [[ $# -gt 0 ]]; do
       GIT_REF="${2:-}"; shift 2 ;;
     --max-attempts)
       MAX_ATTEMPTS="${2:-}"; shift 2 ;;
+    --on-demand)
+      ON_DEMAND="1"; shift ;;
     *)
       echo "Unknown arg: $1" >&2
       usage >&2
@@ -85,7 +89,11 @@ while :; do
   }
 
   set +e
-  bash scripts/create_tpu_vm.sh --type "$TPU_TYPE" --zone "$ZONE" --project "$PROJECT" --name "$tpu_name" >"${log_prefix}_create.log" 2>&1
+  create_args=(--type "$TPU_TYPE" --zone "$ZONE" --project "$PROJECT" --name "$tpu_name")
+  if [[ "$ON_DEMAND" == "1" ]]; then
+    create_args+=(--on-demand)
+  fi
+  bash scripts/create_tpu_vm.sh "${create_args[@]}" >"${log_prefix}_create.log" 2>&1
   create_ec=$?
   set -e
 

@@ -174,14 +174,15 @@ class GRPOObservabilityEngine:
         *,
         input_embed_delta: Any | None = None,
     ) -> tuple[float, dict[str, Any], Any, Any, float, float, Any | None]:
-        def loss_fn(params: Any):
+        def loss_fn(params: Any, input_embed_delta_runtime: Any | None = None):
             variables = {"params": {"model": params}}
             if getattr(self.state, "ref_params", None) is not None:
                 variables["params"]["ref_model"] = self.state.ref_params
             local_batch = batch
-            if input_embed_delta is not None:
+            delta = input_embed_delta if input_embed_delta_runtime is None else input_embed_delta_runtime
+            if delta is not None:
                 local_batch = dict(batch)
-                local_batch["input_embed_delta"] = input_embed_delta
+                local_batch["input_embed_delta"] = delta
             metrics = self.state.apply_fn(variables, local_batch)
             per_token_logps = metrics.get("per_token_logps")
             metrics_scalar = {k: v for k, v in metrics.items() if k != "per_token_logps"}

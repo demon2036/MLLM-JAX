@@ -68,6 +68,48 @@ def _to_local_array(array: Any) -> np.ndarray:
     return np.asarray(array)
 
 
+def _build_token_advantages(
+    *,
+    advantage_mode: str,
+    sample_advantages: np.ndarray,
+    per_token_logps: np.ndarray,
+    labels: np.ndarray,
+    min_weight: float,
+    max_weight: float,
+) -> np.ndarray:
+    sample_adv = np.asarray(sample_advantages, dtype=np.float32).reshape(-1)
+    if sample_adv.shape[0] != labels.shape[0]:
+        raise ValueError(f"sample advantages batch mismatch: {sample_adv.shape[0]} vs {labels.shape[0]}")
+
+    completion_mask = np.asarray(labels[:, 1:], dtype=np.float32)
+    if completion_mask.shape != per_token_logps.shape:
+        raise ValueError(f"completion mask mismatch: {completion_mask.shape} vs {per_token_logps.shape}")
+
+    if advantage_mode == "sample":
+        return np.repeat(sample_adv[:, None], completion_mask.shape[1], axis=1).astype(np.float32)
+
+    token_surprisal = np.maximum(-np.asarray(per_token_logps, dtype=np.float32), 0.0)
+    masked_surprisal = token_surprisal * completion_mask
+
+    token_weights = np.ones_like(masked_surprisal, dtype=np.float32)
+    for sample_idx in range(masked_surprisal.shape[0]):
+        valid = completion_mask[sample_idx] > 0
+        if not np.any(valid):
+            continue
+        sample_vals = masked_surprisal[sample_idx, valid]
+        mean_val = float(sample_vals.mean())
+        if mean_val <= 1e-8:
+            normalized = np.ones_like(sample_vals, dtype=np.float32)
+        else:
+            normalized = sample_vals / mean_val
+        normalized = np.clip(normalized, min_weight, max_weight)
+        token_weights[sample_idx, valid] = normalized
+
+    token_adv = sample_adv[:, None] * token_weights
+    token_adv = token_adv * completion_mask
+    return token_adv.astype(np.float32)
+
+
 class GRPOObservabilityEngine:
     def __init__(self, cfg: Plugins2ObservabilityConfig):
         self.cfg = cfg
@@ -168,9 +210,20 @@ class GRPOObservabilityEngine:
             per_token_logps_local = _to_local_array(per_token_logps)
             total_valid_value = _as_float(total_valid_token_count, default=1.0)
 
+            advantages_for_loss = _build_token_advantages(
+                advantage_mode=self.cfg.train.advantage_mode,
+                sample_advantages=advantages_np,
+                per_token_logps=per_token_logps_local,
+                labels=np.asarray(batch_np["labels"], dtype=np.float32),
+                min_weight=float(self.cfg.train.token_adv_min_weight),
+                max_weight=float(self.cfg.train.token_adv_max_weight),
+            )
+            batch_np["advantages"] = advantages_for_loss
+            batch = jax.tree_util.tree_map_with_path(self.form_training_global_array, batch_np)
+
             token_grad_logprob, token_loss_contrib, token_probs = compute_token_observability_tensors(
                 labels=batch_np["labels"],
-                advantages=advantages_np,
+                advantages=advantages_for_loss,
                 per_token_logps=per_token_logps_local,
                 total_valid_token_count=total_valid_value,
             )
@@ -178,6 +231,7 @@ class GRPOObservabilityEngine:
                 input_ids=batch_np["input_ids"],
                 labels=batch_np["labels"],
                 per_token_logps=per_token_logps_local,
+                advantages=advantages_for_loss,
                 token_grad_logprob=token_grad_logprob,
                 token_loss_contrib=token_loss_contrib,
                 token_probs=token_probs,
@@ -217,6 +271,7 @@ class GRPOObservabilityEngine:
                 "model_path": self.cfg.model_path,
                 "mesh_shape": self.cfg.mesh_shape,
                 "k": int(k),
+                "advantage_mode": str(self.cfg.train.advantage_mode),
                 "step_before": int(step_before),
                 "step_after": int(step_after),
                 "loss_before_update": float(loss_before_update),

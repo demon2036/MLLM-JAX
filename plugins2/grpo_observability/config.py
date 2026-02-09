@@ -21,6 +21,9 @@ class Plugins2TrainConfig:
     training_steps: int = 64
     grad_accum_steps: int = 1
     beta: float = 0.0
+    advantage_mode: str = "sample"
+    token_adv_min_weight: float = 0.25
+    token_adv_max_weight: float = 4.0
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
 
 
@@ -121,8 +124,18 @@ def load_plugins2_config(path: str) -> Plugins2ObservabilityConfig:
         training_steps=int(train_raw.get("training_steps", 64)),
         grad_accum_steps=int(train_raw.get("grad_accum_steps", 1)),
         beta=float(train_raw.get("beta", 0.0)),
+        advantage_mode=str(train_raw.get("advantage_mode", "sample")).strip().lower(),
+        token_adv_min_weight=float(train_raw.get("token_adv_min_weight", 0.25)),
+        token_adv_max_weight=float(train_raw.get("token_adv_max_weight", 4.0)),
         optimizer=_parse_optimizer(train_raw.get("optimizer")),
     )
+
+    if train.advantage_mode not in {"sample", "surprisal"}:
+        raise ValueError("train.advantage_mode must be one of: sample/surprisal")
+    if train.token_adv_min_weight <= 0 or train.token_adv_max_weight <= 0:
+        raise ValueError("train.token_adv_min_weight and train.token_adv_max_weight must be > 0")
+    if train.token_adv_min_weight > train.token_adv_max_weight:
+        raise ValueError("train.token_adv_min_weight must be <= train.token_adv_max_weight")
 
     wandb_raw = payload.get("wandb") or {}
     wandb = Plugins2WandbConfig(

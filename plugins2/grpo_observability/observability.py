@@ -59,6 +59,7 @@ def build_token_rows(
     input_ids: Any,
     labels: Any,
     per_token_logps: Any,
+    advantages: Any,
     token_grad_logprob: Any,
     token_loss_contrib: Any,
     token_probs: Any,
@@ -67,6 +68,7 @@ def build_token_rows(
     input_ids_np = np.asarray(input_ids)
     labels_np = np.asarray(labels)
     logps_np = np.asarray(per_token_logps, dtype=np.float32)
+    advantages_np = np.asarray(advantages, dtype=np.float32)
     grad_np = np.asarray(token_grad_logprob, dtype=np.float32)
     loss_np = np.asarray(token_loss_contrib, dtype=np.float32)
     probs_np = np.asarray(token_probs, dtype=np.float32)
@@ -80,6 +82,8 @@ def build_token_rows(
     completion_mask = labels_np[:, 1:] > 0
     if chosen_ids.shape != logps_np.shape:
         raise ValueError(f"chosen_ids and per_token_logps mismatch: {chosen_ids.shape} vs {logps_np.shape}")
+    if advantages_np.shape != logps_np.shape:
+        raise ValueError(f"advantages and per_token_logps mismatch: {advantages_np.shape} vs {logps_np.shape}")
 
     decoded_cache: dict[int, str] = {}
 
@@ -111,6 +115,7 @@ def build_token_rows(
                     "token_text": decode_token(token_id),
                     "logprob": float(logps_np[sample_idx, position]),
                     "prob": prob_value,
+                    "advantage_t": float(advantages_np[sample_idx, position]),
                     "grad_logprob": grad_logprob_value,
                     "grad_prob": float(grad_prob_value),
                     "grad_logit_chosen": float(grad_logit_chosen_value),

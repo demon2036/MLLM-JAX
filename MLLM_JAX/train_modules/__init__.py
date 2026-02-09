@@ -168,10 +168,18 @@ class TrainGRPOModule(nn.Module):
         ratio = jnp.exp(per_token_logps - old_per_token_logps)
         clipped_ratio = jnp.clip(ratio, 1.0 - self.epsilon_low, 1.0 + self.epsilon_high)
 
-        # Advantages shape [B] -> [B, 1] for broadcasting
-        adv_broadcast=inputs['advantages'][...,None]
-        per_token_loss1 = ratio * adv_broadcast
-        per_token_loss2 = clipped_ratio * adv_broadcast
+        advantages = inputs['advantages']
+        if advantages.ndim == 1:
+            adv_per_token = advantages[..., None]
+        elif advantages.ndim == 2:
+            if advantages.shape != per_token_logps.shape:
+                raise ValueError(f"advantages shape mismatch: {advantages.shape} vs {per_token_logps.shape}")
+            adv_per_token = advantages
+        else:
+            raise ValueError(f"advantages must be rank-1 or rank-2, got {advantages.shape}")
+
+        per_token_loss1 = ratio * adv_per_token
+        per_token_loss2 = clipped_ratio * adv_per_token
         per_token_ppo_loss = jnp.minimum(per_token_loss1, per_token_loss2) # Shape: [B, L-1]
 
         per_token_loss=-per_token_ppo_loss

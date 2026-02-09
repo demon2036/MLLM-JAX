@@ -1,0 +1,35 @@
+model_path: Qwen/Qwen2.5-0.5B-Instruct
+mesh_shape: auto
+reward_weights: [1.0, 0.5, 0.5]
+
+rollout:
+  k: 8
+  global_length: 512
+  max_length_sample: 96
+
+train:
+  training_steps: 64
+  grad_accum_steps: 1
+  beta: 0.0
+  advantage_mode: surprisal
+  token_adv_min_weight: 0.25
+  token_adv_max_weight: 4.0
+  optimizer:
+    name: lion
+    clip_norm: 1.0
+    weight_decay: 1.0e-8
+    lr_schedule:
+      type: warmup_cosine
+      init_value: 0.0
+      peak_value: 1.0e-6
+      end_value: 0.0
+      warmup_ratio: 0.05
+
+wandb:
+  project: plugins2-grpo-observability
+  mode: online
+  name: ""
+
+web:
+  host: 0.0.0.0
+  port: 8080

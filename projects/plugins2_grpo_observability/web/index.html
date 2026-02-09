@@ -139,11 +139,13 @@
         <span class="legend-item"><span class="legend-swatch" style="background: rgba(37, 99, 235, 0.45);"></span>grad_prob 负向大</span>
         <span class="legend-item"><span class="legend-swatch" style="background: rgba(239, 68, 68, 0.45);"></span>grad_z(chosen) 正向大</span>
         <span class="legend-item"><span class="legend-swatch" style="background: rgba(37, 99, 235, 0.45);"></span>grad_z(chosen) 负向大</span>
+        <span class="legend-item"><span class="legend-swatch" style="background: rgba(239, 68, 68, 0.45);"></span>advantage_t 正向大</span>
+        <span class="legend-item"><span class="legend-swatch" style="background: rgba(37, 99, 235, 0.45);"></span>advantage_t 负向大</span>
         <span class="legend-item"><span class="legend-swatch" style="background: rgba(239, 68, 68, 0.45);"></span>loss_contrib 正贡献大</span>
         <span class="legend-item"><span class="legend-swatch" style="background: rgba(34, 197, 94, 0.45);"></span>loss_contrib 负贡献大</span>
         <span class="legend-item"><span class="legend-swatch" style="background: rgba(234, 179, 8, 0.45);"></span>contrib% 深色 = 总体贡献高</span>
       </div>
-      <div class="legend-note">说明：同一个 sample 内，各列按绝对值归一化着色；`contrib%` = `|loss_contrib| / Σ|loss_contrib|`。GRPO 若 advantage 为 sample 级标量，`grad_logprob` 可能在同一 sample 内接近常数；`grad_prob = grad_logprob / prob`、`grad_z(chosen) = grad_logprob * (1 - prob)` 会引入 token 概率差异，更接近你要的 token 级影响。</div>
+      <div class="legend-note">说明：同一个 sample 内，各列按绝对值归一化着色；`contrib%` = `|loss_contrib| / Σ|loss_contrib|`。当 `advantage_t` 为逐 token 时，`grad_logprob` 本身就会因 token 位置而变化；`grad_prob` 与 `grad_z(chosen)` 进一步展示概率缩放后的梯度敏感度。</div>
     </div>
 
     <div id="samples"></div>
@@ -218,11 +220,13 @@
         let gradMaxAbs = 0;
         let gradProbMaxAbs = 0;
         let gradLogitMaxAbs = 0;
+        let advantageMaxAbs = 0;
         let lossMaxAbs = 0;
         let lossAbsSum = 0;
         (tokens || []).forEach((token) => {
           const probValue = Number(token.prob) || 0;
           const gradValue = Number(token.grad_logprob) || 0;
+          const advantageValue = Number(token.advantage_t) || 0;
           const gradProbCandidate = Number(token.grad_prob);
           const gradLogitCandidate = Number(token.grad_logit_chosen);
           const gradProbValue = Number.isFinite(gradProbCandidate)
@@ -235,11 +239,12 @@
           gradMaxAbs = Math.max(gradMaxAbs, Math.abs(gradValue));
           gradProbMaxAbs = Math.max(gradProbMaxAbs, Math.abs(gradProbValue));
           gradLogitMaxAbs = Math.max(gradLogitMaxAbs, Math.abs(gradLogitValue));
+          advantageMaxAbs = Math.max(advantageMaxAbs, Math.abs(advantageValue));
           const lossAbs = Math.abs(Number(token.loss_contrib) || 0);
           lossMaxAbs = Math.max(lossMaxAbs, lossAbs);
           lossAbsSum += lossAbs;
         });
-        return { gradMaxAbs, gradProbMaxAbs, gradLogitMaxAbs, lossMaxAbs, lossAbsSum };
+        return { gradMaxAbs, gradProbMaxAbs, gradLogitMaxAbs, advantageMaxAbs, lossMaxAbs, lossAbsSum };
       }
 
       function buildContributionRanks(tokens, lossAbsSum) {
@@ -312,6 +317,7 @@
                 <th>prob</th>
                 <th>prob_rank</th>
                 <th>logprob</th>
+                <th>advantage_t</th>
                 <th>grad_logprob</th>
                 <th>grad_prob</th>
                 <th>grad_z(chosen)</th>
@@ -339,6 +345,7 @@
             const probValue = Number(token.prob || 0);
             const logprobValue = Number(token.logprob || 0);
             const gradValue = Number(token.grad_logprob || 0);
+            const advantageValue = Number(token.advantage_t || 0);
             const gradProbCandidate = Number(token.grad_prob);
             const gradProbValue = Number.isFinite(gradProbCandidate)
               ? gradProbCandidate
@@ -356,6 +363,7 @@
 
             const probStyle = probCellStyle(probValue);
             const gradStyle = signedCellStyle(gradValue, tokenStats.gradMaxAbs, '239, 68, 68', '37, 99, 235');
+            const advantageStyle = signedCellStyle(advantageValue, tokenStats.advantageMaxAbs, '239, 68, 68', '37, 99, 235');
             const gradProbStyle = signedCellStyle(gradProbValue, tokenStats.gradProbMaxAbs, '239, 68, 68', '37, 99, 235');
             const gradLogitStyle = signedCellStyle(gradLogitValue, tokenStats.gradLogitMaxAbs, '239, 68, 68', '37, 99, 235');
             const lossStyle = signedCellStyle(lossValue, tokenStats.lossMaxAbs, '239, 68, 68', '34, 197, 94');
@@ -369,6 +377,7 @@
               <td class="metric-cell" style="${probStyle}" title="prob=${probValue.toExponential(6)}">${probValue.toExponential(4)}</td>
               <td class="metric-cell rank-cell" title="sample 内按 prob 降序排名">R${probabilityRank}</td>
               <td class="metric-cell" title="logprob=${logprobValue.toFixed(6)}">${logprobValue.toFixed(6)}</td>
+              <td class="metric-cell" style="${advantageStyle}" title="advantage_t=${advantageValue.toExponential(6)}; |max|=${tokenStats.advantageMaxAbs.toExponential(6)}">${advantageValue.toExponential(4)}</td>
               <td class="metric-cell" style="${gradStyle}" title="grad_logprob=${gradValue.toExponential(6)}; |max|=${tokenStats.gradMaxAbs.toExponential(6)}">${gradValue.toExponential(4)}</td>
               <td class="metric-cell" style="${gradProbStyle}" title="grad_prob=${gradProbValue.toExponential(6)}; |max|=${tokenStats.gradProbMaxAbs.toExponential(6)}">${gradProbValue.toExponential(4)}</td>
               <td class="metric-cell" style="${gradLogitStyle}" title="grad_z(chosen)=${gradLogitValue.toExponential(6)}; |max|=${tokenStats.gradLogitMaxAbs.toExponential(6)}">${gradLogitValue.toExponential(4)}</td>

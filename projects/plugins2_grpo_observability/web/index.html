@@ -93,6 +93,9 @@
         color: #475569;
         font-size: 12px;
       }
+      .contrib-cell {
+        font-weight: 600;
+      }
       .sample-title {
         font-weight: 700;
         margin-top: 8px;
@@ -130,8 +133,9 @@
         <span class="legend-item"><span class="legend-swatch" style="background: rgba(37, 99, 235, 0.45);"></span>grad_logprob 负向大</span>
         <span class="legend-item"><span class="legend-swatch" style="background: rgba(239, 68, 68, 0.45);"></span>loss_contrib 正贡献大</span>
         <span class="legend-item"><span class="legend-swatch" style="background: rgba(34, 197, 94, 0.45);"></span>loss_contrib 负贡献大</span>
+        <span class="legend-item"><span class="legend-swatch" style="background: rgba(234, 179, 8, 0.45);"></span>contrib% 深色 = 总体贡献高</span>
       </div>
-      <div class="legend-note">说明：同一个 sample 内，`grad_logprob`/`loss_contrib` 按绝对值归一化着色（越深代表绝对值越大）。</div>
+      <div class="legend-note">说明：同一个 sample 内，`grad_logprob`/`loss_contrib` 按绝对值归一化着色；`contrib%` = `|loss_contrib| / Σ|loss_contrib|`（越深代表总体贡献越大）。</div>
     </div>
 
     <div id="samples"></div>
@@ -205,11 +209,37 @@
       function getSampleTokenStats(tokens) {
         let gradMaxAbs = 0;
         let lossMaxAbs = 0;
+        let lossAbsSum = 0;
         (tokens || []).forEach((token) => {
           gradMaxAbs = Math.max(gradMaxAbs, Math.abs(Number(token.grad_logprob) || 0));
-          lossMaxAbs = Math.max(lossMaxAbs, Math.abs(Number(token.loss_contrib) || 0));
+          const lossAbs = Math.abs(Number(token.loss_contrib) || 0);
+          lossMaxAbs = Math.max(lossMaxAbs, lossAbs);
+          lossAbsSum += lossAbs;
         });
-        return { gradMaxAbs, lossMaxAbs };
+        return { gradMaxAbs, lossMaxAbs, lossAbsSum };
+      }
+
+      function buildContributionRanks(tokens, lossAbsSum) {
+        const safeSum = Number(lossAbsSum) || 0;
+        const shares = (tokens || []).map((token) => {
+          if (safeSum <= 0) {
+            return 0;
+          }
+          return Math.abs(Number(token.loss_contrib) || 0) / safeSum;
+        });
+
+        const order = [...Array(shares.length).keys()].sort((a, b) => shares[b] - shares[a]);
+        const rankByIndex = new Array(shares.length).fill(0);
+        order.forEach((originalIndex, rankIndex) => {
+          rankByIndex[originalIndex] = rankIndex + 1;
+        });
+        return { shares, rankByIndex };
+      }
+
+      function contribCellStyle(share) {
+        const intensity = clamp01(share);
+        const alpha = 0.06 + 0.62 * intensity;
+        return `background-color: rgba(234, 179, 8, ${alpha.toFixed(4)});`;
       }
 
       function renderSamples(samples) {
@@ -240,20 +270,26 @@
                 <th>logprob</th>
                 <th>grad_logprob</th>
                 <th>loss_contrib</th>
+                <th>contrib%</th>
               </tr>
             </thead>
           `;
           const tbody = document.createElement('tbody');
           const tokenStats = getSampleTokenStats(sample.tokens || []);
+          const contribution = buildContributionRanks(sample.tokens || [], tokenStats.lossAbsSum);
           (sample.tokens || []).forEach((token) => {
             const probValue = Number(token.prob || 0);
             const logprobValue = Number(token.logprob || 0);
             const gradValue = Number(token.grad_logprob || 0);
             const lossValue = Number(token.loss_contrib || 0);
+            const contributionShare = Number(contribution.shares[tbody.children.length] || 0);
+            const contributionPct = contributionShare * 100;
+            const contributionRank = contribution.rankByIndex[tbody.children.length] || 0;
 
             const probStyle = probCellStyle(probValue);
             const gradStyle = signedCellStyle(gradValue, tokenStats.gradMaxAbs, '239, 68, 68', '37, 99, 235');
             const lossStyle = signedCellStyle(lossValue, tokenStats.lossMaxAbs, '239, 68, 68', '34, 197, 94');
+            const contribStyle = contribCellStyle(contributionShare);
 
             const row = document.createElement('tr');
             row.innerHTML = `
@@ -264,6 +300,7 @@
               <td class="metric-cell" title="logprob=${logprobValue.toFixed(6)}">${logprobValue.toFixed(6)}</td>
               <td class="metric-cell" style="${gradStyle}" title="grad_logprob=${gradValue.toExponential(6)}; |max|=${tokenStats.gradMaxAbs.toExponential(6)}">${gradValue.toExponential(4)}</td>
               <td class="metric-cell" style="${lossStyle}" title="loss_contrib=${lossValue.toExponential(6)}; |max|=${tokenStats.lossMaxAbs.toExponential(6)}">${lossValue.toExponential(4)}</td>
+              <td class="metric-cell contrib-cell" style="${contribStyle}" title="|loss_contrib| share=${contributionPct.toFixed(4)}%; rank=${contributionRank}/${(sample.tokens || []).length}">${contributionPct.toFixed(2)}% (R${contributionRank})</td>
             `;
             tbody.appendChild(row);
           });

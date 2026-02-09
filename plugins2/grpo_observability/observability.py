@@ -99,14 +99,21 @@ def build_token_rows(
         positions = np.where(completion_mask[sample_idx])[0]
         for position in positions.tolist():
             token_id = int(chosen_ids[sample_idx, position])
+            prob_value = float(probs_np[sample_idx, position])
+            grad_logprob_value = float(grad_np[sample_idx, position])
+            safe_prob = max(prob_value, 1e-12)
+            grad_prob_value = grad_logprob_value / safe_prob
+            grad_logit_chosen_value = grad_logprob_value * (1.0 - prob_value)
             rows.append(
                 {
                     "position": int(position),
                     "token_id": token_id,
                     "token_text": decode_token(token_id),
                     "logprob": float(logps_np[sample_idx, position]),
-                    "prob": float(probs_np[sample_idx, position]),
-                    "grad_logprob": float(grad_np[sample_idx, position]),
+                    "prob": prob_value,
+                    "grad_logprob": grad_logprob_value,
+                    "grad_prob": float(grad_prob_value),
+                    "grad_logit_chosen": float(grad_logit_chosen_value),
                     "loss_contrib": float(loss_np[sample_idx, position]),
                 }
             )

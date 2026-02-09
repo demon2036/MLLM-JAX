@@ -33,43 +33,46 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
         self.assertIn("algo:", out)
         self.assertIn("name: grpo", out)
         self.assertIn("model_path: Qwen/Qwen2.5-3B-Instruct", out)
-        self.assertIn("batch_size: 16", out)
+        self.assertIn("batch_size: 128", out)
         self.assertIn("n: 8", out)
-        self.assertIn("sequences_global_per_step: 128", out)
-        self.assertIn("mesh_shape: auto", out)
+        self.assertIn("sequences_global_per_step: 1024", out)
+        self.assertIn("mesh_shape: 1,-1,1", out)
         self.assertIn("wandb_mode: online", out)
+        self.assertIn("gradient_checkpointing: true", out)
 
     def test_print_config_explicit_config(self) -> None:
         out = self._run(
             [
                 "--print-config",
                 "--config",
-                "projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml",
+                "projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_batch128_roll8_literal_v6e8.yaml",
             ]
         )
         self.assertIn("algo:", out)
         self.assertIn("name: grpo", out)
         self.assertIn("model_path: Qwen/Qwen2.5-3B-Instruct", out)
-        self.assertIn("batch_size: 16", out)
+        self.assertIn("batch_size: 128", out)
         self.assertIn("n: 8", out)
-        self.assertIn("sequences_global_per_step: 128", out)
-        self.assertIn("mesh_shape: auto", out)
+        self.assertIn("sequences_global_per_step: 1024", out)
+        self.assertIn("mesh_shape: 1,-1,1", out)
+        self.assertIn("gradient_checkpointing: true", out)
 
     def test_print_config_maxrl_config(self) -> None:
         out = self._run(
             [
                 "--print-config",
                 "--config",
-                "projects/gsm8k_grpo/configs/rl_gsm8k_qwen25_3b_bs128_steps100_maxrl_v6e8_rolloutfast.yaml",
+                "projects/gsm8k_grpo/configs/rl_gsm8k_qwen25_3b_batch128_roll8_literal_maxrl_v6e8.yaml",
             ]
         )
         self.assertIn("algo:", out)
         self.assertIn("name: max-rl", out)
         self.assertIn("estimator:", out)
         self.assertIn("name: max-rl", out)
-        self.assertIn("batch_size: 16", out)
+        self.assertIn("batch_size: 128", out)
         self.assertIn("n: 8", out)
-        self.assertIn("sequences_global_per_step: 128", out)
+        self.assertIn("sequences_global_per_step: 1024", out)
+        self.assertIn("gradient_checkpointing: true", out)
 
 
 

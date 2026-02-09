@@ -97,6 +97,20 @@ def _get_int_from_aliases(
     return parsed[0][1]
 
 
+def _as_bool(value: Any, *, label: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        raw = value.strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"0", "false", "no", "off"}:
+            return False
+    raise ValueError(f"{label} must be a boolean, got {value!r}")
+
+
 def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     from projects.gsm8k_grpo.jax.train import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig
 
@@ -208,6 +222,15 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     if beta is None:
         beta = cfg.get("beta")
     beta = float(beta or 0.0)
+
+    gradient_checkpointing_raw = _get_by_path(cfg, "train.gradient_checkpointing")
+    if gradient_checkpointing_raw is None:
+        gradient_checkpointing_raw = cfg.get("train_gradient_checkpointing")
+    if gradient_checkpointing_raw is None:
+        gradient_checkpointing = True
+    else:
+        gradient_checkpointing = _as_bool(gradient_checkpointing_raw, label="train.gradient_checkpointing")
+
     mesh_shape = str(cfg.get("mesh_shape") or "1,-1,1")
 
     from plugins.training.core.optim.optimizer import LRScheduleConfig, OptimizerConfig
@@ -410,6 +433,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             ppo_epochs=ppo_epochs,
             grad_accum_steps=grad_accum_steps,
             beta=beta,
+            gradient_checkpointing=gradient_checkpointing,
             optimizer=optimizer_cfg,
         ),
         mesh_shape=mesh_shape,
@@ -428,7 +452,7 @@ def main() -> None:
     parser = ArgumentParser(description="Run GRPO/GSM8K training (projects/gsm8k_grpo).")
     parser.add_argument(
         "--config",
-        default="projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml",
+        default="projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_batch128_roll8_literal_v6e8.yaml",
         help="YAML config path.",
     )
     parser.add_argument(

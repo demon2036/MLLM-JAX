@@ -60,6 +60,7 @@
 - TPU v4-16 OOM sweep (len=2048, W&B): `docs/sops/tpu-vm-v4-16-grpo-gsm8k-wandb-oom-sweep-len2048.md`
 - jit8 GRPO/GSM8K YAML config (deprecated): `docs/sops/grpo-gsm8k-jit8-yaml-config.md`
 - GRPO runner batch size semantics: `docs/sops/grpo-gsm8k-runner-batch-size.md`
+- GSM8K configs minimal set + YAML-only launcher policy: `docs/sops/gsm8k-config-minimal-yaml-only-launcher.md`
 - GRPO runner metrics: `docs/sops/grpo-gsm8k-metrics.md`
 - GRPO length + eval knobs: `docs/sops/grpo-gsm8k-length-and-eval.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`

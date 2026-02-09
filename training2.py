@@ -52,28 +52,34 @@ def get_state(
     num_pre_q=16,
     max_lengths=None,
     beta: float = 0.04,
+    gradient_checkpointing: bool = True,
     create_sampler: bool = True,
     tx: Any | None = None,
 ):
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
     model_ref = get_model(mesh, model_path=model_path, only_model=True) if beta != 0 else None
 
-    train_module = flax.linen.remat(TrainGRPOModule,policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)(model=model,
-                                   pad_token_id=tokenizer.pad_token_id,
-                                   ref_model=model_ref,
-                                   num_pre_Q=num_pre_q,
-                                   beta=beta,
-                                   max_lengths=max_lengths,
-                                   )
-
-    # train_module = TrainGRPOModule(
-    #     model=model,
-    #     pad_token_id=tokenizer.pad_token_id,
-    #     ref_model=model_ref,
-    #     num_pre_Q=num_pre_q,
-    #     beta=beta,
-    #     max_lengths=max_lengths,
-    #     )
+    if bool(gradient_checkpointing):
+        train_module = flax.linen.remat(
+            TrainGRPOModule,
+            policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims,
+        )(
+            model=model,
+            pad_token_id=tokenizer.pad_token_id,
+            ref_model=model_ref,
+            num_pre_Q=num_pre_q,
+            beta=beta,
+            max_lengths=max_lengths,
+        )
+    else:
+        train_module = TrainGRPOModule(
+            model=model,
+            pad_token_id=tokenizer.pad_token_id,
+            ref_model=model_ref,
+            num_pre_Q=num_pre_q,
+            beta=beta,
+            max_lengths=max_lengths,
+        )
 
 
 

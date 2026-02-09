@@ -44,6 +44,8 @@ class GRPOTrainConfig:
     ppo_epochs: int = 1
     grad_accum_steps: int = 1
     beta: float = 0.0
+    # Whether to enable rematerialization (gradient checkpointing) in train modules.
+    gradient_checkpointing: bool = True
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
 
 
@@ -422,6 +424,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             model_path=cfg.model_path,
             update_cfg=cfg.algo.update,
             beta=cfg.train.beta,
+            gradient_checkpointing=cfg.train.gradient_checkpointing,
             create_sampler=True,
             tx=tx,
         )
@@ -445,6 +448,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             num_pre_q=cfg.rollout.n,
             max_lengths=cfg.train.max_length_total,
             beta=cfg.train.beta,
+            gradient_checkpointing=cfg.train.gradient_checkpointing,
             create_sampler=True,
             tx=tx,
         )

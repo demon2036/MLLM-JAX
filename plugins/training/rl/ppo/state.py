@@ -53,6 +53,7 @@ def get_ppo_state(
     model_path: str,
     update_cfg: UpdateConfig,
     beta: float = 0.0,
+    gradient_checkpointing: bool = True,
     create_sampler: bool = True,
     tx: Any | None = None,
 ) -> tuple[PPOTrainState, Any, PPOActorCriticModule]:
@@ -72,6 +73,7 @@ def get_ppo_state(
         value_coef=update_cfg.value_coef,
         value_clip_range=update_cfg.value_clip_range,
         entropy_coef=update_cfg.entropy_coef,
+        gradient_checkpointing=bool(gradient_checkpointing),
     )
 
     params = get_params(model_path)

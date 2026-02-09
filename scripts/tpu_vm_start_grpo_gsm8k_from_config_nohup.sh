@@ -17,7 +17,7 @@ usage() {
 Start GRPO/GSM8K training via nohup from an explicit YAML config.
 
 Usage:
-  bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh --config projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_bs128_steps100.yaml
+  bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh --config projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_batch128_roll8_literal_v6e8.yaml
 
 Optional:
   --env-name NAME   Conda env name (default: mllm-jax)
@@ -82,13 +82,6 @@ ln -sf "$(basename "$PID_FILE")" "$LATEST_PID"
 
 rm -f "$EXIT_FILE" "$PID_FILE"
 rm -f /tmp/libtpu_lockfile || true
-
-export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-1}"
-export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
-# Rollout speedups (opt-in in Python runner; default ON for this launcher).
-# Override by exporting `...=0` before running this script.
-export ROLLOUT_FAST_GENERATE="${ROLLOUT_FAST_GENERATE:-1}"
-export ROLLOUT_FAST_QWEN2_DECODE_ATTENTION="${ROLLOUT_FAST_QWEN2_DECODE_ATTENTION:-1}"
 
 RUNNER="set -euo pipefail; \
   rm -f /tmp/libtpu_lockfile || true; \

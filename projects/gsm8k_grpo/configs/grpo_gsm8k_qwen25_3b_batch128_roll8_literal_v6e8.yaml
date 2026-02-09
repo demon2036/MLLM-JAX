@@ -21,9 +21,10 @@ rollout:
 
 train:
   micro_batch_size: null
-  micro_batch_size_per_device: 4
+  micro_batch_size_per_device: 1
   ppo_epochs: 1
   beta: 0.0
+  gradient_checkpointing: true
 
 algo:
   name: grpo

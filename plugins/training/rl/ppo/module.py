@@ -20,17 +20,27 @@ class PPOActorCriticModule(nn.Module):
     value_coef: float = 0.5
     value_clip_range: float | None = 0.2
     entropy_coef: float = 0.0
+    gradient_checkpointing: bool = True
 
     def setup(self) -> None:
         dtype = self.jax_config.dtype
         param_dtype = self.jax_config.param_dtype
-        self.model = nn.remat(Qwen2Model)(self.config, jax_config=self.jax_config)
-        self.lm_head = nn.remat(nn.Dense)(
-            self.config.vocab_size,
-            use_bias=False,
-            dtype=dtype,
-            param_dtype=param_dtype,
-        )
+        if bool(self.gradient_checkpointing):
+            self.model = nn.remat(Qwen2Model)(self.config, jax_config=self.jax_config)
+            self.lm_head = nn.remat(nn.Dense)(
+                self.config.vocab_size,
+                use_bias=False,
+                dtype=dtype,
+                param_dtype=param_dtype,
+            )
+        else:
+            self.model = Qwen2Model(self.config, jax_config=self.jax_config)
+            self.lm_head = nn.Dense(
+                self.config.vocab_size,
+                use_bias=False,
+                dtype=dtype,
+                param_dtype=param_dtype,
+            )
         self.value_head = nn.Dense(
             1,
             use_bias=True,

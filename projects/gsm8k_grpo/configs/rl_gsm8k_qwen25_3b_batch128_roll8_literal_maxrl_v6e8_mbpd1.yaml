@@ -1,4 +1,6 @@
-# GRPO/GSM8K config (Qwen2.5-3B-Instruct) on v6e-8.
+# RL/GSM8K config (Qwen2.5-3B-Instruct) — MaxRL on v6e-8.
+#
+# Variant: train.micro_batch_size_per_device=1 (OOM fallback from mbpd2).
 #
 # Literal-batch profile requested by user:
 # - rollout.batch_size=128 (global prompts per step)
@@ -21,16 +23,16 @@ rollout:
 
 train:
   micro_batch_size: null
-  micro_batch_size_per_device: 4
+  micro_batch_size_per_device: 1
   ppo_epochs: 1
   beta: 0.0
   gradient_checkpointing: true
 
 algo:
-  name: grpo
+  name: max-rl
   estimator:
-    name: grpo
-    eps: 1.0e-4
+    name: max-rl
+    eps: 1.0e-6
     clip_range: null
   update:
     name: policy_gradient
@@ -46,3 +48,4 @@ reward_weights: [1.0, 0.5, 0.5]
 eval_every_steps: 10
 eval_batches_per_process: 1
 eval_split: test
+

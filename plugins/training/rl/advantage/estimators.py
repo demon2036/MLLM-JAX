@@ -166,9 +166,9 @@ def compute_maxrl_advantages_by_group_id(
 ) -> np.ndarray:
     """MaxRL-style advantages within each prompt group.
 
-    Following Eq. (9) style normalization in arXiv:2602.02710, we use
-    `(reward - group_mean) / group_mean` where `group_mean` is the empirical
-    success rate (or weighted success proxy) for one prompt group.
+    Matches upstream `tajwarfahim/maxrl` (`verl/trainer/ppo/core_algos.py`):
+
+      advantage_i = (reward_i - group_mean) / (group_mean + eps)
 
     `eps` stabilizes near-zero group means.
     """
@@ -188,9 +188,13 @@ def compute_maxrl_advantages_by_group_id(
     group_count = np.bincount(inv, minlength=num_groups).astype(np.float32)
     group_mean = group_sum / np.maximum(group_count, 1.0)
 
+    # Upstream behavior: if a group has size 1, set its mean baseline to 0.
+    # (This avoids a division-by-zero branch in their code path; in practice
+    # GRPO/MaxRL uses group_size==rollout.n>=2, so this should not trigger.)
+    group_mean = np.where(group_count == 1.0, 0.0, group_mean).astype(np.float32)
+
     mean_per_sample = group_mean[inv].astype(np.float32)
-    denom = np.maximum(mean_per_sample, eps_f)
-    advantages = (rewards_np - mean_per_sample) / denom
+    advantages = (rewards_np - mean_per_sample) / (mean_per_sample + eps_f)
     return _maybe_clip(advantages.astype(np.float32), clip_range)
 
 

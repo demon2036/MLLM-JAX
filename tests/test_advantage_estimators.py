@@ -63,7 +63,25 @@ class TestAdvantageEstimators(unittest.TestCase):
         eps = 1e-6
 
         # group means: [0.5, 1.0]
-        expected = np.asarray([(1.0 - 0.5) / 0.5, (0.0 - 0.5) / 0.5, (2.0 - 1.0) / 1.0, (0.0 - 1.0) / 1.0], dtype=np.float32)
+        expected = np.asarray(
+            [
+                (1.0 - 0.5) / (0.5 + eps),
+                (0.0 - 0.5) / (0.5 + eps),
+                (2.0 - 1.0) / (1.0 + eps),
+                (0.0 - 1.0) / (1.0 + eps),
+            ],
+            dtype=np.float32,
+        )
+        out = compute_maxrl_advantages_by_group_id(rewards=rewards, group_ids=group_ids, eps=eps)
+        np.testing.assert_allclose(out, expected, rtol=0, atol=1e-6)
+
+    def test_maxrl_advantages_singleton_group_baseline_is_zero(self) -> None:
+        rewards = np.asarray([2.0, 3.0], dtype=np.float32)
+        group_ids = np.asarray([0, 1], dtype=np.int32)
+        eps = 1.0
+
+        # Upstream sets the singleton baseline mean to 0, so advantage == reward / eps.
+        expected = np.asarray([2.0, 3.0], dtype=np.float32)
         out = compute_maxrl_advantages_by_group_id(rewards=rewards, group_ids=group_ids, eps=eps)
         np.testing.assert_allclose(out, expected, rtol=0, atol=1e-6)
 

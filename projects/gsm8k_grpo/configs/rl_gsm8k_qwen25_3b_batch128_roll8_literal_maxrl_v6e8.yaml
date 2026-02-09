@@ -21,7 +21,7 @@ rollout:
 
 train:
   micro_batch_size: null
-  micro_batch_size_per_device: 1
+  micro_batch_size_per_device: 4
   ppo_epochs: 1
   beta: 0.0
   gradient_checkpointing: true
@@ -30,7 +30,7 @@ algo:
   name: max-rl
   estimator:
     name: max-rl
-    eps: 1.0e-4
+    eps: 1.0e-6
     clip_range: null
   update:
     name: policy_gradient

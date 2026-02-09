@@ -69,6 +69,34 @@ def _to_local_array(array: Any) -> np.ndarray:
     return np.asarray(array)
 
 
+def _find_token_embedding_table(params: Any) -> Any:
+    candidates: list[tuple[tuple[str, ...], Any]] = []
+    for path, leaf in jax.tree_util.tree_leaves_with_path(params):
+        keys = tuple(str(getattr(k, "key", getattr(k, "name", k))) for k in path)
+        arr = np.asarray(leaf)
+        if arr.ndim != 2:
+            continue
+        keyset = {k.lower() for k in keys}
+        if "embed_tokens" in keyset or ("embed" in keyset and "embedding" in keyset):
+            candidates.append((keys, leaf))
+
+    if not candidates:
+        raise KeyError("unable to find token embedding table in params")
+
+    def score(item: tuple[tuple[str, ...], Any]) -> tuple[int, int, int]:
+        keys, leaf = item
+        keyset = {k.lower() for k in keys}
+        arr = np.asarray(leaf)
+        return (
+            1 if "embed_tokens" in keyset else 0,
+            1 if "embedding" in keyset else 0,
+            int(arr.shape[0]),
+        )
+
+    _, best_leaf = sorted(candidates, key=score, reverse=True)[0]
+    return best_leaf
+
+
 def _build_token_advantages(
     *,
     advantage_mode: str,
@@ -239,7 +267,8 @@ class GRPOObservabilityEngine:
             batch_np["advantages"] = advantages_for_loss
             batch = jax.tree_util.tree_map_with_path(self.form_training_global_array, batch_np)
 
-            hidden_size = int(self.state.params["model"]["model"]["embed_tokens"]["embedding"].shape[1])
+            token_embedding_table = _find_token_embedding_table(self.state.params)
+            hidden_size = int(np.asarray(token_embedding_table).shape[1])
             input_embed_delta = np.zeros(
                 (int(batch_np["input_ids"].shape[0]), int(batch_np["input_ids"].shape[1]), hidden_size),
                 dtype=np.float32,
@@ -259,7 +288,7 @@ class GRPOObservabilityEngine:
             input_grad_norms, input_grad_dot, input_grad_cos = compute_input_attribution_tensors(
                 input_ids=batch_np["input_ids"],
                 labels=batch_np["labels"],
-                embedding_table=self.state.params["model"]["model"]["embed_tokens"]["embedding"],
+                embedding_table=token_embedding_table,
                 input_embed_grads=input_embed_grads_local,
             )
 

@@ -55,6 +55,23 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
         self.assertIn("sequences_global_per_step: 128", out)
         self.assertIn("mesh_shape: auto", out)
 
+    def test_print_config_maxrl_config(self) -> None:
+        out = self._run(
+            [
+                "--print-config",
+                "--config",
+                "projects/gsm8k_grpo/configs/rl_gsm8k_qwen25_3b_bs128_steps100_maxrl_v6e8_rolloutfast.yaml",
+            ]
+        )
+        self.assertIn("algo:", out)
+        self.assertIn("name: max-rl", out)
+        self.assertIn("estimator:", out)
+        self.assertIn("name: max-rl", out)
+        self.assertIn("batch_size: 16", out)
+        self.assertIn("n: 8", out)
+        self.assertIn("sequences_global_per_step: 128", out)
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,8 +14,8 @@ from plugins.training.rl.algorithms.config import (
 from plugins.training.rl.reward.modules import WeightedRewardModule
 from plugins.training.rl.update.modules import PolicyGradientUpdateModule, PPOUpdateModule
 
-SUPPORTED_ALGOS = ("reinforce", "ppo", "grpo", "rloo", "dapo", "reinforce++")
-SUPPORTED_ESTIMATORS = ("reinforce", "grpo", "rloo", "dapo", "reinforce++", "gae")
+SUPPORTED_ALGOS = ("reinforce", "ppo", "grpo", "rloo", "dapo", "reinforce++", "maxrl")
+SUPPORTED_ESTIMATORS = ("reinforce", "grpo", "rloo", "dapo", "reinforce++", "maxrl", "gae")
 SUPPORTED_UPDATES = ("ppo", "policy_gradient")
 
 DEFAULT_ESTIMATOR_FOR_ALGO = {
@@ -25,6 +25,7 @@ DEFAULT_ESTIMATOR_FOR_ALGO = {
     "rloo": "rloo",
     "dapo": "dapo",
     "reinforce++": "reinforce++",
+    "maxrl": "maxrl",
 }
 DEFAULT_UPDATE_FOR_ALGO = {
     "reinforce": "policy_gradient",
@@ -33,6 +34,7 @@ DEFAULT_UPDATE_FOR_ALGO = {
     "rloo": "policy_gradient",
     "dapo": "policy_gradient",
     "reinforce++": "policy_gradient",
+    "maxrl": "policy_gradient",
 }
 
 
@@ -115,6 +117,7 @@ def create_algorithm(
         DAPOAdvantageModule,
         GlobalNormAdvantageModule,
         GroupIdGRPOAdvantageModule,
+        MaxRLAdvantageModule,
         ReinforcePlusPlusAdvantageModule,
         RLOOAdvantageModule,
     )
@@ -145,6 +148,8 @@ def create_algorithm(
         advantage_module = DAPOAdvantageModule(eps=eps, alpha=dapo_alpha, clip_range=clip_range)
     elif estimator_name == "reinforce++":
         advantage_module = ReinforcePlusPlusAdvantageModule(eps=eps, clip_range=clip_range)
+    elif estimator_name == "maxrl":
+        advantage_module = MaxRLAdvantageModule(eps=eps, clip_range=clip_range)
     elif estimator_name == "gae":
         advantage_module = None
     else:  # pragma: no cover

@@ -7,6 +7,7 @@ from plugins.training.rl.advantage.grpo import compute_grpo_advantages_by_group_
 from plugins.training.rl.advantage.estimators import (
     compute_dapo_advantages_by_group_id,
     compute_global_normalized_advantages,
+    compute_maxrl_advantages_by_group_id,
     compute_reinforce_plus_plus_advantages_by_group_id,
     compute_rloo_advantages_by_group_id,
 )
@@ -178,11 +179,37 @@ class ReinforcePlusPlusAdvantageModule:
         return AdvantageResult(advantages=advantages)
 
 
+@dataclass(frozen=True)
+class MaxRLAdvantageModule:
+    """MaxRL: normalize by prompt-group mean reward (success proxy)."""
+
+    eps: float = 1e-4
+    clip_range: float | None = None
+
+    def compute(
+        self,
+        *,
+        rewards: Any,
+        group_ids: Any,
+        mean_global: float | None = None,
+        std_global: float | None = None,
+    ) -> AdvantageResult:
+        del mean_global, std_global
+        advantages = compute_maxrl_advantages_by_group_id(
+            rewards=rewards,
+            group_ids=group_ids,
+            eps=float(self.eps),
+            clip_range=self.clip_range,
+        )
+        return AdvantageResult(advantages=advantages)
+
+
 __all__ = [
     "CallableAdvantageModule",
     "DAPOAdvantageModule",
     "GlobalNormAdvantageModule",
     "GroupIdGRPOAdvantageModule",
+    "MaxRLAdvantageModule",
     "ReinforcePlusPlusAdvantageModule",
     "RLOOAdvantageModule",
 ]

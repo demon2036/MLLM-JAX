@@ -9,6 +9,7 @@ from plugins.training.rl.advantage.estimators import (
     compute_gae_advantages,
     compute_dapo_advantages_by_group_id,
     compute_global_normalized_advantages,
+    compute_maxrl_advantages_by_group_id,
     compute_reinforce_plus_plus_advantages_by_group_id,
     compute_rloo_advantages_by_group_id,
 )
@@ -55,6 +56,16 @@ class TestAdvantageEstimators(unittest.TestCase):
 
         out = compute_dapo_advantages_by_group_id(rewards=rewards, group_ids=group_ids, eps=eps, alpha=alpha)
         np.testing.assert_allclose(out, expected.astype(np.float32), rtol=0, atol=1e-6)
+
+    def test_maxrl_advantages_group_mean_normalization(self) -> None:
+        rewards = np.asarray([1.0, 0.0, 2.0, 0.0], dtype=np.float32)
+        group_ids = np.asarray([0, 0, 1, 1], dtype=np.int32)
+        eps = 1e-6
+
+        # group means: [0.5, 1.0]
+        expected = np.asarray([(1.0 - 0.5) / 0.5, (0.0 - 0.5) / 0.5, (2.0 - 1.0) / 1.0, (0.0 - 1.0) / 1.0], dtype=np.float32)
+        out = compute_maxrl_advantages_by_group_id(rewards=rewards, group_ids=group_ids, eps=eps)
+        np.testing.assert_allclose(out, expected, rtol=0, atol=1e-6)
 
     def test_reinforce_plus_plus_is_rloo_whitened(self) -> None:
         rewards = np.asarray([1.0, 2.0, 3.0, 10.0, 20.0], dtype=np.float32)

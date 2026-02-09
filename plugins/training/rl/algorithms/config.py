@@ -14,6 +14,9 @@ def normalize_algo_name(name: str) -> str:
         "reinforce++": "reinforce++",
         "reinforcepp": "reinforce++",
         "reinforce_plus_plus": "reinforce++",
+        "maxrl": "maxrl",
+        "max-rl": "maxrl",
+        "max_rl": "maxrl",
         "rloo": "rloo",
         "grpo": "grpo",
         "ppo": "ppo",
@@ -37,6 +40,9 @@ def normalize_estimator_name(name: str) -> str:
         "reinforce++": "reinforce++",
         "reinforcepp": "reinforce++",
         "reinforce_plus_plus": "reinforce++",
+        "maxrl": "maxrl",
+        "max-rl": "maxrl",
+        "max_rl": "maxrl",
         "gae": "gae",
         "ppo": "gae",
         "rloo": "rloo",
@@ -67,7 +73,7 @@ class EstimatorConfig:
     """Advantage estimator configuration (baseline/normalization/GAE)."""
 
     # Estimator name (auto chooses a default based on algo.name).
-    # One of: auto, reinforce, grpo, rloo, dapo, reinforce++, gae
+    # One of: auto, reinforce, grpo, rloo, dapo, reinforce++, maxrl, gae
     name: str = "auto"
 
     # Numerical stabilizer for normalization denominators.
@@ -117,7 +123,7 @@ class AlgoConfig:
     """
 
     # High-level algorithm alias (used for defaults + logging).
-    # One of: reinforce, ppo, grpo, rloo, dapo, reinforce++
+    # One of: reinforce, ppo, grpo, rloo, dapo, reinforce++, maxrl
     name: str = "grpo"
     estimator: EstimatorConfig = field(default_factory=EstimatorConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)

@@ -157,6 +157,43 @@ def compute_reinforce_plus_plus_advantages_by_group_id(
     )
 
 
+def compute_maxrl_advantages_by_group_id(
+    *,
+    rewards: Any,
+    group_ids: Any,
+    eps: float = 1e-4,
+    clip_range: float | None = None,
+) -> np.ndarray:
+    """MaxRL-style advantages within each prompt group.
+
+    Following Eq. (9) style normalization in arXiv:2602.02710, we use
+    `(reward - group_mean) / group_mean` where `group_mean` is the empirical
+    success rate (or weighted success proxy) for one prompt group.
+
+    `eps` stabilizes near-zero group means.
+    """
+    rewards_np = _as_1d_float32(rewards, name="rewards")
+    group_ids_np = _as_1d_group_ids(group_ids, name="group_ids", expected_size=int(rewards_np.size))
+
+    eps_f = float(eps)
+    if eps_f <= 0:
+        raise ValueError("eps must be > 0")
+
+    _unique, inv = np.unique(group_ids_np, return_inverse=True)
+    num_groups = int(inv.max()) + 1 if inv.size else 0
+    if num_groups <= 0:
+        raise ValueError("No groups found (empty batch?)")
+
+    group_sum = np.bincount(inv, weights=rewards_np, minlength=num_groups).astype(np.float32)
+    group_count = np.bincount(inv, minlength=num_groups).astype(np.float32)
+    group_mean = group_sum / np.maximum(group_count, 1.0)
+
+    mean_per_sample = group_mean[inv].astype(np.float32)
+    denom = np.maximum(mean_per_sample, eps_f)
+    advantages = (rewards_np - mean_per_sample) / denom
+    return _maybe_clip(advantages.astype(np.float32), clip_range)
+
+
 def build_token_rewards_from_final(
     *,
     rewards: Any,
@@ -244,6 +281,7 @@ __all__ = [
     "compute_rloo_advantages_by_group_id",
     "compute_dapo_advantages_by_group_id",
     "compute_reinforce_plus_plus_advantages_by_group_id",
+    "compute_maxrl_advantages_by_group_id",
     "build_token_rewards_from_final",
     "compute_gae_advantages",
 ]

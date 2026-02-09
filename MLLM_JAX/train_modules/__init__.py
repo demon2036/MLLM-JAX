@@ -96,17 +96,29 @@ class TrainGRPOModule(nn.Module):
         input_ids = inputs['input_ids']
         attention_mask = inputs['attention_mask']
         labels = inputs['labels']
+        input_embed_delta = inputs.get("input_embed_delta", None)
         # Original rewards/advantages are ignored for the PPO loss calculation now
         # rewards = inputs['rewards']
         # original_advantages = inputs.get("advantages", None) # We won't use this
 
         # --- Model Forward Pass ---
+        inputs_embeds_for_forward = None
+        if input_embed_delta is not None:
+            if not hasattr(self.model, "model") or not hasattr(self.model.model, "embed_tokens"):
+                raise ValueError("model does not expose model.embed_tokens for input embedding gradients")
+            base_inputs_embeds = self.model.model.embed_tokens(input_ids)
+            if base_inputs_embeds.shape != input_embed_delta.shape:
+                raise ValueError(f"input_embed_delta shape mismatch: {input_embed_delta.shape} vs {base_inputs_embeds.shape}")
+            inputs_embeds_for_forward = base_inputs_embeds + input_embed_delta
+
         logits, _ = self.model(input_ids=input_ids,
-                               attention_mask=attention_mask) # Ignoring cache
+                               attention_mask=attention_mask,
+                               inputs_embeds=inputs_embeds_for_forward) # Ignoring cache
 
         if self.beta != 0 and self.ref_model is not None:
             ref_logits, _ = self.ref_model(input_ids=input_ids,
-                                           attention_mask=attention_mask)
+                                           attention_mask=attention_mask,
+                                           inputs_embeds=inputs_embeds_for_forward)
             ref_logits = jax.lax.stop_gradient(ref_logits)
         elif self.beta != 0 and self.ref_model is None:
             print("Warning: beta is non-zero but ref_model not provided. KL penalty calculation will be skipped.")

@@ -21,6 +21,7 @@ from training2 import get_state
 from plugins2.grpo_observability.config import Plugins2ObservabilityConfig
 from plugins2.grpo_observability.observability import (
     build_token_rows,
+    compute_input_attribution_tensors,
     compute_token_observability_tensors,
     summarize_rewards,
 )
@@ -139,23 +140,40 @@ class GRPOObservabilityEngine:
         )
         self._lock = threading.Lock()
 
-    def _loss_and_grads(self, batch: dict[str, Any]) -> tuple[float, dict[str, Any], Any, Any, float, float]:
+    def _loss_and_grads(
+        self,
+        batch: dict[str, Any],
+        *,
+        input_embed_delta: Any | None = None,
+    ) -> tuple[float, dict[str, Any], Any, Any, float, float, Any | None]:
         def loss_fn(params: Any):
             variables = {"params": {"model": params}}
             if getattr(self.state, "ref_params", None) is not None:
                 variables["params"]["ref_model"] = self.state.ref_params
-            metrics = self.state.apply_fn(variables, batch)
+            local_batch = batch
+            if input_embed_delta is not None:
+                local_batch = dict(batch)
+                local_batch["input_embed_delta"] = input_embed_delta
+            metrics = self.state.apply_fn(variables, local_batch)
             per_token_logps = metrics.get("per_token_logps")
             metrics_scalar = {k: v for k, v in metrics.items() if k != "per_token_logps"}
             metrics_scalar = jax.tree_util.tree_map(jnp.mean, metrics_scalar)
             return metrics_scalar["loss"], (metrics_scalar, per_token_logps)
 
-        (loss_value, (metrics_scalar, per_token_logps)), grads = jax.value_and_grad(loss_fn, has_aux=True)(self.state.params)
+        if input_embed_delta is None:
+            (loss_value, (metrics_scalar, per_token_logps)), grads = jax.value_and_grad(loss_fn, has_aux=True)(self.state.params)
+            input_embed_grads = None
+        else:
+            (loss_value, (metrics_scalar, per_token_logps)), (grads, input_embed_grads) = jax.value_and_grad(
+                loss_fn,
+                argnums=(0, 1),
+                has_aux=True,
+            )(self.state.params, input_embed_delta)
         jax.block_until_ready(loss_value)
         grad_l2 = _tree_l2_norm(grads)
         grad_abs_mean = _tree_abs_mean(grads)
         metrics_np = {k: _as_float(v) for k, v in metrics_scalar.items()}
-        return _as_float(loss_value), metrics_np, per_token_logps, grads, grad_l2, grad_abs_mean
+        return _as_float(loss_value), metrics_np, per_token_logps, grads, grad_l2, grad_abs_mean, input_embed_grads
 
     def run_request(self, request: RunRequest) -> dict[str, Any]:
         with self._lock:
@@ -204,7 +222,7 @@ class GRPOObservabilityEngine:
             t_shard = time.perf_counter() - t0
 
             t0 = time.perf_counter()
-            loss_before_update, grad_metrics, per_token_logps, _grads, grad_l2, grad_abs_mean = self._loss_and_grads(batch)
+            loss_before_update, grad_metrics, per_token_logps, _grads, grad_l2, grad_abs_mean, _ = self._loss_and_grads(batch)
             t_grad = time.perf_counter() - t0
 
             per_token_logps_local = _to_local_array(per_token_logps)
@@ -221,6 +239,30 @@ class GRPOObservabilityEngine:
             batch_np["advantages"] = advantages_for_loss
             batch = jax.tree_util.tree_map_with_path(self.form_training_global_array, batch_np)
 
+            hidden_size = int(self.state.params["model"]["model"]["embed_tokens"]["embedding"].shape[1])
+            input_embed_delta = np.zeros(
+                (int(batch_np["input_ids"].shape[0]), int(batch_np["input_ids"].shape[1]), hidden_size),
+                dtype=np.float32,
+            )
+            input_embed_delta_global = self.form_training_global_array(
+                (jax.tree_util.DictKey("input_embed_delta"),),
+                input_embed_delta,
+            )
+            _, _, _, _, _, _, input_embed_grads = self._loss_and_grads(
+                batch,
+                input_embed_delta=input_embed_delta_global,
+            )
+            if input_embed_grads is None:
+                raise ValueError("input embedding gradients unavailable")
+            input_embed_grads_local = _to_local_array(input_embed_grads)
+
+            input_grad_norms, input_grad_dot, input_grad_cos = compute_input_attribution_tensors(
+                input_ids=batch_np["input_ids"],
+                labels=batch_np["labels"],
+                embedding_table=self.state.params["model"]["model"]["embed_tokens"]["embedding"],
+                input_embed_grads=input_embed_grads_local,
+            )
+
             token_grad_logprob, token_loss_contrib, token_probs = compute_token_observability_tensors(
                 labels=batch_np["labels"],
                 advantages=advantages_for_loss,
@@ -235,6 +277,9 @@ class GRPOObservabilityEngine:
                 token_grad_logprob=token_grad_logprob,
                 token_loss_contrib=token_loss_contrib,
                 token_probs=token_probs,
+                input_grad_norms=input_grad_norms,
+                input_grad_dot=input_grad_dot,
+                input_grad_cos=input_grad_cos,
                 tokenizer=self.sampler.tokenizer,
             )
 

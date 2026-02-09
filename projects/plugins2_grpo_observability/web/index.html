@@ -96,6 +96,10 @@
       .contrib-cell {
         font-weight: 600;
       }
+      .rank-cell {
+        text-align: center;
+        font-weight: 600;
+      }
       .sample-title {
         font-weight: 700;
         margin-top: 8px;
@@ -135,7 +139,7 @@
         <span class="legend-item"><span class="legend-swatch" style="background: rgba(34, 197, 94, 0.45);"></span>loss_contrib 负贡献大</span>
         <span class="legend-item"><span class="legend-swatch" style="background: rgba(234, 179, 8, 0.45);"></span>contrib% 深色 = 总体贡献高</span>
       </div>
-      <div class="legend-note">说明：同一个 sample 内，`grad_logprob`/`loss_contrib` 按绝对值归一化着色；`contrib%` = `|loss_contrib| / Σ|loss_contrib|`（越深代表总体贡献越大）。</div>
+      <div class="legend-note">说明：同一个 sample 内，`grad_logprob`/`loss_contrib` 按绝对值归一化着色；`contrib%` = `|loss_contrib| / Σ|loss_contrib|`。GRPO 若 advantage 为 sample 级标量，则同一 sample 的 `grad_logprob` 可能相同；此时更建议看 `contrib%` 与 `prob_rank`。</div>
     </div>
 
     <div id="samples"></div>
@@ -236,6 +240,16 @@
         return { shares, rankByIndex };
       }
 
+      function buildProbabilityRanks(tokens) {
+        const probs = (tokens || []).map((token) => Number(token.prob) || 0);
+        const order = [...Array(probs.length).keys()].sort((a, b) => probs[b] - probs[a]);
+        const rankByIndex = new Array(probs.length).fill(0);
+        order.forEach((originalIndex, rankIndex) => {
+          rankByIndex[originalIndex] = rankIndex + 1;
+        });
+        return rankByIndex;
+      }
+
       function contribCellStyle(share) {
         const intensity = clamp01(share);
         const alpha = 0.06 + 0.62 * intensity;
@@ -267,6 +281,7 @@
                 <th>token_id</th>
                 <th>token_text</th>
                 <th>prob</th>
+                <th>prob_rank</th>
                 <th>logprob</th>
                 <th>grad_logprob</th>
                 <th>loss_contrib</th>
@@ -277,14 +292,16 @@
           const tbody = document.createElement('tbody');
           const tokenStats = getSampleTokenStats(sample.tokens || []);
           const contribution = buildContributionRanks(sample.tokens || [], tokenStats.lossAbsSum);
-          (sample.tokens || []).forEach((token) => {
+          const probabilityRanks = buildProbabilityRanks(sample.tokens || []);
+          (sample.tokens || []).forEach((token, tokenIndex) => {
             const probValue = Number(token.prob || 0);
             const logprobValue = Number(token.logprob || 0);
             const gradValue = Number(token.grad_logprob || 0);
             const lossValue = Number(token.loss_contrib || 0);
-            const contributionShare = Number(contribution.shares[tbody.children.length] || 0);
+            const contributionShare = Number(contribution.shares[tokenIndex] || 0);
             const contributionPct = contributionShare * 100;
-            const contributionRank = contribution.rankByIndex[tbody.children.length] || 0;
+            const contributionRank = contribution.rankByIndex[tokenIndex] || 0;
+            const probabilityRank = probabilityRanks[tokenIndex] || 0;
 
             const probStyle = probCellStyle(probValue);
             const gradStyle = signedCellStyle(gradValue, tokenStats.gradMaxAbs, '239, 68, 68', '37, 99, 235');
@@ -297,6 +314,7 @@
               <td>${token.token_id}</td>
               <td class="mono">${escapeHtml(String(token.token_text || ''))}</td>
               <td class="metric-cell" style="${probStyle}" title="prob=${probValue.toExponential(6)}">${probValue.toExponential(4)}</td>
+              <td class="metric-cell rank-cell" title="sample 内按 prob 降序排名">R${probabilityRank}</td>
               <td class="metric-cell" title="logprob=${logprobValue.toFixed(6)}">${logprobValue.toFixed(6)}</td>
               <td class="metric-cell" style="${gradStyle}" title="grad_logprob=${gradValue.toExponential(6)}; |max|=${tokenStats.gradMaxAbs.toExponential(6)}">${gradValue.toExponential(4)}</td>
               <td class="metric-cell" style="${lossStyle}" title="loss_contrib=${lossValue.toExponential(6)}; |max|=${tokenStats.lossMaxAbs.toExponential(6)}">${lossValue.toExponential(4)}</td>

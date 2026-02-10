@@ -89,6 +89,36 @@ def _pad_left_token_ids(
     return input_ids, attention_mask
 
 
+def _pad_right_token_ids(
+    sequences: List[List[int]],
+    *,
+    pad_token_id: int,
+    max_len: int | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not sequences:
+        raise ValueError("sequences must be non-empty")
+    if max_len is None:
+        max_len = max(len(seq) for seq in sequences)
+    else:
+        max_len = int(max_len)
+        if max_len <= 0:
+            raise ValueError("max_len must be > 0")
+        for seq in sequences:
+            if len(seq) > max_len:
+                raise ValueError(f"sequence length {len(seq)} exceeds max_len={max_len}")
+    if max_len <= 0:
+        raise ValueError("max_len must be > 0")
+
+    input_ids = torch.full((len(sequences), max_len), pad_token_id, dtype=torch.long)
+    attention_mask = torch.zeros((len(sequences), max_len), dtype=torch.long)
+    for row, seq in enumerate(sequences):
+        if not seq:
+            continue
+        input_ids[row, : len(seq)] = torch.tensor(seq, dtype=torch.long)
+        attention_mask[row, : len(seq)] = 1
+    return input_ids, attention_mask
+
+
 class TransformersGenerator:
     """HuggingFace Transformers generator compatible with OpenOneRec `benchmark.base_generator.Generator`.
 
@@ -436,18 +466,15 @@ class TransformersGenerator:
                 batch_token_ids = [token_ids_list[i] for i in batch_indices]
                 batch_true_lens = [len(seq) for seq in batch_token_ids]
 
-                input_ids_cpu, attention_mask_cpu = _pad_left_token_ids(
+                # Right padding allows us to skip `attention_mask` during prefill (pads are in the future under
+                # causal attention). We still build a decode-time mask to ignore padded KV positions.
+                input_ids_cpu, _ = _pad_right_token_ids(
                     batch_token_ids,
                     pad_token_id=pad_token_id,
                     max_len=bucket_len,
                 )
 
                 input_ids = input_ids_cpu.to(self.device)
-                attention_mask = attention_mask_cpu.to(self.device)
-
-                # Decoder-only models use position_ids for RoPE. With left padding, make position ids ignore pads.
-                position_ids = attention_mask.to(torch.long).cumsum(dim=-1) - 1
-                position_ids = torch.where(attention_mask.bool(), position_ids, torch.zeros_like(position_ids))
 
                 # Cap new tokens by available cache capacity (StaticCache indices are bounded).
                 max_cache_len = min(bucket_len + max_new_tokens_int, max_positions)
@@ -457,10 +484,6 @@ class TransformersGenerator:
                         results[sid] = [""]
                         mfu_stats[sid] = {"input_tokens": [prompt_len], "output_tokens": [0], "times": [0.0]}
                     continue
-
-                pad_len = torch.tensor([bucket_len - tl for tl in batch_true_lens], device=self.device, dtype=torch.long)
-                kv_positions = torch.arange(max_cache_len, device=self.device).unsqueeze(0)
-                attention_mask_decode = (kv_positions >= pad_len.unsqueeze(1)).to(torch.bool)
 
                 penalty = repetition_penalty if repetition_penalty is not None else None
                 use_penalty = penalty is not None and abs(float(penalty) - 1.0) > 1e-6
@@ -474,15 +497,24 @@ class TransformersGenerator:
                 t0 = time.time()
 
                 # Prefill with DynamicCache (avoids StaticCache prefill mask scaling with max_cache_len).
+                # We intentionally avoid `attention_mask` here: with right padding, pads are in the future for real
+                # prompt tokens under the causal mask, so they do not affect the logits for the last real token.
+                print(f"[info] XLA greedy prefill start seq_len={bucket_len} micro_bs={bucket_micro_bs}", flush=True)
                 with torch.no_grad():
                     prefill_out = self.model(
                         input_ids=input_ids,
-                        attention_mask=attention_mask.bool(),
-                        position_ids=position_ids,
                         use_cache=True,
                     )
-                logits = prefill_out.logits[:, -1, :]
+
+                xm.mark_step()
+                print(f"[info] XLA greedy prefill done dt={time.time() - t0:.2f}s", flush=True)
+
                 dyn_past = prefill_out.past_key_values
+                logits_full = prefill_out.logits  # [batch, bucket_len, vocab]
+                true_len = torch.tensor(batch_true_lens, device=self.device, dtype=torch.long)
+                last_pos = (true_len - 1).clamp(min=0)
+                row_ids = torch.arange(bucket_micro_bs, device=self.device)
+                logits = logits_full[row_ids, last_pos, :]
 
                 if use_penalty and seen_mask is not None and penalty is not None:
                     neg = (logits < 0) & seen_mask
@@ -492,6 +524,11 @@ class TransformersGenerator:
 
                 next_token = torch.argmax(logits, dim=-1)  # [batch]
 
+                kv_positions = torch.arange(max_cache_len, device=self.device).unsqueeze(0)
+                # Mask out right-padding positions in the prefilled cache; allow future cache slots for decoding.
+                attention_mask_decode = (kv_positions < true_len.unsqueeze(1)) | (kv_positions >= bucket_len)
+                attention_mask_decode = attention_mask_decode.to(torch.bool)
+
                 token_buffer = torch.full(
                     (bucket_micro_bs, effective_max_new),
                     int(pad_token_id),
@@ -500,8 +537,6 @@ class TransformersGenerator:
                 )
 
                 done = torch.zeros((bucket_micro_bs,), dtype=torch.bool, device=self.device)
-
-                xm.mark_step()
 
                 # Copy DynamicCache -> StaticCache to keep decode shapes fixed.
                 static_past = None
@@ -543,7 +578,7 @@ class TransformersGenerator:
                 xm.mark_step()
 
                 # Decode loop: we already have token0 in `next_token`, feed it to get token1, etc.
-                position_next = torch.tensor(batch_true_lens, device=self.device, dtype=torch.long)
+                position_next = true_len
                 cache_pos = bucket_len
                 steps_done = 0
 
@@ -691,6 +726,7 @@ class TransformersGenerator:
             if attention_mask is None:
                 raise ValueError("tokenizer(...) must return attention_mask for batching")
             prompt_lengths = attention_mask.sum(dim=1).to(torch.long)
+            padded_prompt_len = int(encoded["input_ids"].shape[1])
 
             gen_kwargs: Dict[str, Any] = {
                 "max_new_tokens": max_new_tokens,
@@ -746,7 +782,8 @@ class TransformersGenerator:
                 seq_logprobs: List[float] = []
 
                 for seq_idx in range(nseq):
-                    seq_tokens = sequences[row_idx, seq_idx, prompt_len:].detach().to("cpu")
+                    # With left padding, generation starts after the padded prompt length, not after the true length.
+                    seq_tokens = sequences[row_idx, seq_idx, padded_prompt_len:].detach().to("cpu")
                     if stop_token_ids_set:
                         cut = _find_first_token(seq_tokens, stop_token_ids_set)
                         if cut is not None:
@@ -816,10 +853,8 @@ class TransformersGenerator:
                 logits = out.logits  # [batch, seq, vocab]
             batch_dt = time.time() - t0
 
-            batch_size_actual = logits.shape[0]
-            row = torch.arange(batch_size_actual, device=logits.device)
-            last_pos = (lengths - 1).clamp(min=0)
-            next_logits = logits[row, last_pos, :]
+            # With left padding, the last position is always the last real prompt token.
+            next_logits = logits[:, -1, :]
             probs = torch.softmax(next_logits, dim=-1)
             probs_cpu = probs.detach().to("cpu")
 

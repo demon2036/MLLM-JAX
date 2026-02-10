@@ -1,4 +1,4 @@
-# GRPO/GSM8K config (explicit full schema; no hidden defaults)
+# Minimal PPO + GAE template (plugin schema v3)
 model_path: Qwen/Qwen2.5-3B-Instruct
 steps: 100
 
@@ -20,10 +20,8 @@ rollout:
 
 train:
   micro_batch_size: null
-  micro_batch_size_per_device: 1
-  max_length_total: 1152
+  micro_batch_size_per_device: 4
   ppo_epochs: 1
-  grad_accum_steps: 4
   beta: 0.0
   gradient_checkpointing: true
   optimizer:
@@ -42,22 +40,25 @@ train:
 
 algo:
   estimator:
-    name: grpo
+    name: gae
     kwargs:
       eps: 1.0e-4
       clip_range: null
+      gamma: 1.0
+      gae_lambda: 0.95
+      normalize: true
   update:
-    name: policy_gradient
-    kwargs: {}
+    name: ppo
+    kwargs:
+      value_coef: 0.5
+      value_clip_range: 0.2
+      entropy_coef: 0.0
 
 mesh_shape: 1,-1,1
-
 wandb_project: mllm-jax-grpo-gsm8k
 wandb_mode: online
 wandb_name: null
-
 reward_weights: [1.0, 0.5, 0.5]
-
 eval_every_steps: 10
 eval_batches_per_process: 1
 eval_split: test

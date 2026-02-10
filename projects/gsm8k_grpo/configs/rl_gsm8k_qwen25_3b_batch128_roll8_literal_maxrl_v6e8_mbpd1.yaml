@@ -1,17 +1,5 @@
-# RL/GSM8K config (Qwen2.5-3B-Instruct) — MaxRL on v6e-8.
-#
-# Variant: train.micro_batch_size_per_device=1 (OOM fallback from mbpd2).
-#
-# Literal-batch profile requested by user:
-# - rollout.batch_size=128 (global prompts per step)
-# - rollout.n=8
-# => sequences_global_per_step = 1024
-#
-# For full-split eval sweep at run time:
-#   EVAL_FULL_SWEEP=1 EVAL_FULL_NUM_PRE_Q=1
-
+# MaxRL/GSM8K config (explicit full schema; no hidden defaults)
 model_path: Qwen/Qwen2.5-3B-Instruct
-
 steps: 100
 
 rollout:
@@ -20,22 +8,47 @@ rollout:
   n: 8
   global_length: 512
   max_length_sample: 1024
+  dynamic_sampling:
+    enabled: false
+    trigger: homogeneous_group
+    metric: acc
+    homogeneity_threshold: 1.0
+    min_unique_reward_values: 2
+    max_extra_roll_rounds: 10
+    target_valid_groups: null
+    fallback_policy: keep_last
 
 train:
   micro_batch_size: null
   micro_batch_size_per_device: 1
+  max_length_total: 1152
   ppo_epochs: 1
+  grad_accum_steps: 4
   beta: 0.0
   gradient_checkpointing: true
+  optimizer:
+    name: lion
+    kwargs:
+      clip_norm: 1.0
+      weight_decay: 1.0e-8
+    lr_schedule:
+      name: warmup_cosine
+      kwargs:
+        init_value: 0.0
+        peak_value: 1.0e-6
+        end_value: 0.0
+        warmup_ratio: 0.05
+        warmup_steps: null
 
 algo:
-  name: max-rl
   estimator:
     name: max-rl
-    eps: 1.0e-6
-    clip_range: null
+    kwargs:
+      eps: 1.0e-6
+      clip_range: null
   update:
     name: policy_gradient
+    kwargs: {}
 
 mesh_shape: 1,-1,1
 
@@ -48,4 +61,3 @@ reward_weights: [1.0, 0.5, 0.5]
 eval_every_steps: 10
 eval_batches_per_process: 1
 eval_split: test
-

@@ -1,0 +1,34 @@
+project:
+  wandb_project: openonerec-recif-bench
+  wandb_mode: disabled
+  run_name: onerec-1p7b-label-pred-smoke
+
+model:
+  repo_id: OpenOneRec/OneRec-1.7B
+  torch_dtype: bfloat16
+  trust_remote_code: true
+
+upstream:
+  repo_url: https://github.com/Kuaishou-OneRec/OpenOneRec.git
+  checkout_dir: workdirs/OpenOneRec
+
+data:
+  hf_dataset: OpenOneRec/OpenOneRec-RecIF
+  local_dir: workdirs/raw_data/onerec_data
+  include:
+    - benchmark_data/**
+
+generator:
+  batch_size: 1
+  max_batch_size: 1
+
+eval:
+  data_version: v1.0
+  enable_thinking: false
+  overwrite: true
+  sample_size: 50
+  output_root: workdirs/openonerec_recif_eval_smoke
+  disable_llm_judge: true
+  tasks:
+    - label_pred
+

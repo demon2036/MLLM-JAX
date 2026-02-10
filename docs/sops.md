@@ -4,6 +4,7 @@
 
 - Repo setup: `docs/sops/repo-setup.md`
 - Clone reference repos into `workdir/`: `docs/sops/clone-reference-repos-into-workdir.md`
+- Clone OpenOneRec into `workdirs/` + verify published models: `docs/sops/clone-openonerec-workdirs-and-model-list.md`
 - Align MaxRL estimator with upstream `tajwarfahim/maxrl`: `docs/sops/maxrl-estimator-upstream-alignment.md`
 - Clone AkaliKong/MiniOneRec into repo workdir: `docs/sops/clone-akalikong-minionerec-workdir.md`
 - MiniOneRec SID SFT + eval (projects/sid_sft): `docs/sops/minionerec-sid-sft-and-eval.md`
@@ -35,6 +36,7 @@
 - Slim repo (move unused code to `deprecated/`): `docs/sops/repo-slim-deprecated.md`
 - TPU alive check: `docs/sops/tpu-alive-check.md`
 - TPU repo sync via Git (no SCP): `docs/sops/tpu-vm-repo-sync.md`
+- TPU VM OpenOneRec RecIF-Bench eval (OneRec-1.7B / 1.7B-pro): `docs/sops/tpu-vm-openonerec-recif-bench-eval.md`
 - TPU v6e-8 SID SFT official-alignment run: `docs/sops/tpu-vm-v6e-8-sid-sft-official-align.md`
 - TPU v6e-8 SID SFT Qwen2.5-1.5B Muon local vs optax (W&B online): `docs/sops/tpu-vm-v6e-8-sid-sft-qwen25-1p5b-muon-local-vs-optax.md`
 - TPU v4-8 SID SFT Qwen2.5-1.5B Muon (plugins refactor) run: `docs/sops/tpu-vm-v4-8-sid-sft-qwen25-1p5b-muon-refactor.md`
@@ -87,12 +89,14 @@
 - `docs/sops/github-push.md`
 - `docs/sops/repo-slim-deprecated.md`
 - `docs/sops/clone-reference-repos-into-workdir.md`
+- `docs/sops/clone-openonerec-workdirs-and-model-list.md`
 - `docs/sops/clone-akalikong-minionerec-workdir.md`
 
 ### TPU
 
 - `docs/sops/tpu-alive-check.md`
 - `docs/sops/tpu-vm-create-v4-8-or-v6e-8.md`
+- `docs/sops/tpu-vm-openonerec-recif-bench-eval.md`
 - `docs/sops/tpu-vm-v6e-8-sid-sft-official-align.md`
 - `docs/sops/tpu-vm-v6e-8-sid-sft-qwen25-1p5b-muon-local-vs-optax.md`
 - `docs/sops/tpu-vm-v6e-8-nanogpt-tinyshakespeare-standard.md`

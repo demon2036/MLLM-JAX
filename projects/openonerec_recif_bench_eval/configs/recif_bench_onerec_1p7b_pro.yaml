@@ -18,9 +18,12 @@ data:
   include:
     - benchmark_data/**
 
+llm:
+  gemini_project: civil-rarity-482610-s5
+  gemini_location: us-central1
+
 eval:
   data_version: v1.0
   enable_thinking: false
   overwrite: true
   sample_size: full
-

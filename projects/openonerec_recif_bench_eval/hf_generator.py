@@ -226,6 +226,10 @@ class TransformersGenerator:
                     past = StaticCache(self.model.config, max_cache_len=max_cache_len)
                 cache_position = torch.arange(0, input_len, device=self.device)
 
+        cache_mode = "static" if use_static_cache else "dynamic"
+        mask_elems = int(input_len * max_cache_len)
+        print(f"[info] XLA greedy cache={cache_mode} input_len={input_len} max_cache_len={max_cache_len} mask_elems={mask_elems}")
+
         seen_mask = None
         penalty = None
         if repetition_penalty is not None:

@@ -164,6 +164,81 @@ class TransformersGenerator:
                 ids.append(int(token_ids[0]))
         return ids
 
+    def _generate_greedy_autoregressive_xla(
+        self,
+        prompt_text: str,
+        *,
+        max_new_tokens: int,
+        end_token_ids: set[int],
+        repetition_penalty: float | None,
+    ) -> tuple[list[int], int, float]:
+        """Greedy decode on XLA with `xm.mark_step()` to avoid unbounded graph growth.
+
+        This intentionally runs *one prompt at a time* to avoid padding/masks. OpenOneRec's
+        reported metrics are batch-size invariant, so this is safe as an execution strategy.
+        """
+
+        try:
+            import torch_xla.core.xla_model as xm  # type: ignore
+        except Exception as exc:  # pragma: no cover - only used on TPU
+            raise RuntimeError("XLA greedy path requested but torch_xla is unavailable") from exc
+
+        encoded_cpu = self.tokenizer(prompt_text, return_tensors="pt")
+        input_ids = encoded_cpu.get("input_ids")
+        if input_ids is None or input_ids.ndim != 2 or input_ids.shape[0] != 1:
+            raise ValueError("tokenizer(...) must return input_ids[1, seq_len] for single prompt")
+
+        input_len = int(input_ids.shape[1])
+        input_ids = input_ids.to(self.device)
+
+        seen_mask = None
+        penalty = None
+        if repetition_penalty is not None:
+            penalty = float(repetition_penalty)
+        if penalty is not None and abs(penalty - 1.0) > 1e-6:
+            vocab_size = int(getattr(self.model.config, "vocab_size"))
+            seen_mask = torch.zeros((vocab_size,), dtype=torch.bool, device=self.device)
+            # Include prompt tokens in repetition penalty, matching HF `RepetitionPenaltyLogitsProcessor`.
+            seen_mask.index_fill_(0, input_ids[0], True)
+
+        t0 = time.time()
+
+        generated: list[int] = []
+        past = None
+        cur_input = input_ids
+
+        with torch.no_grad():
+            for _ in range(int(max_new_tokens)):
+                out = self.model(
+                    input_ids=cur_input,
+                    past_key_values=past,
+                    use_cache=True,
+                )
+                past = out.past_key_values
+
+                logits = out.logits[:, -1, :]
+                if seen_mask is not None and penalty is not None:
+                    neg = (logits < 0) & seen_mask
+                    pos = (logits > 0) & seen_mask
+                    logits = torch.where(neg, logits * penalty, logits)
+                    logits = torch.where(pos, logits / penalty, logits)
+
+                next_token = torch.argmax(logits, dim=-1)  # [1]
+                xm.mark_step()
+                token_id = int(next_token.item())
+
+                if token_id in end_token_ids:
+                    break
+
+                generated.append(token_id)
+                if seen_mask is not None:
+                    seen_mask[token_id] = True
+
+                cur_input = next_token.view(1, 1)
+
+        dt = time.time() - t0
+        return generated, input_len, dt
+
     def generate_standard(
         self,
         prompts: Dict[str, str],
@@ -214,133 +289,33 @@ class TransformersGenerator:
             raise RuntimeError("Tokenizer is missing pad_token_id")
         pad_token_id_int = int(pad_token_id)
 
-        use_chunked_greedy = (
+        use_xla_autoregressive_greedy = (
             self.device.type == "xla"
             and num_beams is None
             and not do_sample
             and num_return_sequences == 1
-            and max_new_tokens >= 512
+            and max_new_tokens >= 128
         )
-        if use_chunked_greedy:
-            print(f"[info] chunked greedy decode enabled (max_new_tokens={max_new_tokens}, device={self.device})")
+        if use_xla_autoregressive_greedy:
+            print(f"[info] XLA greedy loop enabled (max_new_tokens={max_new_tokens}, device={self.device})")
 
         for start, end in _batch_iter(sample_ids, batch_size):
             batch_ids = sample_ids[start:end]
             batch_texts = prompt_texts[start:end]
 
-            if use_chunked_greedy:
-                encoded_cpu = self.tokenizer(batch_texts, return_tensors="pt", padding=True)
-                input_ids_cpu = encoded_cpu.get("input_ids")
-                attention_mask_cpu = encoded_cpu.get("attention_mask")
-                if input_ids_cpu is None or attention_mask_cpu is None:
-                    raise ValueError("tokenizer(...) must return input_ids and attention_mask")
-                prompt_lengths = attention_mask_cpu.sum(dim=1).to(torch.long)
-
-                prompt_token_ids: List[List[int]] = []
-                for row_idx, prompt_len in enumerate(prompt_lengths.tolist()):
-                    if prompt_len <= 0:
-                        prompt_token_ids.append([])
-                        continue
-                    row_ids = input_ids_cpu[row_idx, -prompt_len:].tolist()
-                    prompt_token_ids.append([int(tok) for tok in row_ids])
-
-                current_token_ids = [seq.copy() for seq in prompt_token_ids]
-                generated_token_ids: List[List[int]] = [[] for _ in current_token_ids]
-                done = [False for _ in current_token_ids]
-
-                base_kwargs: Dict[str, Any] = {
-                    "do_sample": False,
-                    "temperature": temperature,
-                    "top_p": top_p,
-                    "top_k": top_k,
-                    "num_return_sequences": 1,
-                    "return_dict_in_generate": True,
-                    "pad_token_id": pad_token_id_int,
-                }
-                if repetition_penalty is not None:
-                    base_kwargs["repetition_penalty"] = float(repetition_penalty)
-                if end_token_ids:
-                    base_kwargs["eos_token_id"] = sorted(end_token_ids)
-
-                chunk_size = min(256, max_new_tokens)
-                total_batch_dt = 0.0
-
-                for offset in range(0, max_new_tokens, chunk_size):
-                    active = [
-                        idx
-                        for idx, is_done in enumerate(done)
-                        if (not is_done) and (len(generated_token_ids[idx]) < max_new_tokens)
-                    ]
-                    if not active:
-                        break
-
-                    active_sequences = [current_token_ids[idx] for idx in active]
-                    if any(not seq for seq in active_sequences):
-                        raise ValueError("Empty prompt token ids in chunked decode; cannot run generation safely.")
-
-                    input_ids_chunk_cpu, attention_mask_chunk_cpu = _pad_left_token_ids(
-                        active_sequences,
-                        pad_token_id=pad_token_id_int,
+            if use_xla_autoregressive_greedy:
+                for sample_id, prompt_text in zip(batch_ids, batch_texts):
+                    token_ids, prompt_len, sample_dt = self._generate_greedy_autoregressive_xla(
+                        prompt_text,
+                        max_new_tokens=max_new_tokens,
+                        end_token_ids=end_token_ids,
+                        repetition_penalty=float(repetition_penalty) if repetition_penalty is not None else None,
                     )
-                    encoded = {
-                        "input_ids": input_ids_chunk_cpu.to(self.device),
-                        "attention_mask": attention_mask_chunk_cpu.to(self.device),
-                    }
-
-                    remaining = max_new_tokens - offset
-                    step_max_new_tokens = min(chunk_size, remaining)
-
-                    attempt = step_max_new_tokens
-                    while True:
-                        try:
-                            t0 = time.time()
-                            with torch.no_grad():
-                                out = self.model.generate(**encoded, max_new_tokens=attempt, **base_kwargs)
-                            total_batch_dt += time.time() - t0
-                            break
-                        except RuntimeError as exc:
-                            if not _is_xla_compile_oom(exc) or attempt <= 1:
-                                raise
-                            attempt = max(1, attempt // 2)
-
-                    sequences = out.sequences.detach().to("cpu")
-                    input_len = int(input_ids_chunk_cpu.shape[1])
-
-                    for row_idx, sample_local_idx in enumerate(active):
-                        new_tokens = sequences[row_idx, input_len:].tolist()
-                        tokens_added = 0
-                        for tok in new_tokens:
-                            tok_int = int(tok)
-                            if tok_int == pad_token_id_int:
-                                break
-                            if tok_int in end_token_ids:
-                                done[sample_local_idx] = True
-                                break
-                            if len(generated_token_ids[sample_local_idx]) >= max_new_tokens:
-                                done[sample_local_idx] = True
-                                break
-                            generated_token_ids[sample_local_idx].append(tok_int)
-                            current_token_ids[sample_local_idx].append(tok_int)
-                            tokens_added += 1
-
-                        if tokens_added == 0 and not done[sample_local_idx]:
-                            # No progress; avoid infinite loops.
-                            done[sample_local_idx] = True
-
-                    try:
-                        import torch_xla.core.xla_model as xm  # type: ignore
-
-                        xm.mark_step()
-                    except Exception:
-                        pass
-
-                for row_idx, sample_id in enumerate(batch_ids):
-                    decoded_text = self.tokenizer.decode(generated_token_ids[row_idx], skip_special_tokens=True)
-                    results[sample_id] = [decoded_text]
+                    results[sample_id] = [self.tokenizer.decode(token_ids, skip_special_tokens=True)]
                     mfu_stats[sample_id] = {
-                        "input_tokens": [int(prompt_lengths[row_idx].item())],
-                        "output_tokens": [len(generated_token_ids[row_idx])],
-                        "times": [total_batch_dt],
+                        "input_tokens": [prompt_len],
+                        "output_tokens": [len(token_ids)],
+                        "times": [sample_dt],
                     }
                 continue
 

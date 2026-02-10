@@ -63,10 +63,19 @@ def _pad_left_token_ids(
     sequences: List[List[int]],
     *,
     pad_token_id: int,
+    max_len: int | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if not sequences:
         raise ValueError("sequences must be non-empty")
-    max_len = max(len(seq) for seq in sequences)
+    if max_len is None:
+        max_len = max(len(seq) for seq in sequences)
+    else:
+        max_len = int(max_len)
+        if max_len <= 0:
+            raise ValueError("max_len must be > 0")
+        for seq in sequences:
+            if len(seq) > max_len:
+                raise ValueError(f"sequence length {len(seq)} exceeds max_len={max_len}")
     if max_len <= 0:
         raise ValueError("max_len must be > 0")
 
@@ -313,6 +322,295 @@ class TransformersGenerator:
         dt = time.time() - t0
         return [int(tok) for tok in tokens_cpu], input_len, dt
 
+    def _generate_greedy_autoregressive_xla_bucketed(
+        self,
+        sample_ids: List[str],
+        prompt_texts: List[str],
+        *,
+        max_new_tokens: int,
+        end_token_ids: set[int],
+        repetition_penalty: float | None,
+        micro_batch_size: int,
+        pad_token_id: int,
+    ) -> tuple[Dict[str, List[str]], Dict[str, Dict[str, List[Any]]]]:
+        """XLA greedy decode for many prompts with a bounded set of prompt shapes.
+
+        This groups prompts by a padded bucket length (default: multiple of 512 tokens) to avoid compiling one XLA graph
+        per distinct prompt length. For very long prompts, padding would create an enormous causal mask; those are
+        processed without padding.
+
+        Returns:
+            (results, mfu_stats)
+        """
+
+        try:
+            import torch_xla.core.xla_model as xm  # type: ignore
+        except Exception as exc:  # pragma: no cover - only used on TPU
+            raise RuntimeError("XLA greedy bucketed path requested but torch_xla is unavailable") from exc
+
+        if len(sample_ids) != len(prompt_texts):
+            raise ValueError("sample_ids and prompt_texts length mismatch")
+        if not sample_ids:
+            return {}, {}
+
+        max_new_tokens_int = int(max_new_tokens)
+        if max_new_tokens_int <= 0:
+            return {sid: [""] for sid in sample_ids}, {sid: {"input_tokens": [0], "output_tokens": [0], "times": [0.0]} for sid in sample_ids}
+
+        bucket_size = int(os.environ.get("OPENONEREC_XLA_GREEDY_BUCKET_SIZE", "512") or "512")
+        if bucket_size <= 0:
+            bucket_size = 1
+        pad_max_len = int(os.environ.get("OPENONEREC_XLA_GREEDY_PAD_MAX_LEN", "12288") or "12288")
+        if pad_max_len <= 0:
+            pad_max_len = 0
+
+        mark_step_interval = int(os.environ.get("OPENONEREC_XLA_MARK_STEP_INTERVAL", "8") or "8")
+        if mark_step_interval <= 0:
+            mark_step_interval = 1
+
+        max_positions = int(getattr(self.model.config, "max_position_embeddings", 0) or 0)
+        if max_positions <= 0:
+            max_positions = 40960
+
+        # Tokenize once on CPU to avoid padding all prompts to the global max length.
+        token_ids_list: List[List[int]] = []
+        true_lens: List[int] = []
+        for text in prompt_texts:
+            token_ids = self.tokenizer(text, add_special_tokens=True).get("input_ids")
+            if token_ids is None:
+                raise ValueError("tokenizer(...) missing input_ids")
+            token_ids = [int(t) for t in token_ids]
+            if len(token_ids) > max_positions:
+                # Mirror common max-length truncation behavior: keep the most recent tokens.
+                token_ids = token_ids[-max_positions:]
+            token_ids_list.append(token_ids)
+            true_lens.append(len(token_ids))
+
+        # Group indices by padded bucket length (or exact length for long prompts).
+        bucket_to_indices: Dict[int, List[int]] = {}
+        for idx, seq_len in enumerate(true_lens):
+            if pad_max_len and seq_len > pad_max_len:
+                bucket_len = seq_len
+            else:
+                bucket_len = ((seq_len + bucket_size - 1) // bucket_size) * bucket_size
+                bucket_len = min(bucket_len, max_positions)
+            if bucket_len < seq_len:
+                bucket_len = seq_len
+            bucket_to_indices.setdefault(int(bucket_len), []).append(idx)
+
+        if repetition_penalty is not None:
+            repetition_penalty = float(repetition_penalty)
+
+        end_ids = sorted(end_token_ids)
+        end_ids_tensor = torch.tensor(end_ids, dtype=torch.long, device=self.device) if end_ids else None
+
+        results: Dict[str, List[str]] = {}
+        mfu_stats: Dict[str, Dict[str, List[Any]]] = {}
+
+        vocab_size = int(getattr(self.model.config, "vocab_size", 0) or 0)
+        if vocab_size <= 0 and repetition_penalty is not None and abs(repetition_penalty - 1.0) > 1e-6:
+            raise ValueError("model.config.vocab_size is required for repetition_penalty")
+
+        print(
+            "[info] XLA greedy bucketed enabled"
+            f" (bucket_size={bucket_size}, pad_max_len={pad_max_len}, micro_batch_size={micro_batch_size})"
+        )
+
+        # Process buckets from short to long to improve compile cache reuse.
+        for bucket_len in sorted(bucket_to_indices):
+            indices = bucket_to_indices[bucket_len]
+            if not indices:
+                continue
+
+            bucket_micro_bs = 1 if bucket_len > pad_max_len else max(1, int(micro_batch_size))
+
+            print(f"[info] XLA greedy bucket seq_len={bucket_len} samples={len(indices)} micro_bs={bucket_micro_bs}")
+
+            for start in range(0, len(indices), bucket_micro_bs):
+                batch_indices = indices[start : start + bucket_micro_bs]
+                # Keep a stable micro-batch shape by padding with the last entry.
+                if len(batch_indices) < bucket_micro_bs:
+                    batch_indices = batch_indices + [batch_indices[-1]] * (bucket_micro_bs - len(batch_indices))
+
+                batch_sample_ids = [sample_ids[i] for i in batch_indices]
+                batch_token_ids = [token_ids_list[i] for i in batch_indices]
+                batch_true_lens = [len(seq) for seq in batch_token_ids]
+
+                input_ids_cpu, attention_mask_cpu = _pad_left_token_ids(
+                    batch_token_ids,
+                    pad_token_id=pad_token_id,
+                    max_len=bucket_len,
+                )
+
+                input_ids = input_ids_cpu.to(self.device)
+                attention_mask = attention_mask_cpu.to(self.device)
+
+                # Decoder-only models use position_ids for RoPE. With left padding, make position ids ignore pads.
+                position_ids = attention_mask.to(torch.long).cumsum(dim=-1) - 1
+                position_ids = torch.where(attention_mask.bool(), position_ids, torch.zeros_like(position_ids))
+
+                # Cap new tokens by available cache capacity (StaticCache indices are bounded).
+                max_cache_len = min(bucket_len + max_new_tokens_int, max_positions)
+                effective_max_new = max(0, max_cache_len - bucket_len)
+                if effective_max_new <= 0:
+                    for sid, prompt_len in zip(batch_sample_ids, batch_true_lens):
+                        results[sid] = [""]
+                        mfu_stats[sid] = {"input_tokens": [prompt_len], "output_tokens": [0], "times": [0.0]}
+                    continue
+
+                pad_len = torch.tensor([bucket_len - tl for tl in batch_true_lens], device=self.device, dtype=torch.long)
+                kv_positions = torch.arange(max_cache_len, device=self.device).unsqueeze(0)
+                attention_mask_decode = (kv_positions >= pad_len.unsqueeze(1)).to(torch.bool)
+
+                penalty = repetition_penalty if repetition_penalty is not None else None
+                use_penalty = penalty is not None and abs(float(penalty) - 1.0) > 1e-6
+                seen_mask = None
+                if use_penalty:
+                    seen_mask_cpu = torch.zeros((bucket_micro_bs, vocab_size), dtype=torch.bool)
+                    for row, seq in enumerate(batch_token_ids):
+                        seen_mask_cpu[row].index_fill_(0, torch.tensor(seq, dtype=torch.long), True)
+                    seen_mask = seen_mask_cpu.to(self.device)
+
+                t0 = time.time()
+
+                # Prefill with DynamicCache (avoids StaticCache prefill mask scaling with max_cache_len).
+                with torch.no_grad():
+                    prefill_out = self.model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask.bool(),
+                        position_ids=position_ids,
+                        use_cache=True,
+                    )
+                logits = prefill_out.logits[:, -1, :]
+                dyn_past = prefill_out.past_key_values
+
+                if use_penalty and seen_mask is not None and penalty is not None:
+                    neg = (logits < 0) & seen_mask
+                    pos = (logits > 0) & seen_mask
+                    logits = torch.where(neg, logits * penalty, logits)
+                    logits = torch.where(pos, logits / penalty, logits)
+
+                next_token = torch.argmax(logits, dim=-1)  # [batch]
+
+                token_buffer = torch.full(
+                    (bucket_micro_bs, effective_max_new),
+                    int(pad_token_id),
+                    dtype=torch.long,
+                    device=self.device,
+                )
+
+                done = torch.zeros((bucket_micro_bs,), dtype=torch.bool, device=self.device)
+
+                xm.mark_step()
+
+                # Copy DynamicCache -> StaticCache to keep decode shapes fixed.
+                static_past = None
+                try:
+                    from transformers.cache_utils import StaticCache  # type: ignore
+                except Exception:
+                    static_past = None
+                else:
+                    if dyn_past is not None and hasattr(dyn_past, "layers"):
+                        static_past = StaticCache(self.model.config, max_cache_len=max_cache_len)
+                        prefill_cache_position = torch.arange(bucket_len, device=self.device)
+                        for layer_idx, layer in enumerate(getattr(dyn_past, "layers", [])):
+                            keys = getattr(layer, "keys", None)
+                            values = getattr(layer, "values", None)
+                            if keys is None or values is None:
+                                static_past = None
+                                break
+                            static_past.update(
+                                keys,
+                                values,
+                                layer_idx,
+                                cache_kwargs={"cache_position": prefill_cache_position},
+                            )
+
+                if static_past is None:
+                    # Fallback: reuse the legacy single-prompt implementation for this micro-batch.
+                    # This keeps correctness, but may compile more shapes.
+                    for sid, text in zip(batch_sample_ids, [prompt_texts[i] for i in batch_indices]):
+                        tok_ids, prompt_len, dt = self._generate_greedy_autoregressive_xla(
+                            text,
+                            max_new_tokens=effective_max_new,
+                            end_token_ids=end_token_ids,
+                            repetition_penalty=repetition_penalty,
+                        )
+                        results[sid] = [self.tokenizer.decode(tok_ids, skip_special_tokens=True)]
+                        mfu_stats[sid] = {"input_tokens": [prompt_len], "output_tokens": [len(tok_ids)], "times": [dt]}
+                    continue
+
+                xm.mark_step()
+
+                # Decode loop: we already have token0 in `next_token`, feed it to get token1, etc.
+                position_next = torch.tensor(batch_true_lens, device=self.device, dtype=torch.long)
+                cache_pos = bucket_len
+                steps_done = 0
+
+                with torch.no_grad():
+                    while steps_done < effective_max_new:
+                        token_buffer[:, steps_done] = next_token
+
+                        if use_penalty and seen_mask is not None:
+                            seen_mask.scatter_(1, next_token[:, None], True)
+
+                        if end_ids_tensor is not None:
+                            done = done | (next_token[..., None] == end_ids_tensor).any(dim=-1)
+
+                        steps_done += 1
+
+                        if steps_done >= effective_max_new:
+                            break
+
+                        if steps_done % mark_step_interval == 0:
+                            xm.mark_step()
+                            if bool(done.all().cpu().item()):
+                                break
+
+                        out = self.model(
+                            input_ids=next_token.view(bucket_micro_bs, 1),
+                            attention_mask=attention_mask_decode,
+                            position_ids=position_next.view(bucket_micro_bs, 1),
+                            past_key_values=static_past,
+                            use_cache=True,
+                            cache_position=torch.tensor([cache_pos], device=self.device),
+                        )
+                        cache_pos += 1
+                        position_next += 1
+
+                        logits = out.logits[:, -1, :]
+                        if use_penalty and seen_mask is not None and penalty is not None:
+                            neg = (logits < 0) & seen_mask
+                            pos = (logits > 0) & seen_mask
+                            logits = torch.where(neg, logits * penalty, logits)
+                            logits = torch.where(pos, logits / penalty, logits)
+                        next_token = torch.argmax(logits, dim=-1)
+
+                xm.mark_step()
+
+                tokens_cpu = token_buffer[:, :steps_done].detach().to("cpu").tolist()
+                dt = time.time() - t0
+
+                for row, sid in enumerate(batch_sample_ids):
+                    seq = [int(tok) for tok in tokens_cpu[row]]
+                    cut = None
+                    if end_token_ids:
+                        for i, tok in enumerate(seq):
+                            if tok in end_token_ids:
+                                cut = i
+                                break
+                    if cut is not None:
+                        seq = seq[:cut]
+
+                    results[sid] = [self.tokenizer.decode(seq, skip_special_tokens=True)]
+                    mfu_stats[sid] = {
+                        "input_tokens": [int(batch_true_lens[row])],
+                        "output_tokens": [len(seq)],
+                        "times": [dt],
+                    }
+
+        return results, mfu_stats
+
     def generate_standard(
         self,
         prompts: Dict[str, str],
@@ -372,26 +670,21 @@ class TransformersGenerator:
         )
         if use_xla_autoregressive_greedy:
             print(f"[info] XLA greedy loop enabled (max_new_tokens={max_new_tokens}, device={self.device})")
+        if use_xla_autoregressive_greedy:
+            greedy_results, greedy_mfu = self._generate_greedy_autoregressive_xla_bucketed(
+                sample_ids,
+                prompt_texts,
+                max_new_tokens=max_new_tokens,
+                end_token_ids=end_token_ids,
+                repetition_penalty=float(repetition_penalty) if repetition_penalty is not None else None,
+                micro_batch_size=batch_size,
+                pad_token_id=pad_token_id_int,
+            )
+            return greedy_results, {}, greedy_mfu
 
         for start, end in _batch_iter(sample_ids, batch_size):
             batch_ids = sample_ids[start:end]
             batch_texts = prompt_texts[start:end]
-
-            if use_xla_autoregressive_greedy:
-                for sample_id, prompt_text in zip(batch_ids, batch_texts):
-                    token_ids, prompt_len, sample_dt = self._generate_greedy_autoregressive_xla(
-                        prompt_text,
-                        max_new_tokens=max_new_tokens,
-                        end_token_ids=end_token_ids,
-                        repetition_penalty=float(repetition_penalty) if repetition_penalty is not None else None,
-                    )
-                    results[sample_id] = [self.tokenizer.decode(token_ids, skip_special_tokens=True)]
-                    mfu_stats[sample_id] = {
-                        "input_tokens": [prompt_len],
-                        "output_tokens": [len(token_ids)],
-                        "times": [sample_dt],
-                    }
-                continue
 
             encoded = self._encode_batch(batch_texts)
             attention_mask = encoded.get("attention_mask")

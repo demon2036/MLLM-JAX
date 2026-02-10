@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import time
-from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import torch
@@ -55,23 +54,30 @@ def _find_first_token(tokens: torch.Tensor, targets: set[int]) -> Optional[int]:
     return None
 
 
-@contextmanager
-def _torch_xla_eager_mode(enabled: bool):
-    if not enabled:
-        yield
-        return
+def _is_xla_compile_oom(exc: BaseException) -> bool:
+    message = str(exc)
+    return "RESOURCE_EXHAUSTED" in message and "XLA:TPU compile" in message
 
-    try:
-        import torch_xla.experimental as xla_exp  # type: ignore
-    except Exception:
-        yield
-        return
 
-    xla_exp.eager_mode(True)
-    try:
-        yield
-    finally:
-        xla_exp.eager_mode(False)
+def _pad_left_token_ids(
+    sequences: List[List[int]],
+    *,
+    pad_token_id: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not sequences:
+        raise ValueError("sequences must be non-empty")
+    max_len = max(len(seq) for seq in sequences)
+    if max_len <= 0:
+        raise ValueError("max_len must be > 0")
+
+    input_ids = torch.full((len(sequences), max_len), pad_token_id, dtype=torch.long)
+    attention_mask = torch.zeros((len(sequences), max_len), dtype=torch.long)
+    for row, seq in enumerate(sequences):
+        if not seq:
+            continue
+        input_ids[row, -len(seq) :] = torch.tensor(seq, dtype=torch.long)
+        attention_mask[row, -len(seq) :] = 1
+    return input_ids, attention_mask
 
 
 class TransformersGenerator:
@@ -194,113 +200,237 @@ class TransformersGenerator:
             stop_sequences = [stop_sequences]
         stop_token_ids = self._resolve_stop_token_ids(list(stop_sequences))
         stop_token_ids_set = set(stop_token_ids)
+        eos_token_id = getattr(self.tokenizer, "eos_token_id", None)
+        end_token_ids: set[int] = set(stop_token_ids)
+        if eos_token_id is not None:
+            end_token_ids.add(int(eos_token_id))
 
         results: Dict[str, List[str]] = {}
         logprobs: Dict[str, List[float]] = {}
         mfu_stats: Dict[str, Dict[str, List[Any]]] = {}
 
-        # NOTE: `transformers.GenerationMixin.generate` can build very large XLA graphs when
-        # `max_new_tokens` is large (e.g., RecIF-Bench `rec_reason`). Enabling XLA eager mode
-        # avoids compiling an enormous single graph and prevents TPU compile OOM.
-        use_xla_eager = self.device.type == "xla" and num_beams is None and max_new_tokens >= 512
-        if use_xla_eager:
-            print(f"[info] torch_xla eager_mode enabled (max_new_tokens={max_new_tokens}, device={self.device})")
+        pad_token_id = getattr(self.tokenizer, "pad_token_id", None)
+        if pad_token_id is None:
+            raise RuntimeError("Tokenizer is missing pad_token_id")
+        pad_token_id_int = int(pad_token_id)
 
-        with _torch_xla_eager_mode(use_xla_eager):
-            for start, end in _batch_iter(sample_ids, batch_size):
-                batch_ids = sample_ids[start:end]
-                batch_texts = prompt_texts[start:end]
-                encoded = self._encode_batch(batch_texts)
-                attention_mask = encoded.get("attention_mask")
-                if attention_mask is None:
-                    raise ValueError("tokenizer(...) must return attention_mask for batching")
-                prompt_lengths = attention_mask.sum(dim=1).to(torch.long)
+        use_chunked_greedy = (
+            self.device.type == "xla"
+            and num_beams is None
+            and not do_sample
+            and num_return_sequences == 1
+            and max_new_tokens >= 512
+        )
+        if use_chunked_greedy:
+            print(f"[info] chunked greedy decode enabled (max_new_tokens={max_new_tokens}, device={self.device})")
 
-                gen_kwargs: Dict[str, Any] = {
-                    "max_new_tokens": max_new_tokens,
+        for start, end in _batch_iter(sample_ids, batch_size):
+            batch_ids = sample_ids[start:end]
+            batch_texts = prompt_texts[start:end]
+
+            if use_chunked_greedy:
+                encoded_cpu = self.tokenizer(batch_texts, return_tensors="pt", padding=True)
+                input_ids_cpu = encoded_cpu.get("input_ids")
+                attention_mask_cpu = encoded_cpu.get("attention_mask")
+                if input_ids_cpu is None or attention_mask_cpu is None:
+                    raise ValueError("tokenizer(...) must return input_ids and attention_mask")
+                prompt_lengths = attention_mask_cpu.sum(dim=1).to(torch.long)
+
+                prompt_token_ids: List[List[int]] = []
+                for row_idx, prompt_len in enumerate(prompt_lengths.tolist()):
+                    if prompt_len <= 0:
+                        prompt_token_ids.append([])
+                        continue
+                    row_ids = input_ids_cpu[row_idx, -prompt_len:].tolist()
+                    prompt_token_ids.append([int(tok) for tok in row_ids])
+
+                current_token_ids = [seq.copy() for seq in prompt_token_ids]
+                generated_token_ids: List[List[int]] = [[] for _ in current_token_ids]
+                done = [False for _ in current_token_ids]
+
+                base_kwargs: Dict[str, Any] = {
+                    "do_sample": False,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "top_k": top_k,
+                    "num_return_sequences": 1,
+                    "return_dict_in_generate": True,
+                    "pad_token_id": pad_token_id_int,
                 }
                 if repetition_penalty is not None:
-                    gen_kwargs["repetition_penalty"] = float(repetition_penalty)
+                    base_kwargs["repetition_penalty"] = float(repetition_penalty)
+                if end_token_ids:
+                    base_kwargs["eos_token_id"] = sorted(end_token_ids)
 
-                if num_beams is not None:
-                    num_beams_int = int(num_beams)
-                    want_scores = bool(
-                        kwargs.get("return_logprobs") or kwargs.get("output_scores") or kwargs.get("collect_logprobs")
+                chunk_size = min(256, max_new_tokens)
+                total_batch_dt = 0.0
+
+                for offset in range(0, max_new_tokens, chunk_size):
+                    active = [
+                        idx
+                        for idx, is_done in enumerate(done)
+                        if (not is_done) and (len(generated_token_ids[idx]) < max_new_tokens)
+                    ]
+                    if not active:
+                        break
+
+                    active_sequences = [current_token_ids[idx] for idx in active]
+                    if any(not seq for seq in active_sequences):
+                        raise ValueError("Empty prompt token ids in chunked decode; cannot run generation safely.")
+
+                    input_ids_chunk_cpu, attention_mask_chunk_cpu = _pad_left_token_ids(
+                        active_sequences,
+                        pad_token_id=pad_token_id_int,
                     )
-                    gen_kwargs.update(
-                        num_beams=num_beams_int,
-                        num_return_sequences=min(num_return_sequences, num_beams_int),
-                        do_sample=False,
-                        output_scores=want_scores,
-                        return_dict_in_generate=True,
-                    )
-                else:
-                    gen_kwargs.update(
-                        do_sample=do_sample,
-                        temperature=temperature,
-                        top_p=top_p,
-                        top_k=top_k,
-                        num_return_sequences=num_return_sequences,
-                        return_dict_in_generate=True,
-                    )
-
-                if stop_token_ids:
-                    eos_ids = []
-                    if getattr(self.tokenizer, "eos_token_id", None) is not None:
-                        eos_ids.append(int(self.tokenizer.eos_token_id))
-                    eos_ids.extend(stop_token_ids)
-                    gen_kwargs["eos_token_id"] = sorted(set(eos_ids))
-
-                t0 = time.time()
-                # `torch.inference_mode()` is faster but can trigger issues with some model
-                # implementations on XLA/TPU (e.g. buffer casting inside RoPE). Use `no_grad`
-                # for maximum compatibility.
-                with torch.no_grad():
-                    out = self.model.generate(**encoded, **gen_kwargs)
-                batch_dt = time.time() - t0
-
-                sequences = out.sequences
-                nseq = int(gen_kwargs.get("num_return_sequences", 1))
-                sequences = sequences.view(len(batch_ids), nseq, -1)
-
-                batch_scores = None
-                if hasattr(out, "sequences_scores") and out.sequences_scores is not None:
-                    batch_scores = out.sequences_scores.view(len(batch_ids), nseq).detach().to("cpu")
-
-                for row_idx, sample_id in enumerate(batch_ids):
-                    prompt_len = int(prompt_lengths[row_idx].item())
-                    decoded: List[str] = []
-                    seq_logprobs: List[float] = []
-
-                    for seq_idx in range(nseq):
-                        seq_tokens = sequences[row_idx, seq_idx, prompt_len:].detach().to("cpu")
-                        if stop_token_ids_set:
-                            cut = _find_first_token(seq_tokens, stop_token_ids_set)
-                            if cut is not None:
-                                seq_tokens = seq_tokens[:cut]
-                        decoded.append(self.tokenizer.decode(seq_tokens, skip_special_tokens=True))
-
-                        if batch_scores is not None:
-                            seq_logprobs.append(float(batch_scores[row_idx, seq_idx].item()))
-
-                    results[sample_id] = decoded
-                    if seq_logprobs:
-                        logprobs[sample_id] = seq_logprobs
-
-                    output_tokens = sum(len(self.tokenizer.encode(text, add_special_tokens=False)) for text in decoded)
-                    mfu_stats[sample_id] = {
-                        "input_tokens": [prompt_len],
-                        "output_tokens": [output_tokens],
-                        "times": [batch_dt],
+                    encoded = {
+                        "input_ids": input_ids_chunk_cpu.to(self.device),
+                        "attention_mask": attention_mask_chunk_cpu.to(self.device),
                     }
 
-                # TPU/XLA needs explicit step marking in some setups; safe no-op on CPU/CUDA.
-                try:
-                    import torch_xla.core.xla_model as xm  # type: ignore
+                    remaining = max_new_tokens - offset
+                    step_max_new_tokens = min(chunk_size, remaining)
 
-                    xm.mark_step()
-                except Exception:
-                    pass
+                    attempt = step_max_new_tokens
+                    while True:
+                        try:
+                            t0 = time.time()
+                            with torch.no_grad():
+                                out = self.model.generate(**encoded, max_new_tokens=attempt, **base_kwargs)
+                            total_batch_dt += time.time() - t0
+                            break
+                        except RuntimeError as exc:
+                            if not _is_xla_compile_oom(exc) or attempt <= 1:
+                                raise
+                            attempt = max(1, attempt // 2)
+
+                    sequences = out.sequences.detach().to("cpu")
+                    input_len = int(input_ids_chunk_cpu.shape[1])
+
+                    for row_idx, sample_local_idx in enumerate(active):
+                        new_tokens = sequences[row_idx, input_len:].tolist()
+                        tokens_added = 0
+                        for tok in new_tokens:
+                            tok_int = int(tok)
+                            if tok_int == pad_token_id_int:
+                                break
+                            if tok_int in end_token_ids:
+                                done[sample_local_idx] = True
+                                break
+                            if len(generated_token_ids[sample_local_idx]) >= max_new_tokens:
+                                done[sample_local_idx] = True
+                                break
+                            generated_token_ids[sample_local_idx].append(tok_int)
+                            current_token_ids[sample_local_idx].append(tok_int)
+                            tokens_added += 1
+
+                        if tokens_added == 0 and not done[sample_local_idx]:
+                            # No progress; avoid infinite loops.
+                            done[sample_local_idx] = True
+
+                    try:
+                        import torch_xla.core.xla_model as xm  # type: ignore
+
+                        xm.mark_step()
+                    except Exception:
+                        pass
+
+                for row_idx, sample_id in enumerate(batch_ids):
+                    decoded_text = self.tokenizer.decode(generated_token_ids[row_idx], skip_special_tokens=True)
+                    results[sample_id] = [decoded_text]
+                    mfu_stats[sample_id] = {
+                        "input_tokens": [int(prompt_lengths[row_idx].item())],
+                        "output_tokens": [len(generated_token_ids[row_idx])],
+                        "times": [total_batch_dt],
+                    }
+                continue
+
+            encoded = self._encode_batch(batch_texts)
+            attention_mask = encoded.get("attention_mask")
+            if attention_mask is None:
+                raise ValueError("tokenizer(...) must return attention_mask for batching")
+            prompt_lengths = attention_mask.sum(dim=1).to(torch.long)
+
+            gen_kwargs: Dict[str, Any] = {
+                "max_new_tokens": max_new_tokens,
+            }
+            if repetition_penalty is not None:
+                gen_kwargs["repetition_penalty"] = float(repetition_penalty)
+
+            if num_beams is not None:
+                num_beams_int = int(num_beams)
+                want_scores = bool(
+                    kwargs.get("return_logprobs") or kwargs.get("output_scores") or kwargs.get("collect_logprobs")
+                )
+                gen_kwargs.update(
+                    num_beams=num_beams_int,
+                    num_return_sequences=min(num_return_sequences, num_beams_int),
+                    do_sample=False,
+                    output_scores=want_scores,
+                    return_dict_in_generate=True,
+                )
+            else:
+                gen_kwargs.update(
+                    do_sample=do_sample,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    num_return_sequences=num_return_sequences,
+                    return_dict_in_generate=True,
+                )
+
+            if stop_token_ids:
+                eos_ids = []
+                if eos_token_id is not None:
+                    eos_ids.append(int(eos_token_id))
+                eos_ids.extend(stop_token_ids)
+                gen_kwargs["eos_token_id"] = sorted(set(eos_ids))
+
+            t0 = time.time()
+            with torch.no_grad():
+                out = self.model.generate(**encoded, **gen_kwargs)
+            batch_dt = time.time() - t0
+
+            sequences = out.sequences
+            nseq = int(gen_kwargs.get("num_return_sequences", 1))
+            sequences = sequences.view(len(batch_ids), nseq, -1)
+
+            batch_scores = None
+            if hasattr(out, "sequences_scores") and out.sequences_scores is not None:
+                batch_scores = out.sequences_scores.view(len(batch_ids), nseq).detach().to("cpu")
+
+            for row_idx, sample_id in enumerate(batch_ids):
+                prompt_len = int(prompt_lengths[row_idx].item())
+                decoded: List[str] = []
+                seq_logprobs: List[float] = []
+
+                for seq_idx in range(nseq):
+                    seq_tokens = sequences[row_idx, seq_idx, prompt_len:].detach().to("cpu")
+                    if stop_token_ids_set:
+                        cut = _find_first_token(seq_tokens, stop_token_ids_set)
+                        if cut is not None:
+                            seq_tokens = seq_tokens[:cut]
+                    decoded.append(self.tokenizer.decode(seq_tokens, skip_special_tokens=True))
+
+                    if batch_scores is not None:
+                        seq_logprobs.append(float(batch_scores[row_idx, seq_idx].item()))
+
+                results[sample_id] = decoded
+                if seq_logprobs:
+                    logprobs[sample_id] = seq_logprobs
+
+                output_tokens = sum(len(self.tokenizer.encode(text, add_special_tokens=False)) for text in decoded)
+                mfu_stats[sample_id] = {
+                    "input_tokens": [prompt_len],
+                    "output_tokens": [output_tokens],
+                    "times": [batch_dt],
+                }
+
+            try:
+                import torch_xla.core.xla_model as xm  # type: ignore
+
+                xm.mark_step()
+            except Exception:
+                pass
 
         return results, logprobs, mfu_stats
 

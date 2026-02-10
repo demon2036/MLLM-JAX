@@ -32,5 +32,6 @@ eval:
   task_overrides:
     rec_reason:
       worker_batch_size: 1
+      max_new_tokens: 256
   tasks:
     - rec_reason

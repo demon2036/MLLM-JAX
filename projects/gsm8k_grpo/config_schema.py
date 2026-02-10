@@ -83,6 +83,10 @@ class GRPOGsm8kConfig:
     eval_every_steps: int = 0
     eval_batches_per_process: int = 1
     eval_split: str = "test"
+    # Number of sampled completions per eval prompt.
+    eval_rollout_n: int = 1
+    # Whether to run a full-split eval sweep once at the end of training.
+    eval_full_sweep: bool = False
 
     def to_logging_dict(self) -> dict[str, object]:
         return {
@@ -125,6 +129,8 @@ class GRPOGsm8kConfig:
             "eval_every_steps": int(self.eval_every_steps),
             "eval_batches_per_process": int(self.eval_batches_per_process),
             "eval_split": str(self.eval_split),
+            "eval_rollout_n": int(self.eval_rollout_n),
+            "eval_full_sweep": bool(self.eval_full_sweep),
         }
 
 

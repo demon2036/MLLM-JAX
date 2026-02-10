@@ -370,6 +370,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 eval_every_steps=cfg.eval_every_steps,
                 eval_batches_per_process=cfg.eval_batches_per_process,
                 eval_split=cfg.eval_split,
+                eval_rollout_n=cfg.eval_rollout_n,
+                eval_full_sweep=cfg.eval_full_sweep,
             )
         )
     )
@@ -381,7 +383,16 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     if not qas:
         raise RuntimeError("No GSM8K data after sharding.")
 
-    full_sweep_enabled = os.environ.get("EVAL_FULL_SWEEP") == "1"
+    eval_rollout_n = int(cfg.eval_rollout_n)
+    if eval_rollout_n < 1:
+        raise ValueError(f"eval_rollout_n must be >= 1, got {eval_rollout_n}")
+
+    full_sweep_enabled = bool(cfg.eval_full_sweep)
+    if os.environ.get("EVAL_FULL_SWEEP") == "1":
+        if jax.process_index() == 0:
+            print("WARNING: EVAL_FULL_SWEEP env override is deprecated; use eval_full_sweep in YAML.")
+        full_sweep_enabled = True
+
     eval_qas: list[dict[str, str]] = []
     if int(cfg.eval_every_steps) > 0 or full_sweep_enabled:
         eval_dataset = load_dataset("openai/gsm8k", "main", split=str(cfg.eval_split))
@@ -1013,6 +1024,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             eval_rewards_all: list[np.ndarray] = []
             eval_rewards_per_func_all: list[np.ndarray] = []
 
+            eval_n = int(eval_rollout_n)
             for eval_batch_idx in range(int(cfg.eval_batches_per_process)):
                 start = (step * int(cfg.eval_batches_per_process) + eval_batch_idx) * int(
                     prompts_per_pass
@@ -1021,8 +1033,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                     eval_qas[(start + i) % len(eval_qas)] for i in range(int(prompts_per_pass))
                 ]
                 eval_prompts_base = [item["Q"] for item in eval_items]
-                eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(int(n))]
-                eval_repeated_items = [item for item in eval_items for _ in range(int(n))]
+                eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(eval_n)]
+                eval_repeated_items = [item for item in eval_items for _ in range(eval_n)]
 
                 t_eval_sync0 = time.perf_counter()
                 eval_policy_params = _policy_params_for_rollout(state.params)
@@ -1078,6 +1090,23 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 for name, mean_value in zip(reward_func_names, eval_per_func_means):
                     eval_logs[f"eval/reward/func/{name}/mean"] = float(mean_value)
 
+                correct_per_completion = np.asarray(eval_per_func_concat[0], dtype=np.float32).reshape(-1)
+                completion_count = int(correct_per_completion.size)
+                if completion_count % eval_n != 0:
+                    raise ValueError(
+                        f"eval completion count must be divisible by eval_n={eval_n}, got {completion_count}"
+                    )
+                prompt_count = int(completion_count // eval_n)
+                if eval_n == 1:
+                    accuracy_pass_at_1 = float(correct_per_completion.mean()) if completion_count > 0 else float("nan")
+                else:
+                    pass_at_1, _pass_at_k, _mean_at_k = _group_correct_per_prompt(correct_per_completion, n=eval_n)
+                    accuracy_pass_at_1 = float(pass_at_1.mean()) if pass_at_1.size > 0 else float("nan")
+
+                eval_logs["eval/accuracy/samples_per_question"] = int(eval_n)
+                eval_logs["eval/accuracy/questions_global"] = int(prompt_count)
+                eval_logs["eval/accuracy/pass_at_1"] = float(accuracy_pass_at_1)
+
             eval_logs["time/eval/rollout_s"] = float(eval_rollout_s)
             eval_logs["time/eval/rollout_sync_s"] = float(eval_rollout_sync_s)
             eval_logs["time/eval/rollout_generate_s"] = float(eval_rollout_generate_s)
@@ -1095,31 +1124,21 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     # (controlled by `eval_batches_per_process`). For stable accuracy, we sometimes want to
     # run the entire eval split once.
     #
-    # Enable via: `EVAL_FULL_SWEEP=1` (no YAML edits required).
+    # Enable via YAML (`eval_full_sweep: true`).
     if full_sweep_enabled and eval_qas:
-        # Full-sweep eval is intended to match the "full test split, each
-        # question once" metric expectation:
-        # - run the entire `eval_split`
-        # - generate exactly 1 completion per question by default
-        #
-        # To keep compilation stable and reuse the same per-process sequence
-        # batch size as training, we adjust the prompt batch size so that:
-        #   (prompt_batch_size_eval * n_eval) == local_seq_batch_train
-        #
-        # Optional override:
-        #   EVAL_FULL_NUM_PRE_Q=<int>  (default: 1)
+        # Full-sweep eval is intended to match the "full test split" metric.
+        # Keep eval rollout count independent from train rollout count.
         train_prompts_per_pass = int(prompts_per_pass)
         train_n = int(n)
         local_seq_batch_train = train_prompts_per_pass * train_n
 
-        num_pre_q_env = os.environ.get("EVAL_FULL_NUM_PRE_Q")
-        eval_n = int(num_pre_q_env) if num_pre_q_env is not None else 1
+        eval_n = int(eval_rollout_n)
         if eval_n < 1:
-            raise ValueError(f"EVAL_FULL_NUM_PRE_Q must be >= 1, got {eval_n}")
+            raise ValueError(f"eval_rollout_n must be >= 1, got {eval_n}")
         if local_seq_batch_train % eval_n != 0:
             raise ValueError(
-                "EVAL_FULL_NUM_PRE_Q must divide the per-process sequence batch size: "
-                f"{eval_n=} local_seq_batch_train={local_seq_batch_train}"
+                "eval_rollout_n must divide the per-process sequence batch size: "
+                f"eval_rollout_n={eval_n} local_seq_batch_train={local_seq_batch_train}"
             )
 
         prompt_batch_size = local_seq_batch_train // eval_n

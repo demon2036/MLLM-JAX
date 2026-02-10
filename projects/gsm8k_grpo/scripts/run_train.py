@@ -456,6 +456,14 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     eval_batches_per_process = int(eval_batches_per_process or 1)
     eval_split = str(cfg.get("eval_split") or "test")
 
+    eval_rollout_n_raw = cfg.get("eval_rollout_n")
+    eval_rollout_n = int(eval_rollout_n_raw) if eval_rollout_n_raw is not None else 1
+    if eval_rollout_n < 1:
+        raise ValueError("eval_rollout_n must be >= 1")
+
+    eval_full_sweep_raw = cfg.get("eval_full_sweep")
+    eval_full_sweep = _as_bool(eval_full_sweep_raw, label="eval_full_sweep") if eval_full_sweep_raw is not None else False
+
     return GRPOGsm8kConfig(
         config_path=str(config_path),
         model_path=model_path,
@@ -487,6 +495,8 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         eval_every_steps=eval_every_steps,
         eval_batches_per_process=eval_batches_per_process,
         eval_split=eval_split,
+        eval_rollout_n=eval_rollout_n,
+        eval_full_sweep=eval_full_sweep,
     )
 
 

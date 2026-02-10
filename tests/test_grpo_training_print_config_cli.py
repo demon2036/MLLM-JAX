@@ -47,6 +47,8 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
         self.assertIn("dynamic_sampling:", out)
         self.assertIn("enabled: false", out)
         self.assertIn("metric: acc", out)
+        self.assertIn("eval_rollout_n: 1", out)
+        self.assertIn("eval_full_sweep: false", out)
 
     def test_print_config_explicit_maxrl_hides_ppo_fields(self) -> None:
         out = self._run(
@@ -165,6 +167,34 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
             expect_success=False,
         )
         self.assertIn("rollout.dynamic_sampling.metric must be one of: acc, seq_reward", out)
+
+    def test_eval_rollout_n_and_full_sweep_overrides_print(self) -> None:
+        out = self._run(
+            [
+                "--print-config",
+                "--config",
+                "",
+                "--set",
+                "eval_rollout_n=1",
+                "--set",
+                "eval_full_sweep=true",
+            ]
+        )
+        self.assertIn("eval_rollout_n: 1", out)
+        self.assertIn("eval_full_sweep: true", out)
+
+    def test_eval_rollout_n_must_be_positive(self) -> None:
+        out = self._run(
+            [
+                "--print-config",
+                "--config",
+                "",
+                "--set",
+                "eval_rollout_n=0",
+            ],
+            expect_success=False,
+        )
+        self.assertIn("eval_rollout_n must be >= 1", out)
 
 
 if __name__ == "__main__":

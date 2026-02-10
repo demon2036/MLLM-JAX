@@ -191,6 +191,29 @@ class TransformersGenerator:
         input_len = int(input_ids.shape[1])
         input_ids = input_ids.to(self.device)
 
+        max_positions = int(getattr(self.model.config, "max_position_embeddings", input_len + int(max_new_tokens)))
+        max_cache_len = min(int(input_len + int(max_new_tokens)), max_positions)
+
+        # Prefer StaticCache to avoid per-step shape growth on XLA (DynamicCache uses torch.cat and changes
+        # cache shapes every token, which is very slow on TPU). StaticCache requires building an explicit
+        # causal mask for prefill, so we only enable it when the mask size is reasonable.
+        use_static_cache = False
+        static_cache_max_mask_elems = int(os.environ.get("OPENONEREC_XLA_STATIC_CACHE_MAX_MASK_ELEMS", "64000000"))
+        if static_cache_max_mask_elems > 0 and input_len * max_cache_len <= static_cache_max_mask_elems:
+            use_static_cache = True
+
+        past = None
+        cache_position = None
+        next_cache_pos = input_len
+        if use_static_cache:
+            try:
+                from transformers import StaticCache  # type: ignore
+            except Exception:
+                use_static_cache = False
+            else:
+                past = StaticCache(self.model.config, max_cache_len=max_cache_len)
+                cache_position = torch.arange(0, input_len, device=self.device)
+
         seen_mask = None
         penalty = None
         if repetition_penalty is not None:
@@ -208,7 +231,6 @@ class TransformersGenerator:
 
         t0 = time.time()
 
-        past = None
         cur_input = input_ids
         done = torch.zeros((1,), dtype=torch.bool, device=self.device)
         pad_id = int(getattr(self.tokenizer, "pad_token_id", 0) or 0)
@@ -226,6 +248,7 @@ class TransformersGenerator:
                     input_ids=cur_input,
                     past_key_values=past,
                     use_cache=True,
+                    cache_position=cache_position,
                 )
                 past = out.past_key_values
 
@@ -247,6 +270,11 @@ class TransformersGenerator:
                     done = done | is_end
 
                 cur_input = next_token.view(1, 1)
+                if use_static_cache:
+                    cache_position = torch.tensor([next_cache_pos], device=self.device)
+                    next_cache_pos += 1
+                else:
+                    cache_position = None
                 steps_done += 1
 
                 if steps_done % mark_step_interval == 0:

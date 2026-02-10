@@ -26,12 +26,12 @@ eval:
   data_version: v1.0
   enable_thinking: false
   overwrite: true
-  sample_size: 2
+  sample_size: 1
   output_root: workdirs/openonerec_recif_eval_tpu_smoke
   disable_llm_judge: true
   task_overrides:
     rec_reason:
       worker_batch_size: 1
-      max_new_tokens: 256
+      max_new_tokens: 32
   tasks:
     - rec_reason

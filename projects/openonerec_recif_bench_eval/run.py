@@ -30,6 +30,22 @@ def _run(cmd: list[str], *, cwd: str | None = None) -> None:
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
+def _require_generated_file(
+    output_dir: str,
+    *,
+    model_repo_id: str,
+    task_name: str,
+    split: str,
+) -> str:
+    model_key = os.path.basename(model_repo_id.rstrip("/"))
+    path = os.path.join(output_dir, model_key, task_name, f"{split}_generated.json")
+    if not os.path.isfile(path):
+        raise RuntimeError(f"Generation failed for task={task_name!r} split={split!r}; missing file: {path}")
+    if os.path.getsize(path) <= 0:
+        raise RuntimeError(f"Generation failed for task={task_name!r} split={split!r}; empty file: {path}")
+    return path
+
+
 def _ensure_openonerec_checkout(cfg: dict[str, Any]) -> str:
     upstream_cfg = cfg.get("upstream", {}) or {}
     repo_url = str(upstream_cfg.get("repo_url") or "https://github.com/Kuaishou-OneRec/OpenOneRec.git")
@@ -227,6 +243,13 @@ def _run_eval(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
             sample_size=sample_size,
             **overrides,
         )
+        for split in splits:
+            _require_generated_file(
+                output_dir,
+                model_repo_id=model_repo_id,
+                task_name=task_name,
+                split=split,
+            )
 
     eval_results_path = os.path.join(output_dir, "eval_results.json")
     Benchmark.evaluate_dev(

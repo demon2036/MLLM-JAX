@@ -222,7 +222,10 @@ class TransformersGenerator:
                 gen_kwargs["eos_token_id"] = sorted(set(eos_ids))
 
             t0 = time.time()
-            with torch.inference_mode():
+            # `torch.inference_mode()` is faster but can trigger issues with some model
+            # implementations on XLA/TPU (e.g. buffer casting inside RoPE). Use `no_grad`
+            # for maximum compatibility.
+            with torch.no_grad():
                 out = self.model.generate(**encoded, **gen_kwargs)
             batch_dt = time.time() - t0
 
@@ -306,7 +309,7 @@ class TransformersGenerator:
             lengths = attention_mask.sum(dim=1).to(torch.long)
 
             t0 = time.time()
-            with torch.inference_mode():
+            with torch.no_grad():
                 out = self.model(**encoded)
                 logits = out.logits  # [batch, seq, vocab]
             batch_dt = time.time() - t0

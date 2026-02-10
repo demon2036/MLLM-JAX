@@ -207,11 +207,23 @@ class TransformersGenerator:
         next_cache_pos = input_len
         if use_static_cache:
             try:
-                from transformers import StaticCache  # type: ignore
+                from transformers.cache_utils import StaticCache  # type: ignore
             except Exception:
                 use_static_cache = False
             else:
-                past = StaticCache(self.model.config, max_cache_len=max_cache_len)
+                model_dtype = getattr(self.model, "dtype", torch.float32)
+                try:
+                    # transformers<=4.52.0 (TPU env) requires max_batch_size.
+                    past = StaticCache(
+                        self.model.config,
+                        max_batch_size=1,
+                        max_cache_len=max_cache_len,
+                        device=self.device,
+                        dtype=model_dtype,
+                    )
+                except TypeError:
+                    # Newer transformers moved to a different signature.
+                    past = StaticCache(self.model.config, max_cache_len=max_cache_len)
                 cache_position = torch.arange(0, input_len, device=self.device)
 
         seen_mask = None

@@ -201,14 +201,27 @@ class TransformersGenerator:
             # Include prompt tokens in repetition penalty, matching HF `RepetitionPenaltyLogitsProcessor`.
             seen_mask.index_fill_(0, input_ids[0], True)
 
+        end_ids = sorted(end_token_ids)
+        end_ids_tensor = (
+            torch.tensor(end_ids, dtype=torch.long, device=self.device) if end_ids else None
+        )
+
         t0 = time.time()
 
-        generated: list[int] = []
         past = None
         cur_input = input_ids
+        done = torch.zeros((1,), dtype=torch.bool, device=self.device)
+        pad_id = int(getattr(self.tokenizer, "pad_token_id", 0) or 0)
+        token_buffer = torch.full((int(max_new_tokens),), pad_id, dtype=torch.long, device=self.device)
+        steps_done = 0
+
+        # Tune execution: mark_step every N tokens, and sync for early-stop checks at the same cadence.
+        mark_step_interval = int(os.environ.get("OPENONEREC_XLA_MARK_STEP_INTERVAL", "8"))
+        if mark_step_interval <= 0:
+            mark_step_interval = 1
 
         with torch.no_grad():
-            for _ in range(int(max_new_tokens)):
+            while steps_done < int(max_new_tokens):
                 out = self.model(
                     input_ids=cur_input,
                     past_key_values=past,
@@ -224,20 +237,37 @@ class TransformersGenerator:
                     logits = torch.where(pos, logits / penalty, logits)
 
                 next_token = torch.argmax(logits, dim=-1)  # [1]
-                xm.mark_step()
-                token_id = int(next_token.item())
+                token_buffer[steps_done] = next_token[0]
 
-                if token_id in end_token_ids:
-                    break
-
-                generated.append(token_id)
                 if seen_mask is not None:
-                    seen_mask[token_id] = True
+                    seen_mask.index_fill_(0, next_token, True)
+
+                if end_ids_tensor is not None:
+                    is_end = (next_token[..., None] == end_ids_tensor).any(dim=-1)
+                    done = done | is_end
 
                 cur_input = next_token.view(1, 1)
+                steps_done += 1
+
+                if steps_done % mark_step_interval == 0:
+                    xm.mark_step()
+                    if bool(done.cpu().item()):
+                        break
+
+        xm.mark_step()
+
+        tokens_cpu = token_buffer[:steps_done].detach().to("cpu").tolist()
+        cut = None
+        if end_token_ids:
+            for idx, tok in enumerate(tokens_cpu):
+                if int(tok) in end_token_ids:
+                    cut = idx
+                    break
+        if cut is not None:
+            tokens_cpu = tokens_cpu[:cut]
 
         dt = time.time() - t0
-        return generated, input_len, dt
+        return [int(tok) for tok in tokens_cpu], input_len, dt
 
     def generate_standard(
         self,

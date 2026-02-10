@@ -1,4 +1,5 @@
 # GRPO/GSM8K config (explicit full schema; no hidden defaults)
+# max_length_total = 512 + 1024 = 1536
 model_path: Qwen/Qwen2.5-3B-Instruct
 steps: 100
 
@@ -21,7 +22,7 @@ rollout:
 train:
   micro_batch_size: null
   micro_batch_size_per_device: 4
-  max_length_total: 1152
+  max_length_total: 1536
   ppo_epochs: 1
   grad_accum_steps: 4
   beta: 0.0

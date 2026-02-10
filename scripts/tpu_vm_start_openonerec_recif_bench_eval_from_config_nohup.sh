@@ -79,6 +79,8 @@ RUNNER="set -euo pipefail; \
   if [ -f /root/.env ]; then set -a; source /root/.env; set +a; fi; \
   if [ -f /root/miniconda3/etc/profile.d/conda.sh ]; then \
     source /root/miniconda3/etc/profile.d/conda.sh; conda activate '$ENV_NAME'; \
+    export LD_LIBRARY_PATH=\"/root/miniconda3/envs/$ENV_NAME/lib:\${LD_LIBRARY_PATH:-}\"; \
+    export PJRT_DEVICE=\"\${PJRT_DEVICE:-TPU}\"; \
   fi; \
   cd '$REPO_DIR'; \
   set +e; \
@@ -99,4 +101,3 @@ echo "EXIT_FILE=$EXIT_FILE"
 echo "LATEST_LOG=$LATEST_LOG"
 echo "LATEST_EXIT=$LATEST_EXIT"
 echo "LATEST_PID=$LATEST_PID"
-

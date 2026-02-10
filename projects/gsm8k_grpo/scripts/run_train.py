@@ -5,7 +5,6 @@ import subprocess
 import sys
 import time
 from argparse import ArgumentParser
-from dataclasses import asdict
 from typing import Any
 
 import yaml
@@ -16,7 +15,18 @@ if REPO_ROOT not in sys.path:
 
 from plugins.training.core.runtime.env import load_dotenv_if_present
 from plugins.training.rl.config import load_config
-from plugins.training.rl.algorithms import AlgoConfig, EstimatorConfig, UpdateConfig
+from plugins.training.core.optim.optimizer import LRScheduleConfig, OptimizerConfig, normalize_optimizer_config
+from plugins.training.rl.algorithms import (
+    AlgoConfig,
+    PluginConfig,
+    normalize_algo_config,
+)
+from projects.gsm8k_grpo.config_schema import (
+    GRPODynamicSamplingConfig,
+    GRPOGsm8kConfig,
+    GRPORolloutConfig,
+    GRPOTrainConfig,
+)
 
 
 def _maybe_git_short_sha() -> str | None:
@@ -30,20 +40,6 @@ def _maybe_git_short_sha() -> str | None:
     except Exception:
         return None
     return out or None
-
-
-def _set_by_path(cfg: dict[str, Any], key_path: str, value: Any) -> None:
-    keys = [k for k in key_path.split(".") if k]
-    if not keys:
-        raise ValueError("Empty config key path")
-    cur: dict[str, Any] = cfg
-    for k in keys[:-1]:
-        nxt = cur.get(k)
-        if not isinstance(nxt, dict):
-            nxt = {}
-            cur[k] = nxt
-        cur = nxt
-    cur[keys[-1]] = value
 
 
 def _get_by_path(cfg: dict[str, Any], key_path: str) -> Any:
@@ -63,10 +59,6 @@ def _get_int_from_aliases(
     paths: list[str] | None = None,
     keys: list[str] | None = None,
 ) -> int | None:
-    """Read an int value from multiple possible config locations.
-
-    If multiple aliases are set, they must agree (otherwise raises ValueError).
-    """
     paths = paths or []
     keys = keys or []
 
@@ -111,9 +103,85 @@ def _as_bool(value: Any, *, label: str) -> bool:
     raise ValueError(f"{label} must be a boolean, got {value!r}")
 
 
-def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
-    from projects.gsm8k_grpo.jax.train import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig
+def _strict_legacy_key_guard(cfg: dict[str, Any]) -> None:
+    # Intentionally breaking migration: old shape keys are rejected.
+    legacy_paths = {
+        "algo.name": _get_by_path(cfg, "algo.name"),
+        "algo.estimator.eps": _get_by_path(cfg, "algo.estimator.eps"),
+        "algo.estimator.clip_range": _get_by_path(cfg, "algo.estimator.clip_range"),
+        "algo.estimator.dapo_alpha": _get_by_path(cfg, "algo.estimator.dapo_alpha"),
+        "algo.estimator.rloo_whiten": _get_by_path(cfg, "algo.estimator.rloo_whiten"),
+        "algo.estimator.gae_gamma": _get_by_path(cfg, "algo.estimator.gae_gamma"),
+        "algo.estimator.gae_lambda": _get_by_path(cfg, "algo.estimator.gae_lambda"),
+        "algo.estimator.gae_normalize": _get_by_path(cfg, "algo.estimator.gae_normalize"),
+        "algo.estimator.common": _get_by_path(cfg, "algo.estimator.common"),
+        "algo.estimator.grpo": _get_by_path(cfg, "algo.estimator.grpo"),
+        "algo.estimator.maxrl": _get_by_path(cfg, "algo.estimator.maxrl"),
+        "algo.estimator.reinforce": _get_by_path(cfg, "algo.estimator.reinforce"),
+        "algo.estimator.reinforcepp": _get_by_path(cfg, "algo.estimator.reinforcepp"),
+        "algo.estimator.dapo": _get_by_path(cfg, "algo.estimator.dapo"),
+        "algo.estimator.rloo": _get_by_path(cfg, "algo.estimator.rloo"),
+        "algo.estimator.gae": _get_by_path(cfg, "algo.estimator.gae"),
+        "algo.update.policy_gradient": _get_by_path(cfg, "algo.update.policy_gradient"),
+        "algo.update.ppo": _get_by_path(cfg, "algo.update.ppo"),
+        "algo.update.value_coef": _get_by_path(cfg, "algo.update.value_coef"),
+        "algo.update.value_clip_range": _get_by_path(cfg, "algo.update.value_clip_range"),
+        "algo.update.entropy_coef": _get_by_path(cfg, "algo.update.entropy_coef"),
+        "algo.ppo_value_coef": _get_by_path(cfg, "algo.ppo_value_coef"),
+        "algo.ppo_value_clip_range": _get_by_path(cfg, "algo.ppo_value_clip_range"),
+        "algo.ppo_entropy_coef": _get_by_path(cfg, "algo.ppo_entropy_coef"),
+        "algo.ppo_gamma": _get_by_path(cfg, "algo.ppo_gamma"),
+        "algo.ppo_gae_lambda": _get_by_path(cfg, "algo.ppo_gae_lambda"),
+        "algo.ppo_advantage_norm": _get_by_path(cfg, "algo.ppo_advantage_norm"),
+        "train.optimizer.clip_norm": _get_by_path(cfg, "train.optimizer.clip_norm"),
+        "train.optimizer.weight_decay": _get_by_path(cfg, "train.optimizer.weight_decay"),
+        "train.optimizer.muon_aux_lr": _get_by_path(cfg, "train.optimizer.muon_aux_lr"),
+        "train.optimizer.muon_momentum": _get_by_path(cfg, "train.optimizer.muon_momentum"),
+        "train.optimizer.muon_nesterov": _get_by_path(cfg, "train.optimizer.muon_nesterov"),
+        "train.optimizer.muon_ns_steps": _get_by_path(cfg, "train.optimizer.muon_ns_steps"),
+        "train.optimizer.muon_eps": _get_by_path(cfg, "train.optimizer.muon_eps"),
+        "train.optimizer.muon_max_dim": _get_by_path(cfg, "train.optimizer.muon_max_dim"),
+        "train.optimizer.lr_schedule.type": _get_by_path(cfg, "train.optimizer.lr_schedule.type"),
+        "train.optimizer.lr_schedule.init_value": _get_by_path(cfg, "train.optimizer.lr_schedule.init_value"),
+        "train.optimizer.lr_schedule.peak_value": _get_by_path(cfg, "train.optimizer.lr_schedule.peak_value"),
+        "train.optimizer.lr_schedule.end_value": _get_by_path(cfg, "train.optimizer.lr_schedule.end_value"),
+        "train.optimizer.lr_schedule.warmup_ratio": _get_by_path(cfg, "train.optimizer.lr_schedule.warmup_ratio"),
+        "train.optimizer.lr_schedule.warmup_steps": _get_by_path(cfg, "train.optimizer.lr_schedule.warmup_steps"),
+    }
+    found = {k: v for k, v in legacy_paths.items() if v is not None}
+    if not found:
+        return
 
+    details = ", ".join(f"{k}={v!r}" for k, v in sorted(found.items()))
+    raise ValueError(
+        "Detected deprecated RL config keys (breaking schema v3). "
+        "Use plugin schema: algo.estimator={name,kwargs}, algo.update={name,kwargs}, "
+        "train.optimizer={name,kwargs,lr_schedule:{name,kwargs}}. "
+        f"Got: {details}"
+    )
+
+
+def _parse_plugin_config(raw: Any, *, defaults: PluginConfig, label: str) -> PluginConfig:
+    if raw is None:
+        return defaults
+    if isinstance(raw, str):
+        return PluginConfig(name=str(raw), kwargs={})
+    if not isinstance(raw, dict):
+        raise ValueError(f"{label} must be a dict or string when provided")
+
+    name_raw = raw.get("name")
+    plugin_name = str(name_raw) if name_raw is not None else defaults.name
+    kwargs_raw = raw.get("kwargs")
+    if kwargs_raw is None:
+        kwargs = dict(defaults.kwargs)
+    elif isinstance(kwargs_raw, dict):
+        kwargs = dict(kwargs_raw)
+    else:
+        raise ValueError(f"{label}.kwargs must be a dict when provided")
+    return PluginConfig(name=plugin_name, kwargs=kwargs)
+
+
+def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     model_path = str(cfg.get("model_path") or "Qwen/Qwen2.5-3B-Instruct")
     steps = int(cfg.get("steps") or 100)
 
@@ -141,7 +209,6 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         "rollout.global_prompt_batch_size": _get_by_path(cfg, "rollout.global_prompt_batch_size"),
         "rollout.global_sequence_batch_size": _get_by_path(cfg, "rollout.global_sequence_batch_size"),
         "rollout.global_batch_size": _get_by_path(cfg, "rollout.global_batch_size"),
-        # Legacy aliases we intentionally drop to avoid ambiguity.
         "rollout.prompt_batch_size": _get_by_path(cfg, "rollout.prompt_batch_size"),
         "rollout.prompt_batch_size_per_process": _get_by_path(cfg, "rollout.prompt_batch_size_per_process"),
         "rollout.prompt_batch_size_per_device": _get_by_path(cfg, "rollout.prompt_batch_size_per_device"),
@@ -173,6 +240,63 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         rollout_backend_raw = cfg.get("rollout_backend")
     rollout_backend = str(rollout_backend_raw or "naive")
 
+    dynamic_sampling_raw = _get_by_path(cfg, "rollout.dynamic_sampling")
+    if dynamic_sampling_raw is None:
+        dynamic_sampling_cfg = GRPODynamicSamplingConfig()
+    elif not isinstance(dynamic_sampling_raw, dict):
+        raise ValueError("rollout.dynamic_sampling must be a dict when provided")
+    else:
+        enabled_raw = dynamic_sampling_raw.get("enabled")
+        enabled = False if enabled_raw is None else _as_bool(enabled_raw, label="rollout.dynamic_sampling.enabled")
+
+        trigger = str(dynamic_sampling_raw.get("trigger") or "homogeneous_group").strip().lower()
+        if trigger != "homogeneous_group":
+            raise ValueError("rollout.dynamic_sampling.trigger must be 'homogeneous_group'")
+
+        metric = str(dynamic_sampling_raw.get("metric") or "acc").strip().lower()
+        if metric not in {"acc", "seq_reward"}:
+            raise ValueError("rollout.dynamic_sampling.metric must be one of: acc, seq_reward")
+
+        homogeneity_threshold_raw = dynamic_sampling_raw.get("homogeneity_threshold")
+        homogeneity_threshold = 1.0 if homogeneity_threshold_raw is None else float(homogeneity_threshold_raw)
+        if not (0.0 < homogeneity_threshold <= 1.0):
+            raise ValueError("rollout.dynamic_sampling.homogeneity_threshold must be in (0, 1]")
+
+        min_unique_reward_values_raw = dynamic_sampling_raw.get("min_unique_reward_values")
+        min_unique_reward_values = (
+            2 if min_unique_reward_values_raw is None else int(min_unique_reward_values_raw)
+        )
+        if min_unique_reward_values < 1:
+            raise ValueError("rollout.dynamic_sampling.min_unique_reward_values must be >= 1")
+
+        max_extra_roll_rounds_raw = dynamic_sampling_raw.get("max_extra_roll_rounds")
+        max_extra_roll_rounds = 10 if max_extra_roll_rounds_raw is None else int(max_extra_roll_rounds_raw)
+        if max_extra_roll_rounds < 0:
+            raise ValueError("rollout.dynamic_sampling.max_extra_roll_rounds must be >= 0")
+
+        target_valid_groups_raw = dynamic_sampling_raw.get("target_valid_groups")
+        if target_valid_groups_raw is None:
+            target_valid_groups = None
+        else:
+            target_valid_groups = int(target_valid_groups_raw)
+            if target_valid_groups <= 0:
+                raise ValueError("rollout.dynamic_sampling.target_valid_groups must be > 0 when set")
+
+        fallback_policy = str(dynamic_sampling_raw.get("fallback_policy") or "keep_last").strip().lower()
+        if fallback_policy not in {"keep_last", "drop_group"}:
+            raise ValueError("rollout.dynamic_sampling.fallback_policy must be one of: keep_last, drop_group")
+
+        dynamic_sampling_cfg = GRPODynamicSamplingConfig(
+            enabled=enabled,
+            trigger=trigger,
+            metric=metric,
+            homogeneity_threshold=homogeneity_threshold,
+            min_unique_reward_values=min_unique_reward_values,
+            max_extra_roll_rounds=max_extra_roll_rounds,
+            target_valid_groups=target_valid_groups,
+            fallback_policy=fallback_policy,
+        )
+
     train_micro_batch_size = _get_int_from_aliases(
         cfg,
         label="train.micro_batch_size",
@@ -189,7 +313,6 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     deprecated_train_keys = {
         "train.global_micro_batch_size": _get_by_path(cfg, "train.global_micro_batch_size"),
         "train.micro_batch_size_per_process": _get_by_path(cfg, "train.micro_batch_size_per_process"),
-        # Legacy flat keys we intentionally drop to avoid ambiguity.
         "train_global_micro_batch_size": cfg.get("train_global_micro_batch_size"),
         "train_micro_batch_size_per_process": cfg.get("train_micro_batch_size_per_process"),
     }
@@ -233,48 +356,48 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
 
     mesh_shape = str(cfg.get("mesh_shape") or "1,-1,1")
 
-    from plugins.training.core.optim.optimizer import LRScheduleConfig, OptimizerConfig
-
     optimizer_raw = _get_by_path(cfg, "train.optimizer")
     if optimizer_raw is None:
         optimizer_cfg = OptimizerConfig()
     elif isinstance(optimizer_raw, str):
-        optimizer_cfg = OptimizerConfig(name=str(optimizer_raw))
+        optimizer_cfg = OptimizerConfig(name=str(optimizer_raw), kwargs={}, lr_schedule=LRScheduleConfig())
     elif isinstance(optimizer_raw, dict):
+        name_raw = optimizer_raw.get("name")
+        kwargs_raw = optimizer_raw.get("kwargs")
+        if kwargs_raw is None:
+            kwargs = {}
+        elif isinstance(kwargs_raw, dict):
+            kwargs = dict(kwargs_raw)
+        else:
+            raise ValueError("train.optimizer.kwargs must be a dict when provided")
+
         lr_raw = optimizer_raw.get("lr_schedule")
         if lr_raw is None:
-            lr_raw = {}
-        if not isinstance(lr_raw, dict):
-            raise ValueError("train.optimizer.lr_schedule must be a dict")
+            lr_cfg = LRScheduleConfig()
+        elif isinstance(lr_raw, str):
+            lr_cfg = LRScheduleConfig(name=str(lr_raw), kwargs={})
+        elif isinstance(lr_raw, dict):
+            lr_name_raw = lr_raw.get("name")
+            lr_kwargs_raw = lr_raw.get("kwargs")
+            if lr_kwargs_raw is None:
+                lr_kwargs = {}
+            elif isinstance(lr_kwargs_raw, dict):
+                lr_kwargs = dict(lr_kwargs_raw)
+            else:
+                raise ValueError("train.optimizer.lr_schedule.kwargs must be a dict when provided")
+            lr_cfg = LRScheduleConfig(name=str(lr_name_raw) if lr_name_raw is not None else "warmup_cosine", kwargs=lr_kwargs)
+        else:
+            raise ValueError("train.optimizer.lr_schedule must be a dict or string when provided")
 
-        warmup_steps_raw = lr_raw.get("warmup_steps")
-        warmup_steps = int(warmup_steps_raw) if warmup_steps_raw is not None else None
-
-        init_value_raw = lr_raw.get("init_value")
-        peak_value_raw = lr_raw.get("peak_value")
-        end_value_raw = lr_raw.get("end_value")
-        warmup_ratio_raw = lr_raw.get("warmup_ratio")
-
-        lr_cfg = LRScheduleConfig(
-            type=str(lr_raw.get("type") or "warmup_cosine"),
-            init_value=float(init_value_raw) if init_value_raw is not None else 0.0,
-            peak_value=float(peak_value_raw) if peak_value_raw is not None else 1e-6,
-            end_value=float(end_value_raw) if end_value_raw is not None else 0.0,
-            warmup_ratio=float(warmup_ratio_raw) if warmup_ratio_raw is not None else 0.05,
-            warmup_steps=warmup_steps,
-        )
-
-        name_raw = optimizer_raw.get("name")
-        clip_norm_raw = optimizer_raw.get("clip_norm")
-        weight_decay_raw = optimizer_raw.get("weight_decay")
         optimizer_cfg = OptimizerConfig(
             name=str(name_raw) if name_raw is not None else "lion",
-            clip_norm=float(clip_norm_raw) if clip_norm_raw is not None else 1.0,
-            weight_decay=float(weight_decay_raw) if weight_decay_raw is not None else 1e-8,
+            kwargs=kwargs,
             lr_schedule=lr_cfg,
         )
     else:
         raise ValueError(f"train.optimizer must be a dict or string, got {type(optimizer_raw).__name__}")
+
+    optimizer_cfg = normalize_optimizer_config(optimizer_cfg)
 
     wandb_project = str(cfg.get("wandb_project") or "mllm-jax-grpo-gsm8k")
 
@@ -304,106 +427,24 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         raise ValueError("reward_weights must be a list/tuple of 3 floats")
 
     algo_raw = cfg.get("algo")
+    defaults = AlgoConfig()
     if algo_raw is None:
-        algo_cfg = AlgoConfig()
+        algo_cfg = defaults
     elif isinstance(algo_raw, str):
-        algo_cfg = AlgoConfig(name=str(algo_raw))
+        algo_cfg = AlgoConfig(estimator=PluginConfig(name=str(algo_raw), kwargs={}), update=defaults.update)
     elif isinstance(algo_raw, dict):
-        name_raw = algo_raw.get("name")
-
-        defaults = AlgoConfig()
-        estimator_defaults = defaults.estimator
-        update_defaults = defaults.update
-
-        estimator_raw = algo_raw.get("estimator")
-        estimator_data: dict[str, Any] = {}
-        estimator_name_raw = None
-        if isinstance(estimator_raw, str):
-            estimator_name_raw = estimator_raw
-        elif isinstance(estimator_raw, dict):
-            estimator_data = estimator_raw
-            estimator_name_raw = estimator_raw.get("name")
-        elif estimator_raw is not None:
-            raise ValueError("algo.estimator must be a dict or string when provided")
-
-        if estimator_name_raw is None:
-            estimator_name_raw = algo_raw.get("estimator_name")
-        if estimator_name_raw is None:
-            estimator_name_raw = algo_raw.get("ppo_advantage_estimator")
-
-        def _estimator_value(key: str, legacy_key: str | None = None) -> Any:
-            if key in estimator_data:
-                return estimator_data[key]
-            if legacy_key is not None and legacy_key in estimator_data:
-                return estimator_data[legacy_key]
-            return algo_raw.get(legacy_key or key)
-
-        eps_raw = _estimator_value("eps")
-        clip_range_raw = _estimator_value("clip_range")
-        rloo_whiten_raw = _estimator_value("rloo_whiten")
-        dapo_alpha_raw = _estimator_value("dapo_alpha")
-        gae_gamma_raw = _estimator_value("gae_gamma", "ppo_gamma")
-        if "gamma" in estimator_data and "gae_gamma" not in estimator_data:
-            gae_gamma_raw = estimator_data["gamma"]
-        gae_lambda_raw = _estimator_value("gae_lambda", "ppo_gae_lambda")
-        if "lambda" in estimator_data and "gae_lambda" not in estimator_data:
-            gae_lambda_raw = estimator_data["lambda"]
-        gae_normalize_raw = _estimator_value("gae_normalize", "ppo_advantage_norm")
-        if "normalize" in estimator_data and "gae_normalize" not in estimator_data:
-            gae_normalize_raw = estimator_data["normalize"]
-
-        clip_range = float(clip_range_raw) if clip_range_raw is not None else None
-        estimator_cfg = EstimatorConfig(
-            name=str(estimator_name_raw) if estimator_name_raw is not None else estimator_defaults.name,
-            eps=float(eps_raw) if eps_raw is not None else estimator_defaults.eps,
-            clip_range=clip_range,
-            rloo_whiten=bool(rloo_whiten_raw) if rloo_whiten_raw is not None else estimator_defaults.rloo_whiten,
-            dapo_alpha=float(dapo_alpha_raw) if dapo_alpha_raw is not None else estimator_defaults.dapo_alpha,
-            gae_gamma=float(gae_gamma_raw) if gae_gamma_raw is not None else estimator_defaults.gae_gamma,
-            gae_lambda=float(gae_lambda_raw) if gae_lambda_raw is not None else estimator_defaults.gae_lambda,
-            gae_normalize=bool(gae_normalize_raw)
-            if gae_normalize_raw is not None
-            else estimator_defaults.gae_normalize,
-        )
-
-        update_raw = algo_raw.get("update")
-        update_data: dict[str, Any] = {}
-        update_name_raw = None
-        if isinstance(update_raw, str):
-            update_name_raw = update_raw
-        elif isinstance(update_raw, dict):
-            update_data = update_raw
-            update_name_raw = update_raw.get("name")
-        elif update_raw is not None:
-            raise ValueError("algo.update must be a dict or string when provided")
-
-        if update_name_raw is None:
-            update_name_raw = algo_raw.get("update_name")
-
-        def _update_value(key: str, legacy_key: str | None = None) -> Any:
-            if key in update_data:
-                return update_data[key]
-            return algo_raw.get(legacy_key or key)
-
-        value_coef_raw = _update_value("value_coef", "ppo_value_coef")
-        value_clip_range_raw = _update_value("value_clip_range", "ppo_value_clip_range")
-        entropy_coef_raw = _update_value("entropy_coef", "ppo_entropy_coef")
-
-        value_clip_range = float(value_clip_range_raw) if value_clip_range_raw is not None else None
-        update_cfg = UpdateConfig(
-            name=str(update_name_raw) if update_name_raw is not None else update_defaults.name,
-            value_coef=float(value_coef_raw) if value_coef_raw is not None else update_defaults.value_coef,
-            value_clip_range=value_clip_range,
-            entropy_coef=float(entropy_coef_raw) if entropy_coef_raw is not None else update_defaults.entropy_coef,
-        )
-
+        estimator_cfg = _parse_plugin_config(algo_raw.get("estimator"), defaults=defaults.estimator, label="algo.estimator")
+        update_cfg = _parse_plugin_config(algo_raw.get("update"), defaults=defaults.update, label="algo.update")
         algo_cfg = AlgoConfig(
-            name=str(name_raw) if name_raw is not None else defaults.name,
+            name=defaults.name,
             estimator=estimator_cfg,
             update=update_cfg,
         )
     else:
-        raise ValueError(f"algo must be a dict or string, got {type(algo_raw).__name__}")
+        raise ValueError(f"algo must be a dict, got {type(algo_raw).__name__}")
+
+    # strict normalization + cross-field validation
+    algo_cfg, _algo_name, _estimator_name, _update_name = normalize_algo_config(algo_cfg)
 
     eval_every_steps = int(cfg.get("eval_every_steps") or 0)
     eval_batches_per_process = _get_int_from_aliases(
@@ -425,6 +466,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             n=rollout_n,
             global_length=global_length,
             max_length_sample=max_length_sample,
+            dynamic_sampling=dynamic_sampling_cfg,
         ),
         train=GRPOTrainConfig(
             micro_batch_size_per_device=train_micro_batch_size_per_device,
@@ -446,6 +488,12 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         eval_batches_per_process=eval_batches_per_process,
         eval_split=eval_split,
     )
+
+
+def _sanitize_config_for_display(cfg: GRPOGsm8kConfig) -> dict[str, object]:
+    out = cfg.to_logging_dict()
+    out["rollout"]["sequences_global_per_step"] = int(cfg.rollout.batch_size) * int(cfg.rollout.n)
+    return out
 
 
 def main() -> None:
@@ -507,23 +555,17 @@ def main() -> None:
 
     config_path = str(args.config or "")
     cfg_dict = load_config(config_path if config_path else None, args.set)
+    _strict_legacy_key_guard(cfg_dict)
+    cfg = _cfg_from_dict(cfg_dict, config_path=config_path or "<default>")
+
     if args.print_config:
-        rollout = cfg_dict.get("rollout")
-        if not isinstance(rollout, dict):
-            rollout = {}
-            cfg_dict["rollout"] = rollout
-        batch_size = int(rollout.get("batch_size") or 0)
-        n = int(rollout.get("n") or 0)
-        rollout["sequences_global_per_step"] = batch_size * n
-        print(yaml.safe_dump(cfg_dict, sort_keys=False))
+        print(yaml.safe_dump(_sanitize_config_for_display(cfg), sort_keys=False))
         return
 
-    cfg = _cfg_from_dict(cfg_dict, config_path=config_path or "<default>")
-    cfg_out = asdict(cfg)
-    cfg_out["rollout"]["sequences_global_per_step"] = int(cfg.rollout.batch_size) * int(cfg.rollout.n)
-    print(yaml.safe_dump(cfg_out, sort_keys=False))
+    print(yaml.safe_dump(_sanitize_config_for_display(cfg), sort_keys=False))
 
     from projects.gsm8k_grpo.jax.train import run_grpo_gsm8k
+
     run_grpo_gsm8k(cfg)
 
 

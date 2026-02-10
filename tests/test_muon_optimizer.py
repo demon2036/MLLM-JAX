@@ -19,15 +19,17 @@ def test_muon_weight_decay_is_decoupled_for_zero_gradients():
 
     cfg = OptimizerConfig(
         name="muon",
-        clip_norm=0.0,
-        weight_decay=float(weight_decay),
-        lr_schedule=LRScheduleConfig(type="constant", peak_value=float(peak_lr)),
-        muon_aux_lr=float(aux_lr),
-        muon_momentum=0.95,
-        muon_nesterov=True,
-        muon_ns_steps=5,
-        muon_eps=1e-7,
-        muon_max_dim=10_000,
+        kwargs={
+            "clip_norm": 0.0,
+            "weight_decay": float(weight_decay),
+            "aux_lr": float(aux_lr),
+            "momentum": 0.95,
+            "nesterov": True,
+            "ns_steps": 5,
+            "eps": 1e-7,
+            "max_dim": 10_000,
+        },
+        lr_schedule=LRScheduleConfig(name="constant", kwargs={"peak_value": float(peak_lr)}),
     )
     tx = build_tx(training_steps=10, cfg=cfg, params=params)
 
@@ -40,3 +42,16 @@ def test_muon_weight_decay_is_decoupled_for_zero_gradients():
     np.testing.assert_allclose(np.array(updates["w"]), np.array(expected_w), rtol=1e-6, atol=1e-6)
     np.testing.assert_allclose(np.array(updates["b"]), np.array(expected_b), rtol=1e-6, atol=1e-6)
 
+
+def test_lion_rejects_muon_kwargs():
+    cfg = OptimizerConfig(
+        name="lion",
+        kwargs={
+            "clip_norm": 1.0,
+            "weight_decay": 1e-8,
+            "aux_lr": 3e-4,
+        },
+        lr_schedule=LRScheduleConfig(name="constant", kwargs={"peak_value": 1e-3}),
+    )
+    with pytest.raises(ValueError):
+        _ = build_tx(training_steps=10, cfg=cfg)

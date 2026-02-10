@@ -14,11 +14,14 @@ and GAE path for actor-critic updates.
 
 from plugins.training.rl.algorithms.config import (
     AlgoConfig,
-    EstimatorConfig,
-    UpdateConfig,
+    DEFAULT_ESTIMATOR_KWARGS,
+    DEFAULT_UPDATE_KWARGS,
+    PluginConfig,
+    normalize_algo_config,
     normalize_algo_name,
     normalize_estimator_name,
     normalize_update_name,
+    sanitize_algo_config_for_logging,
 )
 from plugins.training.rl.algorithms.factory import (
     Algorithm,
@@ -31,13 +34,16 @@ from plugins.training.rl.algorithms.factory import (
 __all__ = [
     "Algorithm",
     "AlgoConfig",
-    "EstimatorConfig",
-    "UpdateConfig",
+    "DEFAULT_ESTIMATOR_KWARGS",
+    "DEFAULT_UPDATE_KWARGS",
+    "PluginConfig",
     "SUPPORTED_ALGOS",
     "SUPPORTED_ESTIMATORS",
     "SUPPORTED_UPDATES",
     "create_algorithm",
+    "normalize_algo_config",
     "normalize_algo_name",
     "normalize_estimator_name",
     "normalize_update_name",
+    "sanitize_algo_config_for_logging",
 ]

@@ -1,54 +1,231 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
+
+
+def _default_lr_schedule_kwargs() -> dict[str, Any]:
+    return {
+        "init_value": 0.0,
+        "peak_value": 1e-6,
+        "end_value": 0.0,
+        "warmup_ratio": 0.05,
+        "warmup_steps": None,
+    }
+
+
+def _default_optimizer_kwargs() -> dict[str, Any]:
+    return {
+        "clip_norm": 1.0,
+        "weight_decay": 1e-8,
+    }
+
+
+def _default_muon_kwargs() -> dict[str, Any]:
+    return {
+        "aux_lr": 3e-4,
+        "momentum": 0.95,
+        "nesterov": True,
+        "ns_steps": 5,
+        "eps": 1e-7,
+        "max_dim": 10_000,
+    }
 
 
 @dataclass(frozen=True)
 class LRScheduleConfig:
-    """Learning-rate schedule config (Optax).
+    """Learning-rate schedule plugin config.
 
-    Defaults match the hardcoded schedule in `training2.get_state`.
+    Schema:
+    - name: schedule implementation name
+    - kwargs: schedule parameters
     """
 
-    # Supported: warmup_cosine, warmup_linear, constant
-    type: str = "warmup_cosine"
-
-    init_value: float = 0.0
-    peak_value: float = 1e-6
-    end_value: float = 0.0
-
-    # If warmup_steps is None, derive: round(training_steps * warmup_ratio).
-    warmup_ratio: float = 0.05
-    warmup_steps: int | None = None
+    name: str = "warmup_cosine"
+    kwargs: dict[str, Any] = field(default_factory=_default_lr_schedule_kwargs)
 
 
 @dataclass(frozen=True)
 class OptimizerConfig:
-    """Optimizer config (Optax).
+    """Optimizer plugin config.
 
-    Defaults match the hardcoded optimizer in `training2.get_state`.
+    Schema:
+    - name: optimizer implementation name
+    - kwargs: optimizer parameters
+    - lr_schedule: lr-schedule plugin config
     """
 
-    # Supported: lion, adamw, sgd, muon
     name: str = "lion"
-
-    clip_norm: float = 1.0
-    weight_decay: float = 1e-8
-
+    kwargs: dict[str, Any] = field(default_factory=_default_optimizer_kwargs)
     lr_schedule: LRScheduleConfig = field(default_factory=LRScheduleConfig)
 
-    # Muon (https://kellerjordan.github.io/posts/muon/) specific options.
-    #
-    # When `name == "muon"`, Muon is applied to 2D parameters with
-    # max(shape) <= `muon_max_dim` and AdamW is used as an auxiliary optimizer
-    # for all other params.
-    muon_aux_lr: float = 3e-4
-    muon_momentum: float = 0.95
-    muon_nesterov: bool = True
-    muon_ns_steps: int = 5
-    muon_eps: float = 1e-7
-    muon_max_dim: int = 10_000
+
+def _as_bool(value: Any, *, label: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        raw = value.strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"0", "false", "no", "off"}:
+            return False
+    raise ValueError(f"{label} must be a boolean, got {value!r}")
+
+
+def normalize_lr_schedule_name(name: str) -> str:
+    raw = str(name or "").strip().lower()
+    if raw in {"", "default", "auto"}:
+        return "warmup_cosine"
+    aliases = {
+        "warmup_cosine": "warmup_cosine",
+        "warmup_cosine_decay": "warmup_cosine",
+        "warmup_linear": "warmup_linear",
+        "warmup_linear_decay": "warmup_linear",
+        "linear_warmup": "warmup_linear",
+        "constant": "constant",
+        "const": "constant",
+    }
+    return aliases.get(raw, raw)
+
+
+def normalize_optimizer_name(name: str) -> str:
+    raw = str(name or "").strip().lower()
+    if raw in {"", "default", "auto"}:
+        return "lion"
+    aliases = {
+        "lion": "lion",
+        "adam": "adamw",
+        "adamw": "adamw",
+        "sgd": "sgd",
+        "muon": "muon",
+    }
+    return aliases.get(raw, raw)
+
+
+def _as_dict(value: Any, *, label: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} must be a mapping, got {type(value).__name__}")
+    return dict(value)
+
+
+def normalize_lr_schedule_config(cfg: LRScheduleConfig) -> LRScheduleConfig:
+    schedule_name = normalize_lr_schedule_name(cfg.name)
+    supported = {"warmup_cosine", "warmup_linear", "constant"}
+    if schedule_name not in supported:
+        raise ValueError(
+            f"Unsupported lr_schedule.name={cfg.name!r} (normalized to {schedule_name!r}); supported={sorted(supported)}"
+        )
+
+    raw_kwargs = _as_dict(cfg.kwargs, label="optimizer.lr_schedule.kwargs")
+    defaults = _default_lr_schedule_kwargs()
+    unknown = sorted(set(raw_kwargs.keys()) - set(defaults.keys()))
+    if unknown:
+        raise ValueError(
+            "Unsupported optimizer.lr_schedule.kwargs keys "
+            + f"for schedule {schedule_name!r}: {unknown}; allowed={sorted(defaults.keys())}"
+        )
+
+    merged = {**defaults, **raw_kwargs}
+    warmup_steps_raw = merged.get("warmup_steps")
+    warmup_steps = None if warmup_steps_raw is None else int(warmup_steps_raw)
+    if warmup_steps is not None and warmup_steps < 0:
+        raise ValueError(f"optimizer.lr_schedule.kwargs.warmup_steps must be >= 0, got {warmup_steps}")
+
+    warmup_ratio = float(merged["warmup_ratio"])
+    if warmup_ratio < 0:
+        raise ValueError(f"optimizer.lr_schedule.kwargs.warmup_ratio must be >= 0, got {warmup_ratio}")
+
+    normalized_kwargs: dict[str, Any] = {
+        "init_value": float(merged["init_value"]),
+        "peak_value": float(merged["peak_value"]),
+        "end_value": float(merged["end_value"]),
+        "warmup_ratio": warmup_ratio,
+        "warmup_steps": warmup_steps,
+    }
+    return LRScheduleConfig(name=schedule_name, kwargs=normalized_kwargs)
+
+
+def normalize_optimizer_config(cfg: OptimizerConfig) -> OptimizerConfig:
+    optimizer_name = normalize_optimizer_name(cfg.name)
+    supported = {"lion", "adamw", "sgd", "muon"}
+    if optimizer_name not in supported:
+        raise ValueError(
+            f"Unsupported optimizer.name={cfg.name!r} (normalized to {optimizer_name!r}); supported={sorted(supported)}"
+        )
+
+    raw_kwargs = _as_dict(cfg.kwargs, label="optimizer.kwargs")
+    defaults = _default_optimizer_kwargs()
+    if optimizer_name == "muon":
+        defaults = {**defaults, **_default_muon_kwargs()}
+
+    unknown = sorted(set(raw_kwargs.keys()) - set(defaults.keys()))
+    if unknown:
+        raise ValueError(
+            "Unsupported optimizer.kwargs keys "
+            + f"for optimizer {optimizer_name!r}: {unknown}; allowed={sorted(defaults.keys())}"
+        )
+
+    merged = {**defaults, **raw_kwargs}
+    clip_norm = float(merged["clip_norm"])
+    if clip_norm < 0:
+        raise ValueError(f"optimizer.kwargs.clip_norm must be >= 0, got {clip_norm}")
+
+    weight_decay = float(merged["weight_decay"])
+    if weight_decay < 0:
+        raise ValueError(f"optimizer.kwargs.weight_decay must be >= 0, got {weight_decay}")
+
+    normalized_kwargs: dict[str, Any] = {
+        "clip_norm": clip_norm,
+        "weight_decay": weight_decay,
+    }
+
+    if optimizer_name == "muon":
+        aux_lr = float(merged["aux_lr"])
+        if aux_lr <= 0:
+            raise ValueError(f"optimizer.kwargs.aux_lr must be > 0, got {aux_lr}")
+
+        momentum = float(merged["momentum"])
+        ns_steps = int(merged["ns_steps"])
+        eps = float(merged["eps"])
+        max_dim = int(merged["max_dim"])
+        if ns_steps <= 0:
+            raise ValueError(f"optimizer.kwargs.ns_steps must be > 0, got {ns_steps}")
+        if eps <= 0:
+            raise ValueError(f"optimizer.kwargs.eps must be > 0, got {eps}")
+        if max_dim <= 0:
+            raise ValueError(f"optimizer.kwargs.max_dim must be > 0, got {max_dim}")
+
+        normalized_kwargs.update(
+            {
+                "aux_lr": aux_lr,
+                "momentum": momentum,
+                "nesterov": _as_bool(merged["nesterov"], label="optimizer.kwargs.nesterov"),
+                "ns_steps": ns_steps,
+                "eps": eps,
+                "max_dim": max_dim,
+            }
+        )
+
+    normalized_lr = normalize_lr_schedule_config(cfg.lr_schedule)
+    return OptimizerConfig(name=optimizer_name, kwargs=normalized_kwargs, lr_schedule=normalized_lr)
+
+
+def sanitize_optimizer_config_for_logging(cfg: OptimizerConfig) -> dict[str, object]:
+    """Return a logging-friendly optimizer config containing only active keys."""
+
+    normalized = normalize_optimizer_config(cfg)
+    return {
+        "name": str(normalized.name),
+        "kwargs": dict(normalized.kwargs),
+        "lr_schedule": {
+            "name": str(normalized.lr_schedule.name),
+            "kwargs": dict(normalized.lr_schedule.kwargs),
+        },
+    }
 
 
 def build_lr_schedule(*, training_steps: int, cfg: LRScheduleConfig):
@@ -58,42 +235,59 @@ def build_lr_schedule(*, training_steps: int, cfg: LRScheduleConfig):
     if steps <= 0:
         raise ValueError(f"training_steps must be > 0, got {steps}")
 
-    schedule_type = str(cfg.type).strip().lower()
-    if schedule_type in {"warmup_cosine", "warmup_cosine_decay"}:
-        warmup_steps = cfg.warmup_steps
+    schedule_cfg = normalize_lr_schedule_config(cfg)
+    schedule_name = schedule_cfg.name
+    kwargs = schedule_cfg.kwargs
+
+    if schedule_name == "warmup_cosine":
+        warmup_steps = kwargs["warmup_steps"]
         if warmup_steps is None:
-            warmup_steps = int(round(float(steps) * float(cfg.warmup_ratio)))
+            warmup_steps = int(round(float(steps) * float(kwargs["warmup_ratio"])))
         warmup_steps = int(warmup_steps)
         if warmup_steps < 0:
             raise ValueError(f"warmup_steps must be >= 0, got {warmup_steps}")
         return optax.warmup_cosine_decay_schedule(
-            init_value=float(cfg.init_value),
-            peak_value=float(cfg.peak_value),
+            init_value=float(kwargs["init_value"]),
+            peak_value=float(kwargs["peak_value"]),
             warmup_steps=warmup_steps,
             decay_steps=steps,
-            end_value=float(cfg.end_value),
+            end_value=float(kwargs["end_value"]),
         )
 
-    if schedule_type in {"warmup_linear", "warmup_linear_decay", "linear_warmup"}:
-        warmup_steps = cfg.warmup_steps
+    if schedule_name == "warmup_linear":
+        warmup_steps = kwargs["warmup_steps"]
         if warmup_steps is None:
-            warmup_steps = int(round(float(steps) * float(cfg.warmup_ratio)))
+            warmup_steps = int(round(float(steps) * float(kwargs["warmup_ratio"])))
         warmup_steps = int(warmup_steps)
         if warmup_steps < 0:
             raise ValueError(f"warmup_steps must be >= 0, got {warmup_steps}")
         warmup_steps = min(warmup_steps, steps)
         if warmup_steps == 0:
-            return optax.linear_schedule(init_value=float(cfg.peak_value), end_value=float(cfg.end_value), transition_steps=steps)
+            return optax.linear_schedule(
+                init_value=float(kwargs["peak_value"]),
+                end_value=float(kwargs["end_value"]),
+                transition_steps=steps,
+            )
 
-        warmup = optax.linear_schedule(init_value=float(cfg.init_value), end_value=float(cfg.peak_value), transition_steps=warmup_steps)
+        warmup = optax.linear_schedule(
+            init_value=float(kwargs["init_value"]),
+            end_value=float(kwargs["peak_value"]),
+            transition_steps=warmup_steps,
+        )
         decay_steps = max(1, steps - warmup_steps)
-        decay = optax.linear_schedule(init_value=float(cfg.peak_value), end_value=float(cfg.end_value), transition_steps=decay_steps)
+        decay = optax.linear_schedule(
+            init_value=float(kwargs["peak_value"]),
+            end_value=float(kwargs["end_value"]),
+            transition_steps=decay_steps,
+        )
         return optax.join_schedules([warmup, decay], [warmup_steps])
 
-    if schedule_type in {"constant", "const"}:
-        return optax.constant_schedule(float(cfg.peak_value))
+    if schedule_name == "constant":
+        return optax.constant_schedule(float(kwargs["peak_value"]))
 
-    raise ValueError(f"Unsupported lr_schedule.type={cfg.type!r} (expected warmup_cosine|warmup_linear|constant)")
+    raise ValueError(
+        f"Unsupported lr_schedule.name={schedule_cfg.name!r} (expected warmup_cosine|warmup_linear|constant)"
+    )
 
 
 def _scale_by_muon(
@@ -156,9 +350,11 @@ def build_tx(*, training_steps: int, cfg: OptimizerConfig, params: Any | None = 
     import jax.numpy as jnp
     import optax
 
-    lr_schedule = build_lr_schedule(training_steps=training_steps, cfg=cfg.lr_schedule)
-    name = str(cfg.name).strip().lower()
-    weight_decay = float(cfg.weight_decay)
+    normalized_cfg = normalize_optimizer_config(cfg)
+    lr_schedule = build_lr_schedule(training_steps=training_steps, cfg=normalized_cfg.lr_schedule)
+    name = normalized_cfg.name
+    optimizer_kwargs = normalized_cfg.kwargs
+    weight_decay = float(optimizer_kwargs["weight_decay"])
 
     if name == "lion":
         base = optax.lion(lr_schedule, weight_decay=weight_decay)
@@ -172,18 +368,13 @@ def build_tx(*, training_steps: int, cfg: OptimizerConfig, params: Any | None = 
         if params is None:
             raise ValueError("optimizer.name='muon' requires passing `params=` to build the parameter mask.")
 
-        muon_max_dim = int(cfg.muon_max_dim)
+        muon_max_dim = int(optimizer_kwargs["max_dim"])
         if muon_max_dim <= 0:
             raise ValueError(f"muon_max_dim must be > 0, got {muon_max_dim}")
 
-        aux_lr_cfg = LRScheduleConfig(
-            type=str(cfg.lr_schedule.type),
-            init_value=float(cfg.lr_schedule.init_value),
-            peak_value=float(cfg.muon_aux_lr),
-            end_value=float(cfg.lr_schedule.end_value),
-            warmup_ratio=float(cfg.lr_schedule.warmup_ratio),
-            warmup_steps=cfg.lr_schedule.warmup_steps,
-        )
+        aux_lr_schedule_kwargs = dict(normalized_cfg.lr_schedule.kwargs)
+        aux_lr_schedule_kwargs["peak_value"] = float(optimizer_kwargs["aux_lr"])
+        aux_lr_cfg = LRScheduleConfig(name=normalized_cfg.lr_schedule.name, kwargs=aux_lr_schedule_kwargs)
         aux_lr_schedule = build_lr_schedule(training_steps=training_steps, cfg=aux_lr_cfg)
 
         # NOTE: We use a Muon + auxiliary AdamW split via `optax.multi_transform`
@@ -200,18 +391,18 @@ def build_tx(*, training_steps: int, cfg: OptimizerConfig, params: Any | None = 
         def weight_dimension_numbers(updates):
             return jax.tree_util.tree_map(lambda _x: dim_nums_cls(), updates)
 
-        kwargs = {
-            "nesterov": bool(cfg.muon_nesterov),
-            "ns_steps": int(cfg.muon_ns_steps),
-            "eps": float(cfg.muon_eps),
+        muon_scale_kwargs = {
+            "nesterov": bool(optimizer_kwargs["nesterov"]),
+            "ns_steps": int(optimizer_kwargs["ns_steps"]),
+            "eps": float(optimizer_kwargs["eps"]),
             "mu_dtype": jnp.float32,
             "weight_dimension_numbers": weight_dimension_numbers,
         }
         try:
-            scale_by_muon = scale_by_muon_fn(beta=float(cfg.muon_momentum), **kwargs)
+            scale_by_muon = scale_by_muon_fn(beta=float(optimizer_kwargs["momentum"]), **muon_scale_kwargs)
         except TypeError:
-            kwargs.pop("mu_dtype", None)
-            scale_by_muon = scale_by_muon_fn(beta=float(cfg.muon_momentum), **kwargs)
+            muon_scale_kwargs.pop("mu_dtype", None)
+            scale_by_muon = scale_by_muon_fn(beta=float(optimizer_kwargs["momentum"]), **muon_scale_kwargs)
 
         muon_chain = [scale_by_muon]
         if weight_decay != 0.0:
@@ -235,10 +426,21 @@ def build_tx(*, training_steps: int, cfg: OptimizerConfig, params: Any | None = 
     else:
         raise ValueError(f"Unsupported optimizer.name={cfg.name!r} (expected lion|adamw|sgd|muon)")
 
-    clip_norm = float(cfg.clip_norm)
+    clip_norm = float(optimizer_kwargs["clip_norm"])
     if clip_norm <= 0.0:
         return base
     return optax.chain(optax.clip_by_global_norm(clip_norm), base)
 
 
-__all__ = ["LRScheduleConfig", "OptimizerConfig", "_scale_by_muon", "build_lr_schedule", "build_tx"]
+__all__ = [
+    "LRScheduleConfig",
+    "OptimizerConfig",
+    "_scale_by_muon",
+    "build_lr_schedule",
+    "build_tx",
+    "normalize_lr_schedule_config",
+    "normalize_lr_schedule_name",
+    "normalize_optimizer_config",
+    "normalize_optimizer_name",
+    "sanitize_optimizer_config_for_logging",
+]

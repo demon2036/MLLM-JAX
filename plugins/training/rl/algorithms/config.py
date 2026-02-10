@@ -1,6 +1,66 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any, Mapping
+
+
+DEFAULT_ESTIMATOR_KWARGS: dict[str, dict[str, Any]] = {
+    "reinforce": {"eps": 1e-4, "clip_range": None},
+    "grpo": {"eps": 1e-4, "clip_range": None},
+    "rloo": {"eps": 1e-4, "clip_range": None, "whiten": True},
+    "dapo": {"eps": 1e-4, "clip_range": None, "alpha": 0.2},
+    "reinforce++": {"eps": 1e-4, "clip_range": None},
+    "maxrl": {"eps": 1e-6, "clip_range": None},
+    "gae": {"eps": 1e-4, "clip_range": None, "gamma": 1.0, "gae_lambda": 0.95, "normalize": True},
+}
+
+DEFAULT_UPDATE_KWARGS: dict[str, dict[str, Any]] = {
+    "policy_gradient": {},
+    "ppo": {
+        "value_coef": 0.5,
+        "value_clip_range": 0.2,
+        "entropy_coef": 0.0,
+    },
+}
+
+
+@dataclass(frozen=True)
+class PluginConfig:
+    """Generic plugin config with strict `name + kwargs` shape."""
+
+    name: str = "auto"
+    kwargs: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AlgoConfig:
+    """Algorithm selector composed by estimator/update plugins."""
+
+    name: str = "grpo"
+    estimator: PluginConfig = field(default_factory=PluginConfig)
+    update: PluginConfig = field(default_factory=PluginConfig)
+
+
+def _as_dict(value: Any, *, label: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} must be a mapping, got {type(value).__name__}")
+    return dict(value)
+
+
+def _as_bool(value: Any, *, label: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        raw = value.strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"0", "false", "no", "off"}:
+            return False
+    raise ValueError(f"{label} must be a boolean, got {value!r}")
 
 
 def normalize_algo_name(name: str) -> str:
@@ -68,72 +128,149 @@ def normalize_update_name(name: str) -> str:
     return aliases.get(raw, raw)
 
 
-@dataclass(frozen=True)
-class EstimatorConfig:
-    """Advantage estimator configuration (baseline/normalization/GAE)."""
+def _normalize_estimator_kwargs(estimator_name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+    defaults = dict(DEFAULT_ESTIMATOR_KWARGS[estimator_name])
+    unknown = sorted(set(kwargs.keys()) - set(defaults.keys()))
+    if unknown:
+        raise ValueError(
+            "Unsupported algo.estimator.kwargs keys "
+            + f"for estimator {estimator_name!r}: {unknown}; allowed={sorted(defaults.keys())}"
+        )
 
-    # Estimator name (auto chooses a default based on algo.name).
-    # One of: auto, reinforce, grpo, rloo, dapo, reinforce++, maxrl, gae
-    name: str = "auto"
+    merged = {**defaults, **kwargs}
+    normalized: dict[str, Any] = {
+        "eps": float(merged["eps"]),
+        "clip_range": None if merged["clip_range"] is None else float(merged["clip_range"]),
+    }
+    if normalized["eps"] <= 0:
+        raise ValueError("algo.estimator.kwargs.eps must be > 0")
+    if normalized["clip_range"] is not None and float(normalized["clip_range"]) <= 0:
+        raise ValueError("algo.estimator.kwargs.clip_range must be > 0 when set")
 
-    # Numerical stabilizer for normalization denominators.
-    eps: float = 1e-4
+    if estimator_name == "rloo":
+        normalized["whiten"] = _as_bool(merged["whiten"], label="algo.estimator.kwargs.whiten")
+    elif estimator_name == "dapo":
+        alpha = float(merged["alpha"])
+        if alpha < 0:
+            raise ValueError("algo.estimator.kwargs.alpha must be >= 0")
+        normalized["alpha"] = alpha
+    elif estimator_name == "gae":
+        gamma = float(merged["gamma"])
+        gae_lambda = float(merged["gae_lambda"])
+        normalized["gamma"] = gamma
+        normalized["gae_lambda"] = gae_lambda
+        normalized["normalize"] = _as_bool(merged["normalize"], label="algo.estimator.kwargs.normalize")
 
-    # Optional symmetric clipping of the final advantages (applied after normalization).
-    clip_range: float | None = None
-
-    # Whether to whiten advantages after computing an RLOO baseline.
-    rloo_whiten: bool = True
-
-    # DAPO-style mixing coefficient (used when estimator.name == "dapo").
-    dapo_alpha: float = 0.2
-
-    # GAE knobs (used when estimator.name == "gae").
-    gae_gamma: float = 1.0
-    gae_lambda: float = 0.95
-    gae_normalize: bool = True
-
-
-@dataclass(frozen=True)
-class UpdateConfig:
-    """Update-loop configuration (PPO/PG update behaviors)."""
-
-    # Update name (auto chooses a default based on algo.name).
-    # One of: auto, ppo, policy_gradient
-    name: str = "auto"
-
-    # PPO-specific knobs (used when update.name == "ppo").
-    # Weight of value (critic) loss in total loss.
-    value_coef: float = 0.5
-    # Optional clipping range for value loss; None disables clipping.
-    value_clip_range: float | None = 0.2
-    # Optional entropy coefficient (added to PPO loss if > 0).
-    entropy_coef: float = 0.0
+    return normalized
 
 
-@dataclass(frozen=True)
-class AlgoConfig:
-    """Algorithm selector that composes estimator + update.
+def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+    defaults = dict(DEFAULT_UPDATE_KWARGS[update_name])
+    unknown = sorted(set(kwargs.keys()) - set(defaults.keys()))
+    if unknown:
+        raise ValueError(
+            "Unsupported algo.update.kwargs keys "
+            + f"for update {update_name!r}: {unknown}; allowed={sorted(defaults.keys())}"
+        )
 
-    Notes
-    -----
-    - Most algorithms in this repo are "outcome PG" variants (sequence-level reward),
-      implemented by swapping the advantage estimator.
-    - `train.ppo_epochs` remains the update-loop knob (multi-epoch PPO/PG update).
+    merged = {**defaults, **kwargs}
+    if update_name == "policy_gradient":
+        return {}
+
+    return {
+        "value_coef": float(merged["value_coef"]),
+        "value_clip_range": None if merged["value_clip_range"] is None else float(merged["value_clip_range"]),
+        "entropy_coef": float(merged["entropy_coef"]),
+    }
+
+
+def normalize_algo_config(cfg: AlgoConfig) -> tuple[AlgoConfig, str, str, str]:
+    """Return normalized AlgoConfig plus resolved names.
+
+    - enforce strict `name + kwargs` schema
+    - fill defaults only for active plugins
+    - validate cross-field constraints
     """
 
-    # High-level algorithm alias (used for defaults + logging).
-    # One of: reinforce, ppo, grpo, rloo, dapo, reinforce++, maxrl
-    name: str = "grpo"
-    estimator: EstimatorConfig = field(default_factory=EstimatorConfig)
-    update: UpdateConfig = field(default_factory=UpdateConfig)
+    algo_name = normalize_algo_name(cfg.name)
+    supported_algos = {"reinforce", "ppo", "grpo", "rloo", "dapo", "reinforce++", "maxrl"}
+    if algo_name not in supported_algos:
+        raise ValueError(f"Unsupported algo.name={cfg.name!r} (normalized to {algo_name!r}); supported={sorted(supported_algos)}")
+
+    default_estimator_for_algo = {
+        "reinforce": "reinforce",
+        "ppo": "gae",
+        "grpo": "grpo",
+        "rloo": "rloo",
+        "dapo": "dapo",
+        "reinforce++": "reinforce++",
+        "maxrl": "maxrl",
+    }
+    default_update_for_algo = {
+        "reinforce": "policy_gradient",
+        "ppo": "ppo",
+        "grpo": "policy_gradient",
+        "rloo": "policy_gradient",
+        "dapo": "policy_gradient",
+        "reinforce++": "policy_gradient",
+        "maxrl": "policy_gradient",
+    }
+
+    estimator_name = normalize_estimator_name(cfg.estimator.name)
+    if estimator_name == "auto":
+        estimator_name = default_estimator_for_algo.get(algo_name, "reinforce")
+
+    update_name = normalize_update_name(cfg.update.name)
+    if update_name == "auto":
+        update_name = default_update_for_algo.get(algo_name, "policy_gradient")
+
+    supported_estimators = set(DEFAULT_ESTIMATOR_KWARGS.keys())
+    if estimator_name not in supported_estimators:
+        raise ValueError(f"Unsupported algo.estimator.name={cfg.estimator.name!r} (normalized to {estimator_name!r})")
+
+    supported_updates = set(DEFAULT_UPDATE_KWARGS.keys())
+    if update_name not in supported_updates:
+        raise ValueError(f"Unsupported algo.update.name={cfg.update.name!r} (normalized to {update_name!r})")
+
+    estimator_kwargs = _normalize_estimator_kwargs(estimator_name, _as_dict(cfg.estimator.kwargs, label="algo.estimator.kwargs"))
+    update_kwargs = _normalize_update_kwargs(update_name, _as_dict(cfg.update.kwargs, label="algo.update.kwargs"))
+
+    if estimator_name == "gae" and update_name != "ppo":
+        raise ValueError("algo.estimator.name=gae requires algo.update.name=ppo")
+
+    normalized = AlgoConfig(
+        name=algo_name,
+        estimator=PluginConfig(name=estimator_name, kwargs=estimator_kwargs),
+        update=PluginConfig(name=update_name, kwargs=update_kwargs),
+    )
+    return normalized, algo_name, estimator_name, update_name
+
+
+def sanitize_algo_config_for_logging(cfg: AlgoConfig) -> dict[str, object]:
+    """Return logging-friendly dict containing only active estimator/update plugins."""
+
+    normalized, algo_name, estimator_name, update_name = normalize_algo_config(cfg)
+    return {
+        "name": algo_name,
+        "estimator": {
+            "name": estimator_name,
+            "kwargs": dict(normalized.estimator.kwargs),
+        },
+        "update": {
+            "name": update_name,
+            "kwargs": dict(normalized.update.kwargs),
+        },
+    }
 
 
 __all__ = [
     "AlgoConfig",
-    "EstimatorConfig",
-    "UpdateConfig",
+    "DEFAULT_ESTIMATOR_KWARGS",
+    "DEFAULT_UPDATE_KWARGS",
+    "PluginConfig",
+    "normalize_algo_config",
     "normalize_algo_name",
     "normalize_estimator_name",
     "normalize_update_name",
+    "sanitize_algo_config_for_logging",
 ]

@@ -57,21 +57,26 @@ def create_sft_state(
     train_module = TrainSftModule(model=model, label_ignore_id=int(label_ignore_id))
     tx_cfg = OptimizerConfig(
         name=str(optimizer_name),
-        clip_norm=1.0,
-        weight_decay=float(weight_decay),
+        kwargs={
+            "clip_norm": 1.0,
+            "weight_decay": float(weight_decay),
+            "aux_lr": float(muon_aux_learning_rate),
+            "momentum": float(muon_momentum),
+            "nesterov": bool(muon_nesterov),
+            "ns_steps": int(muon_ns_steps),
+            "eps": float(muon_eps),
+            "max_dim": int(muon_max_dim),
+        },
         lr_schedule=LRScheduleConfig(
-            type="warmup_linear",
-            init_value=0.0,
-            peak_value=float(learning_rate),
-            end_value=0.0,
-            warmup_steps=int(warmup_steps),
+            name="warmup_linear",
+            kwargs={
+                "init_value": 0.0,
+                "peak_value": float(learning_rate),
+                "end_value": 0.0,
+                "warmup_ratio": 0.0,
+                "warmup_steps": int(warmup_steps),
+            },
         ),
-        muon_aux_lr=float(muon_aux_learning_rate),
-        muon_momentum=float(muon_momentum),
-        muon_nesterov=bool(muon_nesterov),
-        muon_ns_steps=int(muon_ns_steps),
-        muon_eps=float(muon_eps),
-        muon_max_dim=int(muon_max_dim),
     )
     tx = build_tx(training_steps=training_steps, cfg=tx_cfg, params=params)
 

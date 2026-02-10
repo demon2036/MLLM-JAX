@@ -24,6 +24,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "n": 8,
         "global_length": 512,
         "max_length_sample": 1024,
+        "dynamic_sampling": {
+            "enabled": False,
+            "trigger": "homogeneous_group",
+            "metric": "acc",
+            "homogeneity_threshold": 1.0,
+            "min_unique_reward_values": 2,
+            "max_extra_roll_rounds": 10,
+            "target_valid_groups": None,
+            "fallback_policy": "keep_last",
+        },
     },
     "train": {
         # Optional: sequences per process per micro-step.
@@ -36,15 +46,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Optimizer (pluggable; defaults match `training2.get_state`).
         "optimizer": {
             "name": "lion",
-            "clip_norm": 1.0,
-            "weight_decay": 1e-8,
+            "kwargs": {
+                "clip_norm": 1.0,
+                "weight_decay": 1e-8,
+            },
             "lr_schedule": {
-                "type": "warmup_cosine",
-                "init_value": 0.0,
-                "peak_value": 1e-6,
-                "end_value": 0.0,
-                "warmup_ratio": 0.05,
-                "warmup_steps": None,
+                "name": "warmup_cosine",
+                "kwargs": {
+                    "init_value": 0.0,
+                    "peak_value": 1e-6,
+                    "end_value": 0.0,
+                    "warmup_ratio": 0.05,
+                    "warmup_steps": None,
+                },
             },
         },
     },
@@ -52,22 +66,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
     #
     # Note: `train.ppo_epochs` remains the knob for PPO-style multi-epoch updates.
     "algo": {
-        "name": "grpo",
         "estimator": {
             "name": "grpo",
-            "eps": 1e-4,
-            "clip_range": None,
-            "rloo_whiten": True,
-            "dapo_alpha": 0.2,
-            "gae_gamma": 1.0,
-            "gae_lambda": 0.95,
-            "gae_normalize": True,
+            "kwargs": {
+                "eps": 1e-4,
+                "clip_range": None,
+            },
         },
         "update": {
             "name": "policy_gradient",
-            "value_coef": 0.5,
-            "value_clip_range": 0.2,
-            "entropy_coef": 0.0,
+            "kwargs": {},
         },
     },
     # Mesh

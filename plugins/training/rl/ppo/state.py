@@ -15,7 +15,7 @@ from MLLM_JAX.language.llama.llama import LlamaJaxConfig
 from MLLM_JAX.language.qwen2.modular_qwen2 import Qwen2ForCausalLM
 from MLLM_JAX.utils import get_partition_rules_llama, match_partition_rules
 from plugins.sample.mllm_sampler import Sampler, get_params
-from plugins.training.rl.algorithms import UpdateConfig
+from plugins.training.rl.algorithms import PluginConfig
 from plugins.training.rl.ppo.module import PPOActorCriticModule
 
 
@@ -51,12 +51,20 @@ def get_ppo_state(
     training_steps: int,
     grad_accum_steps: int,
     model_path: str,
-    update_cfg: UpdateConfig,
+    update_cfg: PluginConfig,
     beta: float = 0.0,
     gradient_checkpointing: bool = True,
     create_sampler: bool = True,
     tx: Any | None = None,
 ) -> tuple[PPOTrainState, Any, PPOActorCriticModule]:
+    if str(update_cfg.name).strip().lower() != "ppo":
+        raise ValueError(f"get_ppo_state requires update.name='ppo', got {update_cfg.name!r}")
+    update_kwargs = dict(update_cfg.kwargs or {})
+    value_coef = float(update_kwargs.get("value_coef", 0.5))
+    value_clip_range_raw = update_kwargs.get("value_clip_range", 0.2)
+    value_clip_range = None if value_clip_range_raw is None else float(value_clip_range_raw)
+    entropy_coef = float(update_kwargs.get("entropy_coef", 0.0))
+
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     from plugins.training.core.io.hf_config import ensure_rope_theta
 
@@ -70,9 +78,9 @@ def get_ppo_state(
         jax_config=jax_config,
         epsilon_low=0.2,
         epsilon_high=0.3,
-        value_coef=update_cfg.value_coef,
-        value_clip_range=update_cfg.value_clip_range,
-        entropy_coef=update_cfg.entropy_coef,
+        value_coef=value_coef,
+        value_clip_range=value_clip_range,
+        entropy_coef=entropy_coef,
         gradient_checkpointing=bool(gradient_checkpointing),
     )
 

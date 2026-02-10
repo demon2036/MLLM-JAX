@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import random
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from typing import Any, Callable
 
 import math
@@ -14,61 +14,15 @@ from plugins.training.core.data.padding import pad_2d_right
 from plugins.training.core.sharding.batch import local_from_global, make_form_training_global_array
 from plugins.training.core.logging.wandb import maybe_init_wandb
 from plugins.training.core.tokenizer import prepare_tokenizer
-from plugins.training.core.optim.optimizer import OptimizerConfig
 from plugins.training.rl.advantage.estimators import compute_gae_advantages
-from plugins.training.rl.algorithms import AlgoConfig, create_algorithm
+from plugins.training.rl.algorithms import create_algorithm
 from plugins.training.rl.ppo import get_ppo_state, ppo_training_step
-
-@dataclass(frozen=True)
-class GRPORolloutConfig:
-    # Prompt batch size per training step (global, across all processes).
-    #
-    # Each prompt is expanded to `n` sampled completions, so the global
-    # sequence batch is: `batch_size * n`.
-    batch_size: int = 32
-    # Number of samples per prompt (GRPO group size, a.k.a. K / num_pre_q).
-    n: int = 8
-    global_length: int = 512
-    max_length_sample: int = 64
-    # Rollout backend selector (swappable generation engine).
-    backend: str = "naive"
-
-
-@dataclass(frozen=True)
-class GRPOTrainConfig:
-    # Optional: sequences per process per micro-step.
-    micro_batch_size: int | None = None
-    # Optional: sequences per device per micro-step.
-    micro_batch_size_per_device: int | None = None
-    max_length_total: int = 0
-    ppo_epochs: int = 1
-    grad_accum_steps: int = 1
-    beta: float = 0.0
-    # Whether to enable rematerialization (gradient checkpointing) in train modules.
-    gradient_checkpointing: bool = True
-    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
-
-
-@dataclass(frozen=True)
-class GRPOGsm8kConfig:
-    # The YAML config path used to construct this run (as passed to the CLI).
-    # Kept for W&B traceability (so runs can be mapped back to a committed file).
-    config_path: str
-
-    model_path: str
-    steps: int
-    rollout: GRPORolloutConfig
-    train: GRPOTrainConfig
-    mesh_shape: str
-
-    wandb_project: str
-    wandb_mode: str
-    wandb_name: str
-    algo: AlgoConfig = field(default_factory=AlgoConfig)
-    reward_weights: tuple[float, float, float] = (1.0, 0.5, 0.5)
-    eval_every_steps: int = 0
-    eval_batches_per_process: int = 1
-    eval_split: str = "test"
+from plugins.training.rl.rollout.dynamic_sampling import (
+    build_dynamic_sampling_summary,
+    homogeneous_group_flags,
+    select_completion_indices,
+)
+from projects.gsm8k_grpo.config_schema import GRPOGsm8kConfig, GRPORolloutConfig, GRPOTrainConfig
 
 
 def _ensure_batch_multiple_of_local_devices(local_batch: int, local_device_count: int) -> int:
@@ -570,7 +524,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     eval_rollout_module = RolloutBackendModule(backend=eval_rollout_backend)
 
     wandb = maybe_init_wandb(
-        cfg=cfg,
+        cfg=cfg.to_logging_dict(),
         project=cfg.wandb_project,
         name=cfg.wandb_name,
         mode=cfg.wandb_mode,
@@ -603,6 +557,16 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         t_rollout_release = 0.0
         t_reward = 0.0
         t_adv = 0.0
+
+        dynamic_cfg = cfg.rollout.dynamic_sampling
+        dynamic_enabled = bool(dynamic_cfg.enabled)
+
+        dynamic_total_groups = 0
+        dynamic_initial_homogeneous = 0
+        dynamic_remaining_homogeneous = 0
+        dynamic_extra_rounds = 0
+        dynamic_dropped_groups = 0
+        dynamic_hit_budget = False
 
         for pass_idx in range(int(rollout_passes)):
             batch_items = [rng.choice(qas) for _ in range(int(prompts_per_pass))]
@@ -643,6 +607,111 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             rewards_out = reward_module.compute(inputs=repeated_items, answers=answers)
             rewards_per_func, rewards_np = rewards_out.rewards_per_func, rewards_out.rewards
             t_reward += time.perf_counter() - t_reward0
+
+            if dynamic_enabled:
+                target_valid_groups = (
+                    int(dynamic_cfg.target_valid_groups)
+                    if dynamic_cfg.target_valid_groups is not None
+                    else int(prompts_per_pass)
+                )
+                correct_metric = np.asarray(rewards_per_func[0], dtype=np.float32).reshape(-1)
+                homogeneous = homogeneous_group_flags(
+                    rewards=rewards_np,
+                    metric_values=correct_metric,
+                    n=int(n),
+                    metric=str(dynamic_cfg.metric),
+                    homogeneity_threshold=float(dynamic_cfg.homogeneity_threshold),
+                    min_unique_reward_values=int(dynamic_cfg.min_unique_reward_values),
+                )
+                initial_homogeneous = homogeneous.copy()
+                max_extra_rounds = int(dynamic_cfg.max_extra_roll_rounds)
+                extra_rounds = 0
+
+                while homogeneous.any() and extra_rounds < max_extra_rounds:
+                    extra_rounds += 1
+                    dynamic_extra_rounds += 1
+                    homogeneous_group_indices = np.flatnonzero(homogeneous).astype(np.int32)
+                    extra_batch_items = [batch_items[int(i)] for i in homogeneous_group_indices.tolist()]
+                    if not extra_batch_items:
+                        break
+                    extra_prompts_base = [item["Q"] for item in extra_batch_items]
+                    extra_repeated_prompts = [p for p in extra_prompts_base for _ in range(int(n))]
+                    extra_repeated_items = [item for item in extra_batch_items for _ in range(int(n))]
+
+                    t_sync0 = time.perf_counter()
+                    rollout_module.sync_weights(policy_params)
+                    t_rollout_sync += time.perf_counter() - t_sync0
+
+                    t_rollout0 = time.perf_counter()
+                    extra_rollout = rollout_module.rollout(
+                        prompts=extra_repeated_prompts,
+                        sampler=sampler,
+                        params=policy_params,
+                        system_prompt=system_prompt,
+                        global_length=int(cfg.rollout.global_length),
+                        max_length_sample=cfg.rollout.max_length_sample,
+                    )
+                    extra_answers = extra_rollout.answers
+                    extra_datas_np = dict(extra_rollout.batch)
+                    t_rollout_generate += time.perf_counter() - t_rollout0
+
+                    t_flush0 = time.perf_counter()
+                    rollout_module.flush_cache()
+                    t_rollout_flush += time.perf_counter() - t_flush0
+
+                    t_reward0 = time.perf_counter()
+                    extra_rewards_out = reward_module.compute(inputs=extra_repeated_items, answers=extra_answers)
+                    extra_rewards_per_func = extra_rewards_out.rewards_per_func
+                    extra_rewards_np = extra_rewards_out.rewards
+                    t_reward += time.perf_counter() - t_reward0
+
+                    # Replace only homogeneous groups with newly sampled completions.
+                    for local_idx, group_idx in enumerate(homogeneous_group_indices.tolist()):
+                        start = int(group_idx) * int(n)
+                        end = start + int(n)
+                        src_start = int(local_idx) * int(n)
+                        src_end = src_start + int(n)
+                        rewards_np[start:end] = extra_rewards_np[src_start:src_end]
+                        rewards_per_func[:, start:end] = extra_rewards_per_func[:, src_start:src_end]
+                        answers[start:end] = extra_answers[src_start:src_end]
+                        for key in ("input_ids", "attention_mask", "labels"):
+                            if key in datas_np and key in extra_datas_np:
+                                datas_np[key][start:end] = extra_datas_np[key][src_start:src_end]
+
+                    correct_metric = np.asarray(rewards_per_func[0], dtype=np.float32).reshape(-1)
+                    homogeneous = homogeneous_group_flags(
+                        rewards=rewards_np,
+                        metric_values=correct_metric,
+                        n=int(n),
+                        metric=str(dynamic_cfg.metric),
+                        homogeneity_threshold=float(dynamic_cfg.homogeneity_threshold),
+                        min_unique_reward_values=int(dynamic_cfg.min_unique_reward_values),
+                    )
+
+                    keep_groups = np.logical_not(homogeneous)
+                    if int(keep_groups.sum()) >= int(target_valid_groups):
+                        break
+
+                keep_groups = np.logical_not(homogeneous)
+
+                if homogeneous.any() and extra_rounds >= max_extra_rounds:
+                    dynamic_hit_budget = True
+
+                final_homogeneous = homogeneous
+                dynamic_total_groups += int(initial_homogeneous.size)
+                dynamic_initial_homogeneous += int(initial_homogeneous.sum())
+                dynamic_remaining_homogeneous += int(final_homogeneous.sum())
+
+                if final_homogeneous.any() and str(dynamic_cfg.fallback_policy) == "drop_group":
+                    drop_indices = select_completion_indices(keep_groups_mask=final_homogeneous, n=int(n))
+                    if drop_indices.size > 0:
+                        dynamic_dropped_groups += int(final_homogeneous.sum())
+                        rewards_np[drop_indices] = 0.0
+                        rewards_per_func[:, drop_indices] = 0.0
+                        if "labels" in datas_np:
+                            datas_np["labels"][drop_indices] = 0
+                        if "attention_mask" in datas_np:
+                            datas_np["attention_mask"][drop_indices] = 0
 
             # --- Advantages (group_id based) ---
             advantages_np = None
@@ -720,11 +789,11 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 rewards=rewards_np,
                 values=values_pred,
                 completion_mask=completion_mask,
-                gamma=cfg.algo.estimator.gae_gamma,
-                gae_lambda=cfg.algo.estimator.gae_lambda,
-                normalize=cfg.algo.estimator.gae_normalize,
-                eps=cfg.algo.estimator.eps,
-                clip_range=cfg.algo.estimator.clip_range,
+                gamma=float(cfg.algo.estimator.kwargs.get("gamma", 1.0)),
+                gae_lambda=float(cfg.algo.estimator.kwargs.get("gae_lambda", 0.95)),
+                normalize=bool(cfg.algo.estimator.kwargs.get("normalize", True)),
+                eps=float(cfg.algo.estimator.kwargs.get("eps", 1e-4)),
+                clip_range=cfg.algo.estimator.kwargs.get("clip_range"),
             )
             datas_np["values"] = values_pred
             datas_np["returns"] = returns_np
@@ -838,6 +907,45 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             "time/train/update_s": float(t_update),
             "time/train/step_s": float(t_step),
         }
+        if dynamic_enabled:
+            if dynamic_total_groups > 0:
+                initial_ratio = float(dynamic_initial_homogeneous) / float(dynamic_total_groups)
+                final_ratio = float(dynamic_remaining_homogeneous) / float(dynamic_total_groups)
+            else:
+                initial_ratio = 0.0
+                final_ratio = 0.0
+            dynamic_summary = build_dynamic_sampling_summary(
+                initial_homogeneous=np.concatenate(
+                    [
+                        np.ones(int(dynamic_initial_homogeneous), dtype=bool),
+                        np.zeros(int(max(0, dynamic_total_groups - dynamic_initial_homogeneous)), dtype=bool),
+                    ],
+                    axis=0,
+                ),
+                final_homogeneous=np.concatenate(
+                    [
+                        np.ones(int(dynamic_remaining_homogeneous), dtype=bool),
+                        np.zeros(int(max(0, dynamic_total_groups - dynamic_remaining_homogeneous)), dtype=bool),
+                    ],
+                    axis=0,
+                ),
+                extra_rounds=int(dynamic_extra_rounds),
+                max_extra_roll_rounds=int(dynamic_cfg.max_extra_roll_rounds),
+                dropped_groups=int(dynamic_dropped_groups),
+            )
+            train_log.update(
+                {
+                    "dynamic_sampling/enabled": 1.0,
+                    "dynamic_sampling/total_groups": float(dynamic_total_groups),
+                    "dynamic_sampling/initial_homogeneous_groups": float(dynamic_initial_homogeneous),
+                    "dynamic_sampling/remaining_homogeneous_groups": float(dynamic_remaining_homogeneous),
+                    "dynamic_sampling/initial_homogeneous_ratio": float(initial_ratio),
+                    "dynamic_sampling/remaining_homogeneous_ratio": float(final_ratio),
+                    "dynamic_sampling/extra_rounds": float(dynamic_extra_rounds),
+                    "dynamic_sampling/hit_budget": float(1.0 if (dynamic_hit_budget or dynamic_summary.hit_budget) else 0.0),
+                    "dynamic_sampling/dropped_groups": float(dynamic_dropped_groups),
+                }
+            )
         if "policy_loss" in last_meta:
             train_log["train-ppo/policy_loss"] = _as_float(last_meta["policy_loss"])
         if "value_loss" in last_meta:

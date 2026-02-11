@@ -180,11 +180,17 @@ class TransformersGenerator:
 
         self.num_params = float(sum(p.numel() for p in self.model.parameters()))
 
-    def _encode_batch(self, texts: List[str]) -> dict[str, torch.Tensor]:
+    def _encode_batch(
+        self,
+        texts: List[str],
+        *,
+        pad_to_multiple_of: int | None = None,
+    ) -> dict[str, torch.Tensor]:
         encoded = self.tokenizer(
             texts,
             return_tensors="pt",
             padding=True,
+            pad_to_multiple_of=pad_to_multiple_of,
         )
         input_ids = encoded.get("input_ids")
         if input_ids is None or input_ids.ndim != 2:
@@ -202,6 +208,57 @@ class TransformersGenerator:
             if len(token_ids) == 1:
                 ids.append(int(token_ids[0]))
         return ids
+
+    @staticmethod
+    def _next_power_of_two(value: int) -> int:
+        value = int(value)
+        if value <= 1:
+            return 1
+        return 1 << (value - 1).bit_length()
+
+    def _encode_batch_beam_xla_bucketed(
+        self,
+        texts: List[str],
+        *,
+        pad_token_id: int,
+    ) -> dict[str, torch.Tensor]:
+        token_ids_list: List[List[int]] = []
+        for text in texts:
+            token_ids = self.tokenizer(text, add_special_tokens=True).get("input_ids")
+            if token_ids is None:
+                raise ValueError("tokenizer(...) missing input_ids")
+            token_ids_list.append([int(tok) for tok in token_ids])
+
+        if not token_ids_list:
+            raise ValueError("texts must be non-empty")
+
+        max_len = max(len(seq) for seq in token_ids_list)
+        min_bucket = int(os.environ.get("OPENONEREC_XLA_BEAM_MIN_BUCKET", "128") or "128")
+        max_bucket = int(os.environ.get("OPENONEREC_XLA_BEAM_MAX_BUCKET", "16384") or "16384")
+        if min_bucket <= 0:
+            min_bucket = 1
+        if max_bucket <= 0:
+            max_bucket = max_len
+
+        bucket_len = max(min_bucket, self._next_power_of_two(max_len))
+        if bucket_len > max_bucket:
+            bucket_len = max_len
+
+        input_ids, attention_mask = _pad_left_token_ids(
+            token_ids_list,
+            pad_token_id=pad_token_id,
+            max_len=int(bucket_len),
+        )
+
+        print(
+            f"[info] XLA beam bucket encode max_len={max_len} bucket_len={bucket_len} batch={len(texts)}",
+            flush=True,
+        )
+
+        return {
+            "input_ids": input_ids.to(self.device),
+            "attention_mask": attention_mask.to(self.device),
+        }
 
     def _generate_greedy_autoregressive_xla(
         self,
@@ -755,7 +812,14 @@ class TransformersGenerator:
             batch_ids = sample_ids[start:end]
             batch_texts = prompt_texts[start:end]
 
-            encoded = self._encode_batch(batch_texts)
+            if num_beams is not None and self.device.type == "xla":
+                encoded = self._encode_batch_beam_xla_bucketed(
+                    batch_texts,
+                    pad_token_id=pad_token_id_int,
+                )
+            else:
+                encoded = self._encode_batch(batch_texts)
+
             attention_mask = encoded.get("attention_mask")
             if attention_mask is None:
                 raise ValueError("tokenizer(...) must return attention_mask for batching")

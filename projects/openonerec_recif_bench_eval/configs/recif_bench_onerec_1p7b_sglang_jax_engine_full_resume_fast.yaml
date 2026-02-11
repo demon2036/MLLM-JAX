@@ -30,7 +30,7 @@ generator:
   beam_batch_size: 16
   engine:
     device: tpu
-    tp_size: 1
+    tp_size: 4
     dp_size: 1
     trust_remote_code: true
     dtype: bfloat16

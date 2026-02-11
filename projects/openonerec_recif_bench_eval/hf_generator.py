@@ -696,14 +696,23 @@ class TransformersGenerator:
             raise RuntimeError("Tokenizer is missing pad_token_id")
         pad_token_id_int = int(pad_token_id)
 
+        disable_xla_greedy = str(os.environ.get("OPENONEREC_DISABLE_XLA_GREEDY", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         use_xla_autoregressive_greedy = (
             self.device.type == "xla"
+            and not disable_xla_greedy
             and num_beams is None
             and not do_sample
             and num_return_sequences == 1
             and max_new_tokens >= 128
         )
-        if use_xla_autoregressive_greedy:
+        if disable_xla_greedy and self.device.type == "xla":
+            print("[info] XLA greedy loop disabled by OPENONEREC_DISABLE_XLA_GREEDY")
+        elif use_xla_autoregressive_greedy:
             print(f"[info] XLA greedy loop enabled (max_new_tokens={max_new_tokens}, device={self.device})")
         if use_xla_autoregressive_greedy:
             greedy_results, greedy_mfu = self._generate_greedy_autoregressive_xla_bucketed(

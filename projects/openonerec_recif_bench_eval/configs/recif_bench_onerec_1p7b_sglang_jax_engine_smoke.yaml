@@ -33,7 +33,7 @@ generator:
     log_level: error
     skip_server_warmup: true
     stream_output: false
-    enable_single_process: true
+    enable_single_process: false
   beam_emulation:
     temperature: 0.7
     top_p: 0.95

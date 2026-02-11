@@ -217,7 +217,8 @@ class SglangJaxEngineGenerator:
         except Exception:
             return req
 
-        allowed = int(self.max_context_length) - int(max_prompt_tokens)
+        safety_margin_tokens = 16
+        allowed = int(self.max_context_length) - int(max_prompt_tokens) - int(safety_margin_tokens)
         if allowed <= 0:
             return 1
         return min(req, allowed)

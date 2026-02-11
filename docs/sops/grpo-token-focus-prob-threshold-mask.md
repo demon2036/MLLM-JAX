@@ -74,3 +74,15 @@ Observed:
 After syncing `.env`, the TPU log should include lines like:
 - `wandb: [wandb.login()] Loaded credentials ... from WANDB_API_KEY.`
 - `wandb: Syncing run ...`
+
+### Token-focus metrics (W&B)
+
+When the runner logs `train_log`, you can chart:
+- `token_focus/eligible_fraction`: fraction of valid completion tokens with `prob(token) < prob_threshold`
+- `token_focus/selected_fraction`: fraction of valid completion tokens selected after the first-K rule
+
+### v6e-8 speed run (batch16 * n8)
+
+Example (zone with capacity observed): `us-east5-b`
+- Create TPU: `scripts/create_tpu_vm.sh --type v6e-8 --zone us-east5-b --name <TPU_NAME>`
+- Run config: `projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_token_focus_batch16_roll8_v6e8.yaml`

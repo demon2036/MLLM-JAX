@@ -33,6 +33,11 @@ def main() -> None:
     parser.add_argument("--project", default="mllm-jax-grpo-gsm8k-tokenfocus-sweep")
     parser.add_argument("--metric", default="eval/accuracy/pass_at_1")
     parser.add_argument("--filter-config-substr", default="projects/gsm8k_grpo/configs/token_focus_sweep/")
+    parser.add_argument(
+        "--finished-only",
+        action="store_true",
+        help="Only include runs with state='finished' (recommended for final ranking).",
+    )
     parser.add_argument("--limit", type=int, default=50)
     args = parser.parse_args()
 
@@ -43,6 +48,9 @@ def main() -> None:
 
     rows: list[dict[str, Any]] = []
     for run in runs:
+        state = str(getattr(run, "state", "") or "")
+        if bool(args.finished_only) and state != "finished":
+            continue
         cfg = dict(getattr(run, "config", {}) or {})
         config_path = str(cfg.get("config_path") or "")
         if args.filter_config_substr and args.filter_config_substr not in config_path:
@@ -59,7 +67,7 @@ def main() -> None:
             {
                 "name": getattr(run, "name", ""),
                 "id": getattr(run, "id", ""),
-                "state": getattr(run, "state", ""),
+                "state": state,
                 "config_path": config_path,
                 "p": p,
                 "k": k,
@@ -116,4 +124,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

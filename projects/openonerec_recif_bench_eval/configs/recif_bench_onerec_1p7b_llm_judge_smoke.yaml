@@ -1,0 +1,41 @@
+project:
+  wandb_project: openonerec-recif-bench
+  wandb_mode: disabled
+  run_name: onerec-1p7b-llm-judge-smoke
+
+model:
+  repo_id: OpenOneRec/OneRec-1.7B
+  torch_dtype: bfloat16
+  trust_remote_code: true
+
+upstream:
+  repo_url: https://github.com/Kuaishou-OneRec/OpenOneRec.git
+  checkout_dir: workdirs/OpenOneRec
+
+data:
+  hf_dataset: OpenOneRec/OpenOneRec-RecIF
+  local_dir: workdirs/raw_data/onerec_data
+  include:
+    - benchmark_data/**
+
+llm:
+  gemini_project: civil-rarity-482610-s5
+  gemini_location: us-central1
+
+generator:
+  batch_size: 1
+  max_batch_size: 8
+
+eval:
+  data_version: v1.0
+  enable_thinking: false
+  overwrite: true
+  sample_size: 2
+  output_root: workdirs/openonerec_recif_eval_tpu_smoke
+  task_overrides:
+    rec_reason:
+      worker_batch_size: 1
+      max_new_tokens: 128
+  tasks:
+    - rec_reason
+    - item_understand

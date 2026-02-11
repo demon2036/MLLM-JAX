@@ -15,11 +15,12 @@ DEFAULT_ESTIMATOR_KWARGS: dict[str, dict[str, Any]] = {
 }
 
 DEFAULT_UPDATE_KWARGS: dict[str, dict[str, Any]] = {
-    "policy_gradient": {},
+    "policy_gradient": {"token_focus": None},
     "ppo": {
         "value_coef": 0.5,
         "value_clip_range": 0.2,
         "entropy_coef": 0.0,
+        "token_focus": None,
     },
 }
 
@@ -174,14 +175,56 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
         )
 
     merged = {**defaults, **kwargs}
-    if update_name == "policy_gradient":
-        return {}
+    token_focus_raw = merged.get("token_focus")
+    token_focus: dict[str, Any] | None
+    if token_focus_raw is None:
+        token_focus = None
+    elif isinstance(token_focus_raw, bool):
+        token_focus = {
+            "enabled": bool(token_focus_raw),
+            "prob_threshold": 0.3,
+            "max_tokens_per_sequence": 10,
+            "use_old_logps": True,
+        }
+    elif isinstance(token_focus_raw, dict):
+        allowed = {"enabled", "prob_threshold", "max_tokens_per_sequence", "use_old_logps"}
+        unknown_tf = sorted(set(token_focus_raw.keys()) - allowed)
+        if unknown_tf:
+            raise ValueError(
+                "Unsupported algo.update.kwargs.token_focus keys: "
+                f"{unknown_tf}; allowed={sorted(allowed)}"
+            )
+        enabled = _as_bool(token_focus_raw.get("enabled", False), label="algo.update.kwargs.token_focus.enabled")
+        prob_threshold = float(token_focus_raw.get("prob_threshold", 0.3))
+        if not (0.0 < prob_threshold < 1.0):
+            raise ValueError("algo.update.kwargs.token_focus.prob_threshold must be in (0, 1)")
+        max_tokens = int(token_focus_raw.get("max_tokens_per_sequence", 10))
+        if max_tokens < 1:
+            raise ValueError("algo.update.kwargs.token_focus.max_tokens_per_sequence must be >= 1")
+        use_old_logps = _as_bool(
+            token_focus_raw.get("use_old_logps", True),
+            label="algo.update.kwargs.token_focus.use_old_logps",
+        )
+        token_focus = {
+            "enabled": bool(enabled),
+            "prob_threshold": float(prob_threshold),
+            "max_tokens_per_sequence": int(max_tokens),
+            "use_old_logps": bool(use_old_logps),
+        }
+    else:
+        raise ValueError("algo.update.kwargs.token_focus must be a dict or boolean when provided")
 
-    return {
+    if update_name == "policy_gradient":
+        return {} if token_focus is None else {"token_focus": token_focus}
+
+    normalized: dict[str, Any] = {
         "value_coef": float(merged["value_coef"]),
         "value_clip_range": None if merged["value_clip_range"] is None else float(merged["value_clip_range"]),
         "entropy_coef": float(merged["entropy_coef"]),
     }
+    if token_focus is not None:
+        normalized["token_focus"] = token_focus
+    return normalized
 
 
 def normalize_algo_config(cfg: AlgoConfig) -> tuple[AlgoConfig, str, str, str]:

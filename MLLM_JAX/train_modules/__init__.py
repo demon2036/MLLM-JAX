@@ -10,6 +10,8 @@ from chex import Array, ArrayTree
 from jax.experimental.shard_map import shard_map
 from jax.sharding import PartitionSpec as P
 
+from plugins.training.rl.token_focus import build_token_focus_mask
+
 """
 avg_entropy_grouped = avg_entropy_per_sample.reshape(-1, groups)
 # Ranks within each group (0=lowest entropy, groups-1=highest)
@@ -91,6 +93,10 @@ class TrainGRPOModule(nn.Module):
     epsilon_low: float = 0.2
     epsilon_high: float = 0.3
     entropy_threshold: float = 0.3 # Used only for monitoring metrics now
+    token_focus_enabled: bool = False
+    token_focus_prob_threshold: float = 0.3
+    token_focus_max_tokens_per_sequence: int = 10
+    token_focus_use_old_logps: bool = True
 
     def __call__(self, inputs) -> ArrayTree:
         input_ids = inputs['input_ids']
@@ -116,7 +122,7 @@ class TrainGRPOModule(nn.Module):
         # --- Calculate Log Probs and Mask ---
         chosen_ids = input_ids[:, 1:]  # (B, L-1)
         # *** IMPORTANT: Use pad_token_id to create the mask correctly ***
-        mask_loss = labels[:, 1:] # Shape: [B, L-1]
+        mask_loss = labels[:, 1:].astype(jnp.float32) # Shape: [B, L-1]
         # Avoid division by zero for counts
 
         # Log probs of chosen tokens under current policy
@@ -164,6 +170,23 @@ class TrainGRPOModule(nn.Module):
             old_per_token_logps = jax.lax.stop_gradient(per_token_logps)
             # print(f'Using calculated old_per_token_logps {old_per_token_logps.shape=}') # Removed print
 
+        focus_logps = per_token_logps
+        if bool(self.token_focus_use_old_logps) and "old_per_token_logps" in inputs:
+            focus_logps = old_per_token_logps
+        focus_logps = jax.lax.stop_gradient(focus_logps)
+
+        focus_mask, selected_counts = (
+            build_token_focus_mask(
+                focus_logps,
+                mask_loss,
+                prob_threshold=float(self.token_focus_prob_threshold),
+                max_tokens_per_sequence=int(self.token_focus_max_tokens_per_sequence),
+            )
+            if bool(self.token_focus_enabled)
+            else (jnp.ones_like(mask_loss, dtype=jnp.float32), mask_loss.sum(axis=-1).astype(jnp.int32))
+        )
+        selected_counts_f = selected_counts.astype(jnp.float32)
+
         # PPO ratio and clipping
         ratio = jnp.exp(per_token_logps - old_per_token_logps)
         clipped_ratio = jnp.clip(ratio, 1.0 - self.epsilon_low, 1.0 + self.epsilon_high)
@@ -176,7 +199,15 @@ class TrainGRPOModule(nn.Module):
 
         per_token_loss=-per_token_ppo_loss
         total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
-        loss = ((per_token_loss * mask_loss).sum()) / total_valid_token_count
+
+        if bool(self.token_focus_enabled):
+            mask_policy = mask_loss * focus_mask
+            denom = jnp.maximum(mask_policy.sum(), 1.0)
+        else:
+            mask_policy = mask_loss
+            denom = total_valid_token_count
+
+        loss = ((per_token_loss * mask_policy).sum()) / denom
 
 
         # --- Return Dictionary ---
@@ -187,5 +218,16 @@ class TrainGRPOModule(nn.Module):
             # Monitoring outputs related to original entropy calculation:
             'entropy': avg_entropy_per_sample,
             'entropy_loss': avg_entropy_per_sample_truncated,
+            "token_focus/enabled": jnp.asarray(1.0 if bool(self.token_focus_enabled) else 0.0, dtype=jnp.float32),
+            "token_focus/prob_threshold": jnp.asarray(float(self.token_focus_prob_threshold), dtype=jnp.float32),
+            "token_focus/max_tokens_per_sequence": jnp.asarray(
+                float(self.token_focus_max_tokens_per_sequence), dtype=jnp.float32
+            ),
+            "token_focus/use_old_logps": jnp.asarray(1.0 if bool(self.token_focus_use_old_logps) else 0.0, dtype=jnp.float32),
+            "token_focus/selected_tokens_mean": selected_counts_f.mean(),
+            "token_focus/selected_tokens_min": selected_counts_f.min(),
+            "token_focus/selected_tokens_max": selected_counts_f.max(),
+            "token_focus/empty_seq_fraction": (selected_counts == 0).astype(jnp.float32).mean(),
+            "token_focus/selected_fraction": selected_counts_f.sum() / (mask_loss.sum() + 1e-8),
             # 'per_token_kl':per_token_kl_metrics
         }

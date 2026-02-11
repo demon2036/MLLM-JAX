@@ -66,7 +66,7 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
             [
                 "--print-config",
                 "--config",
-                "",
+                "projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_batch128_roll8_literal_v6e8.yaml",
                 "--set",
                 "algo.estimator.name=gae",
                 "--set",
@@ -90,7 +90,7 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
             [
                 "--print-config",
                 "--config",
-                "",
+                "projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_batch128_roll8_literal_v6e8.yaml",
                 "--set",
                 "algo.update.value_coef=0.5",
             ],
@@ -104,7 +104,7 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
             [
                 "--print-config",
                 "--config",
-                "",
+                "projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_batch128_roll8_literal_v6e8.yaml",
                 "--set",
                 "train.optimizer.clip_norm=1.0",
             ],
@@ -118,7 +118,7 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
             [
                 "--print-config",
                 "--config",
-                "",
+                "projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_batch128_roll8_literal_v6e8.yaml",
                 "--set",
                 "train.optimizer.name=lion",
                 "--set",
@@ -141,7 +141,7 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
             [
                 "--print-config",
                 "--config",
-                "",
+                "projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_batch128_roll8_literal_v6e8.yaml",
                 "--set",
                 "rollout.dynamic_sampling.enabled=true",
                 "--set",
@@ -160,7 +160,7 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
             [
                 "--print-config",
                 "--config",
-                "",
+                "projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_batch128_roll8_literal_v6e8.yaml",
                 "--set",
                 "rollout.dynamic_sampling.metric=foo",
             ],
@@ -173,7 +173,7 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
             [
                 "--print-config",
                 "--config",
-                "",
+                "projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_batch128_roll8_literal_v6e8.yaml",
                 "--set",
                 "eval_rollout_n=1",
                 "--set",
@@ -188,7 +188,7 @@ class TestGrpoTrainingPrintConfigCli(unittest.TestCase):
             [
                 "--print-config",
                 "--config",
-                "",
+                "projects/gsm8k_grpo/configs/grpo_gsm8k_qwen25_3b_batch128_roll8_literal_v6e8.yaml",
                 "--set",
                 "eval_rollout_n=0",
             ],

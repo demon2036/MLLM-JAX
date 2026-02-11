@@ -29,6 +29,29 @@ class TestRlConfigSchemaV2(unittest.TestCase):
                 )
             )
 
+    def test_policy_gradient_accepts_token_focus(self) -> None:
+        normalized, _algo_name, _estimator_name, update_name = normalize_algo_config(
+            AlgoConfig(
+                estimator=PluginConfig(name="grpo", kwargs={}),
+                update=PluginConfig(
+                    name="policy_gradient",
+                    kwargs={
+                        "token_focus": {
+                            "enabled": True,
+                            "prob_threshold": 0.3,
+                            "max_tokens_per_sequence": 10,
+                        }
+                    },
+                ),
+            )
+        )
+        self.assertEqual(update_name, "policy_gradient")
+        token_focus = normalized.update.kwargs["token_focus"]
+        self.assertTrue(bool(token_focus["enabled"]))
+        self.assertEqual(float(token_focus["prob_threshold"]), 0.3)
+        self.assertEqual(int(token_focus["max_tokens_per_sequence"]), 10)
+        self.assertTrue(bool(token_focus["use_old_logps"]))
+
     def test_ppo_defaults_filled(self) -> None:
         normalized, _algo_name, estimator_name, update_name = normalize_algo_config(
             AlgoConfig(
@@ -41,6 +64,38 @@ class TestRlConfigSchemaV2(unittest.TestCase):
         self.assertEqual(float(normalized.update.kwargs["value_coef"]), 0.5)
         self.assertEqual(float(normalized.update.kwargs["value_clip_range"]), 0.2)
         self.assertEqual(float(normalized.update.kwargs["entropy_coef"]), 0.0)
+
+    def test_ppo_accepts_token_focus_bool(self) -> None:
+        normalized, _algo_name, estimator_name, update_name = normalize_algo_config(
+            AlgoConfig(
+                estimator=PluginConfig(name="gae", kwargs={}),
+                update=PluginConfig(name="ppo", kwargs={"token_focus": True}),
+            )
+        )
+        self.assertEqual(estimator_name, "gae")
+        self.assertEqual(update_name, "ppo")
+        token_focus = normalized.update.kwargs["token_focus"]
+        self.assertTrue(bool(token_focus["enabled"]))
+        self.assertEqual(float(token_focus["prob_threshold"]), 0.3)
+        self.assertEqual(int(token_focus["max_tokens_per_sequence"]), 10)
+
+    def test_token_focus_prob_threshold_bounds(self) -> None:
+        with self.assertRaises(ValueError):
+            normalize_algo_config(
+                AlgoConfig(
+                    estimator=PluginConfig(name="grpo", kwargs={}),
+                    update=PluginConfig(
+                        name="policy_gradient",
+                        kwargs={
+                            "token_focus": {
+                                "enabled": True,
+                                "prob_threshold": 1.0,
+                                "max_tokens_per_sequence": 10,
+                            }
+                        },
+                    ),
+                )
+            )
 
     def test_rloo_defaults_filled(self) -> None:
         normalized, _algo_name, estimator_name, _update_name = normalize_algo_config(

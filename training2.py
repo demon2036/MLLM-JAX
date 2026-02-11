@@ -55,9 +55,30 @@ def get_state(
     gradient_checkpointing: bool = True,
     create_sampler: bool = True,
     tx: Any | None = None,
+    update_cfg: Any | None = None,
 ):
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
     model_ref = get_model(mesh, model_path=model_path, only_model=True) if beta != 0 else None
+
+    token_focus_enabled = False
+    token_focus_prob_threshold = 0.3
+    token_focus_max_tokens_per_sequence = 10
+    token_focus_use_old_logps = True
+    if update_cfg is not None:
+        update_kwargs = getattr(update_cfg, "kwargs", None)
+        if isinstance(update_kwargs, dict):
+            token_focus_raw = update_kwargs.get("token_focus")
+            if isinstance(token_focus_raw, dict):
+                token_focus_enabled = bool(token_focus_raw.get("enabled", False))
+                token_focus_prob_threshold = float(token_focus_raw.get("prob_threshold", token_focus_prob_threshold))
+                token_focus_max_tokens_per_sequence = int(
+                    token_focus_raw.get("max_tokens_per_sequence", token_focus_max_tokens_per_sequence)
+                )
+                token_focus_use_old_logps = bool(token_focus_raw.get("use_old_logps", token_focus_use_old_logps))
+            elif isinstance(token_focus_raw, bool):
+                token_focus_enabled = bool(token_focus_raw)
+            elif token_focus_raw is not None:
+                raise ValueError("algo.update.kwargs.token_focus must be a dict or boolean when provided")
 
     if bool(gradient_checkpointing):
         train_module = flax.linen.remat(
@@ -70,6 +91,10 @@ def get_state(
             num_pre_Q=num_pre_q,
             beta=beta,
             max_lengths=max_lengths,
+            token_focus_enabled=token_focus_enabled,
+            token_focus_prob_threshold=token_focus_prob_threshold,
+            token_focus_max_tokens_per_sequence=token_focus_max_tokens_per_sequence,
+            token_focus_use_old_logps=token_focus_use_old_logps,
         )
     else:
         train_module = TrainGRPOModule(
@@ -79,6 +104,10 @@ def get_state(
             num_pre_Q=num_pre_q,
             beta=beta,
             max_lengths=max_lengths,
+            token_focus_enabled=token_focus_enabled,
+            token_focus_prob_threshold=token_focus_prob_threshold,
+            token_focus_max_tokens_per_sequence=token_focus_max_tokens_per_sequence,
+            token_focus_use_old_logps=token_focus_use_old_logps,
         )
 
 

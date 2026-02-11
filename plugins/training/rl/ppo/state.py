@@ -64,6 +64,22 @@ def get_ppo_state(
     value_clip_range_raw = update_kwargs.get("value_clip_range", 0.2)
     value_clip_range = None if value_clip_range_raw is None else float(value_clip_range_raw)
     entropy_coef = float(update_kwargs.get("entropy_coef", 0.0))
+    token_focus_enabled = False
+    token_focus_prob_threshold = 0.3
+    token_focus_max_tokens_per_sequence = 10
+    token_focus_use_old_logps = True
+    token_focus_raw = update_kwargs.get("token_focus")
+    if isinstance(token_focus_raw, dict):
+        token_focus_enabled = bool(token_focus_raw.get("enabled", False))
+        token_focus_prob_threshold = float(token_focus_raw.get("prob_threshold", token_focus_prob_threshold))
+        token_focus_max_tokens_per_sequence = int(
+            token_focus_raw.get("max_tokens_per_sequence", token_focus_max_tokens_per_sequence)
+        )
+        token_focus_use_old_logps = bool(token_focus_raw.get("use_old_logps", token_focus_use_old_logps))
+    elif isinstance(token_focus_raw, bool):
+        token_focus_enabled = bool(token_focus_raw)
+    elif token_focus_raw is not None:
+        raise ValueError("algo.update.kwargs.token_focus must be a dict or boolean when provided")
 
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     from plugins.training.core.io.hf_config import ensure_rope_theta
@@ -82,6 +98,10 @@ def get_ppo_state(
         value_clip_range=value_clip_range,
         entropy_coef=entropy_coef,
         gradient_checkpointing=bool(gradient_checkpointing),
+        token_focus_enabled=token_focus_enabled,
+        token_focus_prob_threshold=token_focus_prob_threshold,
+        token_focus_max_tokens_per_sequence=token_focus_max_tokens_per_sequence,
+        token_focus_use_old_logps=token_focus_use_old_logps,
     )
 
     params = get_params(model_path)

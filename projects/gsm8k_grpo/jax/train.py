@@ -471,6 +471,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             gradient_checkpointing=cfg.train.gradient_checkpointing,
             create_sampler=True,
             tx=tx,
+            update_cfg=cfg.algo.update,
         )
         train_fn = jax.jit(training_step, donate_argnums=(0,))
     if os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1":

@@ -71,8 +71,6 @@ def _ensure_recif_bench_data(cfg: dict[str, Any]) -> str:
         return str(benchmark_dir)
 
     token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN") or os.environ.get("HF_API_TOKEN")
-    if not token:
-        raise RuntimeError("Missing HF_TOKEN (set it via .env or environment variables).")
 
     try:
         from huggingface_hub import snapshot_download
@@ -80,13 +78,22 @@ def _ensure_recif_bench_data(cfg: dict[str, Any]) -> str:
         raise RuntimeError(f"huggingface_hub is required to download datasets: {e}") from e
 
     Path(local_dir).mkdir(parents=True, exist_ok=True)
-    snapshot_download(
-        repo_id=hf_dataset,
-        repo_type="dataset",
-        local_dir=local_dir,
-        allow_patterns=list(include),
-        token=token,
-    )
+    download_kwargs: dict[str, Any] = {
+        "repo_id": hf_dataset,
+        "repo_type": "dataset",
+        "local_dir": local_dir,
+        "allow_patterns": list(include),
+    }
+    if token:
+        download_kwargs["token"] = token
+    else:
+        print(
+            "[warn] HF_TOKEN is not set; trying anonymous dataset download. "
+            "Set HF_TOKEN if the dataset is gated.",
+            file=sys.stderr,
+        )
+
+    snapshot_download(**download_kwargs)
 
     if not benchmark_dir.is_dir():
         raise FileNotFoundError(f"benchmark_data dir not found after download: {benchmark_dir}")

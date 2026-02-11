@@ -266,6 +266,10 @@ def _run_eval(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
             merged.append((task_name, {**overrides, **extra}))
         task_runs = merged
 
+    generator_tokenizer = getattr(generator, "tokenizer", None)
+    if generator_tokenizer is None and hasattr(generator, "_impl"):
+        generator_tokenizer = getattr(generator._impl, "tokenizer", None)
+
     splits = ["test"]
     for task_name, overrides in task_runs:
         run_overrides = dict(overrides)
@@ -274,12 +278,15 @@ def _run_eval(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
         task_overwrite = bool(run_overrides.pop("overwrite", overwrite))
 
         benchmark = Benchmark(
-            model_path=model_repo_id,
+            model_path=None,
             task_types=[task_name],
             splits=splits,
             data_dir=data_dir,
             enable_thinking=task_enable_thinking,
         )
+        if generator_tokenizer is not None:
+            benchmark.data_loader._tokenizer = generator_tokenizer
+
         benchmark.run(
             generator=generator,
             output_dir=output_dir,

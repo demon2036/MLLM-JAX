@@ -69,3 +69,8 @@ Observed:
 - **HF rate limits**: set `HF_TOKEN` or accept slower downloads.
 - **v6e quota 0**: use `v4-8` / request quota / change zone.
 
+### Verified W&B online (with key)
+
+After syncing `.env`, the TPU log should include lines like:
+- `wandb: [wandb.login()] Loaded credentials ... from WANDB_API_KEY.`
+- `wandb: Syncing run ...`

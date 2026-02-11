@@ -128,6 +128,8 @@ class SglangJaxEngineGenerator:
         self.batch_size = int(batch_size)
         self.max_batch_size = int(max_batch_size)
         self.beam_batch_size = int(beam_batch_size) if beam_batch_size is not None else None
+        self._prompt_token_cache_max_size = 8192
+        self._prompt_token_count_cache: Dict[str, int] = {}
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name_or_path,
@@ -210,8 +212,15 @@ class SglangJaxEngineGenerator:
 
         try:
             max_prompt_tokens = 0
-            for text in prompt_texts:
-                token_count = len(self.tokenizer.encode(str(text), add_special_tokens=False))
+            unique_prompts = set(prompt_texts)
+            for text in unique_prompts:
+                normalized_text = str(text)
+                token_count = self._prompt_token_count_cache.get(normalized_text)
+                if token_count is None:
+                    token_count = len(self.tokenizer.encode(normalized_text, add_special_tokens=False))
+                    if len(self._prompt_token_count_cache) >= self._prompt_token_cache_max_size:
+                        self._prompt_token_count_cache.clear()
+                    self._prompt_token_count_cache[normalized_text] = token_count
                 if token_count > max_prompt_tokens:
                     max_prompt_tokens = token_count
         except Exception:

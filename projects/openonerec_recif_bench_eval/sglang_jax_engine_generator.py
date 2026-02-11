@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 
 def _batch_iter(items: List[str], batch_size: int) -> Iterable[Tuple[int, int]]:
@@ -134,6 +134,20 @@ class SglangJaxEngineGenerator:
             trust_remote_code=bool(trust_remote_code),
         )
 
+        self.max_context_length: int | None = None
+        try:
+            model_cfg = AutoConfig.from_pretrained(
+                model_name_or_path,
+                trust_remote_code=bool(trust_remote_code),
+            )
+            max_pos = getattr(model_cfg, "max_position_embeddings", None)
+            if max_pos is not None:
+                max_pos_int = int(max_pos)
+                if max_pos_int > 0:
+                    self.max_context_length = max_pos_int
+        except Exception:
+            self.max_context_length = None
+
         beam_emulation_cfg = dict(beam_emulation or {})
         self.beam_emulation_temperature = _as_float(
             beam_emulation_cfg.get("temperature"),
@@ -188,6 +202,25 @@ class SglangJaxEngineGenerator:
     def _resolve_batch_size(self, kwargs: dict[str, Any]) -> int:
         raw = kwargs.get("worker_batch_size") or kwargs.get("batch_size") or self.batch_size
         return max(1, min(int(raw), self.max_batch_size))
+
+    def _clip_max_new_tokens_for_prompts(self, prompt_texts: List[str], requested_max_new: int) -> int:
+        req = max(1, int(requested_max_new))
+        if not self.max_context_length:
+            return req
+
+        try:
+            max_prompt_tokens = 0
+            for text in prompt_texts:
+                token_count = len(self.tokenizer.encode(str(text), add_special_tokens=False))
+                if token_count > max_prompt_tokens:
+                    max_prompt_tokens = token_count
+        except Exception:
+            return req
+
+        allowed = int(self.max_context_length) - int(max_prompt_tokens)
+        if allowed <= 0:
+            return 1
+        return min(req, allowed)
 
     def _engine_generate(
         self,
@@ -293,13 +326,6 @@ class SglangJaxEngineGenerator:
         else:
             n_candidates = num_return_sequences
 
-        sampling_params = self._build_sampling_params(
-            kwargs=kwargs,
-            n=1,
-            stop_sequences=stop_sequences,
-            use_beam_emulation=use_beam_emulation,
-        )
-
         want_logprobs = bool(
             kwargs.get("return_logprobs")
             or kwargs.get("output_scores")
@@ -321,6 +347,19 @@ class SglangJaxEngineGenerator:
                 for _ in range(n_candidates):
                     expanded_texts.append(text)
                     expanded_owner.append(sid)
+
+            batch_kwargs = dict(kwargs)
+            requested_max_new = _as_int(batch_kwargs.get("max_new_tokens", 128), 128)
+            batch_kwargs["max_new_tokens"] = self._clip_max_new_tokens_for_prompts(
+                expanded_texts,
+                requested_max_new,
+            )
+            sampling_params = self._build_sampling_params(
+                kwargs=batch_kwargs,
+                n=1,
+                stop_sequences=stop_sequences,
+                use_beam_emulation=use_beam_emulation,
+            )
 
             t0 = time.time()
             raw_outputs = self._engine_generate(

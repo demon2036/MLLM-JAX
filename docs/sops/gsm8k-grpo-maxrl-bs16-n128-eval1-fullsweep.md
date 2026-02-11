@@ -45,3 +45,14 @@
 - 训练按 `rollout.n=128` 运行。
 - 评估按 `eval_rollout_n=1` 运行（不复用训练 n）。
 - 训练结束后执行一次 `eval_full` 全量评估并上报 W&B。
+
+## TPU 运行稳定性补充（2026-02-10）
+
+- 现象：在 `gcloud ... tpu-vm ssh --command 'nohup ... &'` 场景下，后台任务可能被会话清理（日志只到初始化，`exit` 不落盘）。
+- 规避：在 TPU VM 内先写常驻脚本，再使用 `setsid <script> >/dev/null 2>&1 < /dev/null &` 脱离控制会话启动。
+- 参考实现（TPU VM 内）：
+  - runner: `/tmp/run_train_cfg_detached.sh`
+  - 运行产物（GRPO）：`logs/detached_grpo_gsm8k_qwen25_3b_batch16_roll128_eval1full_v6e8_*.{log,exit,pid}`
+- 监控要点：
+  - `latest.pid` 对应 wrapper，实际训练进程是其子进程 `python ... run_train.py`。
+  - 以 `latest.exit` 是否生成且值为 `0` 判定结束。

@@ -5,6 +5,9 @@
 - Repo setup: `docs/sops/repo-setup.md`
 - Clone reference repos into `workdir/`: `docs/sops/clone-reference-repos-into-workdir.md`
 - Align MaxRL estimator with upstream `tajwarfahim/maxrl`: `docs/sops/maxrl-estimator-upstream-alignment.md`
+- Deep dive official MaxRL implementation chain: `docs/sops/maxrl-official-implementation-deep-dive.md`
+- Audit RL hidden behaviors (implicit overrides/fallbacks): `docs/sops/rl-hidden-behavior-audit.md`
+- Make rollout micro-batch per-device explicit (remove implicit *8): `docs/sops/rollout-perdevice-explicit-config.md`
 - Clone AkaliKong/MiniOneRec into repo workdir: `docs/sops/clone-akalikong-minionerec-workdir.md`
 - MiniOneRec SID SFT + eval (projects/sid_sft): `docs/sops/minionerec-sid-sft-and-eval.md`
 - Inspect SFT + GRPO GSM8K data stack: `docs/sops/inspect-sft-grpo-data-stack.md`
@@ -64,10 +67,19 @@
 - GSM8K configs minimal set + YAML-only launcher policy: `docs/sops/gsm8k-config-minimal-yaml-only-launcher.md`
 - GRPO runner metrics: `docs/sops/grpo-gsm8k-metrics.md`
 - GRPO length + eval knobs: `docs/sops/grpo-gsm8k-length-and-eval.md`
+- GRPO token-focus mask (prob threshold, first-K): `docs/sops/grpo-token-focus-prob-threshold-mask.md`
+- GSM8K GRPO/MaxRL bs16 n128 with eval_rollout_n=1 full sweep: `docs/sops/gsm8k-grpo-maxrl-bs16-n128-eval1-fullsweep.md`
+- W&B GRPO/MaxRL 配置字段来源与 v2 显式化修复: `docs/sops/wandb-grpo-config-field-expansion.md`
+- GRPO/MaxRL estimator/update 默认值与 v2 schema 约束: `docs/sops/grpo-estimator-defaults-estimator-specific.md`
+- Deep dive official MaxRL implementation chain: `docs/sops/maxrl-official-implementation-deep-dive.md`
+- Compare MaxRL vs GRPO code-level implementation differences: `docs/sops/maxrl-vs-grpo-implementation-diff.md`
+- GRPO rollout dynamic sampling（组内同质触发补采）: `docs/sops/grpo-rollout-dynamic-sampling-homogeneous-groups.md`
+- GSM8K configs: keep only GRPO/MaxRL at root, move others to temp, explicit grad_accum=4: `docs/sops/gsm8k-configs-grpo-maxrl-explicit-gradacc4-temp.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
 - GRPO rollout backend abstraction (naive): `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - AReaL RL organization notes (for modularizing training): `docs/sops/areal-rl-organization.md`
 - AReaL logging system notes (StatsLogger/StatsTracker/PerfTracer): `docs/sops/areal-logging-system.md`
+- AReaL config system (Hydra/OmegaConf/structured defaults): `docs/sops/areal-config-system-hydra-structured.md`
 - 4-phase RL interface research (Tunix/AReaL/VERL/MaxText): `docs/sops/rl-four-phase-interface-research.md`
 - 4-phase RL interface implementation (GRPO runner modules): `docs/sops/rl-four-phase-interface-implementation.md`
 - RL phase-folder layout (remove `grpo/`): `docs/sops/rl-phase-folder-layout.md`
@@ -130,6 +142,7 @@
 - `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - `docs/sops/areal-rl-organization.md`
 - `docs/sops/areal-logging-system.md`
+- `docs/sops/areal-config-system-hydra-structured.md`
 - `docs/sops/rl-four-phase-interface-research.md`
 - `docs/sops/rl-four-phase-interface-implementation.md`
 - `docs/sops/rl-phase-folder-layout.md`
@@ -140,6 +153,14 @@
 - `docs/sops/grpo-gsm8k-metrics.md`
 - `docs/sops/rl-ppo-reinforce-equivalence-ppo-epochs-1.md`
 - `docs/sops/grpo-gsm8k-length-and-eval.md`
+- `docs/sops/wandb-grpo-config-field-expansion.md`
+- `docs/sops/grpo-estimator-defaults-estimator-specific.md`
+- `docs/sops/maxrl-vs-grpo-implementation-diff.md`
+- `docs/sops/maxrl-official-implementation-deep-dive.md`
+- `docs/sops/rl-hidden-behavior-audit.md`
+- `docs/sops/rollout-perdevice-explicit-config.md`
+- `docs/sops/grpo-rollout-dynamic-sampling-homogeneous-groups.md`
+- `docs/sops/gsm8k-configs-grpo-maxrl-explicit-gradacc4-temp.md`
 - `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - `docs/sops/tpu-vm-v6e-8-unified-api-refactor-sft-nanogpt-regression.md`

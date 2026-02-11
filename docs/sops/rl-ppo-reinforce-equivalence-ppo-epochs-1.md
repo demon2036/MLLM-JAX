@@ -17,7 +17,7 @@
   - Log lines show distinct runs with the expected `algo=`/`config_path`, yet `step=19` metrics match.
   - W&B API reports both runs in `finished` state.
 - **Troubleshooting**:
-  - If curves diverge, check `train.ppo_epochs`, `algo.estimator.clip_range`, `algo.estimator.name`, and `algo.update.name`.
+  - If curves diverge, check `train.ppo_epochs`, `algo.estimator.common.clip_range`, `algo.estimator.name`, and `algo.update.name`.
   - If `algo=` in logs is unexpected, confirm the YAML path printed by `config_path`.
 - **References**:
   - `plugins/training/algorithms/__init__.py`

@@ -43,6 +43,12 @@ class GRPORolloutConfig:
     n: int = 8
     global_length: int = 512
     max_length_sample: int = 64
+    # Explicit rollout micro-batch controls (sequences per rollout pass).
+    #
+    # `micro_batch_size_per_device` is required by the runner so rollout pass
+    # planning is fully explicit (no hidden heuristic cap).
+    micro_batch_size: int | None = None
+    micro_batch_size_per_device: int | None = None
     # Rollout backend selector (swappable generation engine).
     backend: str = "naive"
     dynamic_sampling: GRPODynamicSamplingConfig = field(default_factory=GRPODynamicSamplingConfig)
@@ -98,6 +104,8 @@ class GRPOGsm8kConfig:
                 "n": int(self.rollout.n),
                 "global_length": int(self.rollout.global_length),
                 "max_length_sample": int(self.rollout.max_length_sample),
+                "micro_batch_size": self.rollout.micro_batch_size,
+                "micro_batch_size_per_device": self.rollout.micro_batch_size_per_device,
                 "backend": str(self.rollout.backend),
                 "dynamic_sampling": {
                     "enabled": bool(self.rollout.dynamic_sampling.enabled),

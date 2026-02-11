@@ -201,6 +201,32 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     )
     rollout_batch_size = int(rollout_batch_size or 32)
 
+    rollout_micro_batch_size = _get_int_from_aliases(
+        cfg,
+        label="rollout.micro_batch_size",
+        paths=["rollout.micro_batch_size"],
+        keys=["rollout_micro_batch_size"],
+    )
+    rollout_micro_batch_size_per_device = _get_int_from_aliases(
+        cfg,
+        label="rollout.micro_batch_size_per_device",
+        paths=["rollout.micro_batch_size_per_device", "rollout.per_device_micro_batch_size"],
+        keys=["rollout_micro_batch_size_per_device", "rollout_per_device_micro_batch_size"],
+    )
+    if rollout_micro_batch_size_per_device is None:
+        raise ValueError(
+            "rollout.micro_batch_size_per_device is required (sequences per device per rollout pass). "
+            "Set it explicitly in YAML."
+        )
+    rollout_micro_batch_size_per_device = int(rollout_micro_batch_size_per_device)
+    if rollout_micro_batch_size_per_device <= 0:
+        raise ValueError("rollout.micro_batch_size_per_device must be > 0")
+
+    if rollout_micro_batch_size is not None:
+        rollout_micro_batch_size = int(rollout_micro_batch_size)
+        if rollout_micro_batch_size <= 0:
+            raise ValueError("rollout.micro_batch_size must be > 0 when set")
+
     deprecated_rollout_keys = {
         "rollout.batch_size_per_process": _get_by_path(cfg, "rollout.batch_size_per_process"),
         "rollout.batch_size_per_device": _get_by_path(cfg, "rollout.batch_size_per_device"),
@@ -221,7 +247,8 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         details = ", ".join(f"{k}={v!r}" for k, v in deprecated_rollout_keys.items())
         raise ValueError(
             "Deprecated rollout batch size keys are no longer supported. "
-            "Use `rollout.batch_size` (global prompts per training step) and `rollout.n` only. "
+            "Use `rollout.batch_size`, `rollout.n`, and explicit rollout micro-batch keys: "
+            "`rollout.micro_batch_size_per_device` (required), optionally `rollout.micro_batch_size`. "
             f"Got: {details}"
         )
 
@@ -474,6 +501,8 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
             n=rollout_n,
             global_length=global_length,
             max_length_sample=max_length_sample,
+            micro_batch_size=rollout_micro_batch_size,
+            micro_batch_size_per_device=rollout_micro_batch_size_per_device,
             dynamic_sampling=dynamic_sampling_cfg,
         ),
         train=GRPOTrainConfig(

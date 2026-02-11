@@ -24,6 +24,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "n": 8,
         "global_length": 512,
         "max_length_sample": 1024,
+        # Explicit rollout micro-batch controls (sequences per rollout pass).
+        # `projects/gsm8k_grpo` requires `micro_batch_size_per_device` to be set
+        # in YAML (no hidden rollout auto-split heuristics).
+        "micro_batch_size": None,
+        "micro_batch_size_per_device": None,
         "dynamic_sampling": {
             "enabled": False,
             "trigger": "homogeneous_group",

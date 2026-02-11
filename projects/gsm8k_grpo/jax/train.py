@@ -211,90 +211,90 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         if int(micro_batch_size) % int(local_device_count) == 0:
             micro_batch_size_per_device = int(micro_batch_size) // int(local_device_count)
 
-    # We keep rollout passes as an internal mechanism, but expose only a single
-    # user-facing knob: global prompt `batch_size`.
-    #
-    # Each process uses the same local prompt batch size to keep shapes consistent.
-    from plugins.training.rl.rollout import infer_rollout_passes, round_up_passes_for_divisibility
+    # Rollout pass planning is explicit (no hidden heuristic cap):
+    # - rollout.micro_batch_size_per_device (required): sequences/device/pass
+    # - rollout.micro_batch_size (optional): sequences/process/pass
+    rollout_micro_batch_size = cfg.rollout.micro_batch_size
+    rollout_micro_batch_size_per_device = cfg.rollout.micro_batch_size_per_device
+    if rollout_micro_batch_size_per_device is None:
+        raise ValueError(
+            "rollout.micro_batch_size_per_device is required (sequences per device per rollout pass). "
+            "Set it explicitly in YAML."
+        )
+    rollout_micro_batch_size_per_device = int(rollout_micro_batch_size_per_device)
+    if rollout_micro_batch_size_per_device <= 0:
+        raise ValueError("rollout.micro_batch_size_per_device must be > 0")
 
-    requested_prompts_per_process = (int(requested_global_prompts_per_step) + int(process_count) - 1) // int(process_count)
-    requested_prompts_per_process = max(1, int(requested_prompts_per_process))
+    expected_rollout_micro_batch_size = int(rollout_micro_batch_size_per_device) * int(local_device_count)
+    if rollout_micro_batch_size is not None:
+        rollout_micro_batch_size = int(rollout_micro_batch_size)
+        if rollout_micro_batch_size <= 0:
+            raise ValueError("rollout.micro_batch_size must be > 0 when set")
+        if int(rollout_micro_batch_size) != int(expected_rollout_micro_batch_size):
+            raise ValueError(
+                "rollout.micro_batch_size must match rollout.micro_batch_size_per_device * local_device_count, got "
+                f"{int(rollout_micro_batch_size)} vs {int(rollout_micro_batch_size_per_device)}*{int(local_device_count)} "
+                f"({int(expected_rollout_micro_batch_size)})."
+            )
+    else:
+        rollout_micro_batch_size = int(expected_rollout_micro_batch_size)
 
-    # Ensure per-pass local batch (sequences) can be evenly split across local devices.
+    if int(requested_global_prompts_per_step) % int(process_count) != 0:
+        raise ValueError(
+            "rollout.batch_size must be divisible by process_count (no implicit global padding). "
+            f"Got rollout.batch_size={int(requested_global_prompts_per_step)} process_count={int(process_count)}."
+        )
+    requested_prompts_per_process = int(requested_global_prompts_per_step) // int(process_count)
+    if requested_prompts_per_process <= 0:
+        raise ValueError("Invalid rollout.batch_size/process_count combination: prompts_per_process must be > 0")
+
+    # Ensure per-pass local sequence batch can be evenly split across local devices.
     required_multiple = int(local_device_count) // math.gcd(int(n), int(local_device_count))
     if required_multiple <= 0:
         raise ValueError("Invalid rollout batching: local_device_count must be > 0")
 
-    prompts_per_pass = int(requested_prompts_per_process)
-    rollout_passes = 1
-    effective_global_prompts_per_step = int(prompts_per_pass) * int(process_count)
-
-    # Avoid rollout-time OOMs by splitting very large per-process sequence batches
-    # into multiple passes (generation + reward computed per pass, then concatenated).
-    #
-    # Tuning knob: `train.micro_batch_size(_per_device)` indirectly controls the
-    # maximum rollout batch size per pass, so OOM recovery can be done via YAML
-    # without adding new rollout-specific config keys.
-    if micro_batch_size is not None:
-        requested_sequences_per_process = int(requested_prompts_per_process) * int(n)
-        max_sequences_per_pass = int(micro_batch_size) * 8
-        if requested_sequences_per_process > max_sequences_per_pass:
-            max_prompts_per_pass = max(1, int(max_sequences_per_pass) // int(n))
-            if required_multiple > 1:
-                max_prompts_per_pass = (max_prompts_per_pass // required_multiple) * required_multiple
-                if max_prompts_per_pass <= 0:
-                    max_prompts_per_pass = required_multiple
-            prompts_per_pass = max_prompts_per_pass
-            rollout_passes, effective_global_prompts_per_step = infer_rollout_passes(
-                global_batch_size=int(requested_global_prompts_per_step),
-                batch_size_per_process=int(prompts_per_pass),
-                process_count=int(process_count),
-            )
-            if int(jax.process_index()) == 0:
-                print(
-                    "Splitting rollout into passes to reduce per-pass memory: "
-                    + " ".join(
-                        [
-                            f"requested_sequences_per_process={requested_sequences_per_process}",
-                            f"max_sequences_per_pass={max_sequences_per_pass}",
-                            f"prompts_per_pass={int(prompts_per_pass)}",
-                            f"passes_per_step={int(rollout_passes)}",
-                            f"effective_global_prompts_per_step={int(effective_global_prompts_per_step)}",
-                        ]
-                    )
-                )
-
-    if prompts_per_pass % required_multiple != 0:
-        old_prompts_per_pass = int(prompts_per_pass)
-        padded_prompts_per_pass = ((int(prompts_per_pass) + int(required_multiple) - 1) // int(required_multiple)) * int(
-            required_multiple
+    max_prompts_per_pass = int(rollout_micro_batch_size) // int(n)
+    if required_multiple > 1:
+        max_prompts_per_pass = (int(max_prompts_per_pass) // int(required_multiple)) * int(required_multiple)
+    if max_prompts_per_pass <= 0:
+        raise ValueError(
+            "rollout micro-batch is too small for one prompt-group pass. "
+            f"rollout.micro_batch_size_per_device={int(rollout_micro_batch_size_per_device)} "
+            f"local_device_count={int(local_device_count)} rollout.n={int(n)} required_multiple={int(required_multiple)}."
         )
-        effective_global_prompts_per_step = int(rollout_passes) * int(padded_prompts_per_pass) * int(process_count)
-        if int(jax.process_index()) == 0:
-            print(
-                f"Padding per-process rollout prompt batch {old_prompts_per_pass} -> {int(padded_prompts_per_pass)} so that "
-                f"(prompts_per_process * rollout.n) is divisible by local_device_count={int(local_device_count)} "
-                f"(effective global prompts/step = {int(effective_global_prompts_per_step)})."
-            )
-        prompts_per_pass = padded_prompts_per_pass
 
+    prompts_per_pass = min(int(requested_prompts_per_process), int(max_prompts_per_pass))
+    if prompts_per_pass % int(required_multiple) != 0:
+        raise ValueError(
+            "Resolved prompts_per_pass must be divisible by required_multiple (no implicit per-pass padding). "
+            f"Got prompts_per_pass={int(prompts_per_pass)} required_multiple={int(required_multiple)}."
+        )
+    if int(requested_prompts_per_process) % int(prompts_per_pass) != 0:
+        raise ValueError(
+            "requested prompts per process must be divisible by prompts_per_pass (no implicit pass rounding). "
+            f"Got requested_prompts_per_process={int(requested_prompts_per_process)} prompts_per_pass={int(prompts_per_pass)}."
+        )
+
+    rollout_passes = int(requested_prompts_per_process) // int(prompts_per_pass)
+    if rollout_passes <= 0:
+        raise RuntimeError("Internal error: rollout_passes must be > 0")
+
+    effective_global_prompts_per_step = int(requested_global_prompts_per_step)
     local_batch_per_pass = int(prompts_per_pass) * int(n)
 
-    if micro_batch_size is not None:
-        padded_passes = round_up_passes_for_divisibility(
-            passes=int(rollout_passes),
-            sequences_per_pass_per_process=int(local_batch_per_pass),
-            micro_batch_size_per_process=int(micro_batch_size),
-        )
-        if int(padded_passes) != int(rollout_passes) and int(jax.process_index()) == 0:
-            print(f"Padding rollout passes {int(rollout_passes)} -> {int(padded_passes)} to align with micro-batching.")
-        rollout_passes = int(padded_passes)
-        effective_global_prompts_per_step = int(rollout_passes) * int(prompts_per_pass) * int(process_count)
-
-    if int(jax.process_index()) == 0 and int(effective_global_prompts_per_step) != int(requested_global_prompts_per_step):
+    if int(jax.process_index()) == 0:
         print(
-            f"Padding global rollout.batch_size {int(requested_global_prompts_per_step)} -> {int(effective_global_prompts_per_step)} "
-            f"so each process gets an equal prompt batch (process_count={int(process_count)})."
+            "rollout_pass_plan "
+            + " ".join(
+                [
+                    f"global_prompts={int(requested_global_prompts_per_step)}",
+                    f"prompts_per_process={int(requested_prompts_per_process)}",
+                    f"prompts_per_pass={int(prompts_per_pass)}",
+                    f"passes_per_step={int(rollout_passes)}",
+                    f"rollout_micro_batch_size_per_process={int(rollout_micro_batch_size)}",
+                    f"rollout_micro_batch_size_per_device={int(rollout_micro_batch_size_per_device)}",
+                ]
+            )
         )
 
     local_batch = int(rollout_passes) * int(local_batch_per_pass)
@@ -333,6 +333,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 **{
                     **cfg.rollout.__dict__,
                     "batch_size": int(resolved_rollout_batch_size),
+                    "micro_batch_size": int(rollout_micro_batch_size),
+                    "micro_batch_size_per_device": int(rollout_micro_batch_size_per_device),
                 }
             ),
             "train": GRPOTrainConfig(

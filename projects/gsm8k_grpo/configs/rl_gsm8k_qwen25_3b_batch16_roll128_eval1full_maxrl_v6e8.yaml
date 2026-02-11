@@ -9,6 +9,8 @@ rollout:
   n: 128
   global_length: 512
   max_length_sample: 1024
+  micro_batch_size: null
+  micro_batch_size_per_device: 32
   dynamic_sampling:
     enabled: false
     trigger: homogeneous_group

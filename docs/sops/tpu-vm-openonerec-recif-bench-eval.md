@@ -131,3 +131,35 @@ scripts/ssh_tpu_vm_root.sh --name <TPU_NAME> --zone <ZONE> --command '
 - `recif_bench_onerec_1p7b_pro_split_long_cpu_bs5.yaml`
 - `recif_bench_onerec_1p7b_pro_split_short.yaml`
 - `recif_bench_onerec_1p7b_pro_finalize.yaml`
+
+## 2026-02-11 追加：two-stage short 任务 TPU OOM 处理（v6e-8）
+
+### 现象
+- `short_two_stage_beam` 在 `ad` 任务 stage1 报错退出：
+  - `RuntimeError: XLA:TPU compile permanent error. Ran out of memory in memory space hbm`
+- 对应 exit：`logs/nohup_openonerec_recif_recif_bench_onerec_1p7b_split_short_two_stage_beam_latest.exit = 1`
+
+### 修复策略（不改评测语义）
+- 在 HF generator 增加 `beam_batch_size`，仅在 `num_beams` 路径下限批。
+- YAML 显式新增 `generator.beam_batch_size`，并下调 short 任务 `worker_batch_size`。
+- 保持 two-stage + beam（按用户要求），不改任务集合与指标计算逻辑。
+
+### 已验证命令
+```bash
+# 本地
+python3 -m py_compile projects/openonerec_recif_bench_eval/run.py projects/openonerec_recif_bench_eval/hf_generator.py
+git commit -m "fix(openonerec): cap two-stage beam batch to avoid TPU OOM"
+git push origin openonerec
+
+# TPU 同步并重启 short
+cd /root/MLLM-JAX-openonerec
+git fetch --all --prune
+git checkout openonerec
+git pull --ff-only
+bash scripts/tpu_vm_start_openonerec_recif_bench_eval_from_config_nohup.sh \
+  --config projects/openonerec_recif_bench_eval/configs/recif_bench_onerec_1p7b_split_short_two_stage_beam_wb8.yaml
+```
+
+### 结果判据（运行中）
+- 新 short 日志进入：`Task=ad`、`Auto Thinking=Enabled`、`Stage 1/2`。
+- 当前无新的 OOM traceback；等待 `.exit` 与 `*_generated.json` / `eval_results.json` 最终落盘。

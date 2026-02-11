@@ -1,0 +1,60 @@
+project:
+  wandb_project: openonerec-recif-bench
+  wandb_mode: disabled
+  run_name: onerec-1p7b-recif-smoke-sglang-jax-engine
+
+model:
+  repo_id: OpenOneRec/OneRec-1.7B
+  torch_dtype: bfloat16
+  trust_remote_code: true
+
+upstream:
+  repo_url: https://github.com/Kuaishou-OneRec/OpenOneRec.git
+  checkout_dir: workdirs/OpenOneRec
+
+data:
+  hf_dataset: OpenOneRec/OpenOneRec-RecIF
+  local_dir: workdirs/raw_data/onerec_data
+  include:
+    - benchmark_data/**
+
+generator:
+  backend: sglang_jax_engine
+  prefer_tpu: false
+  batch_size: 1
+  max_batch_size: 1
+  beam_batch_size: 1
+  engine:
+    device: cpu
+    tp_size: 1
+    dp_size: 1
+    trust_remote_code: true
+    dtype: bfloat16
+    log_level: error
+    skip_server_warmup: true
+    stream_output: false
+  beam_emulation:
+    temperature: 0.7
+    top_p: 0.95
+    top_k: 50
+    deduplicate: true
+
+eval:
+  data_version: v1.0
+  enable_thinking: false
+  overwrite: true
+  sample_size: 1
+  output_root: workdirs/openonerec_recif_eval_smoke_sglang
+  disable_llm_judge: true
+  tasks:
+    - video
+    - label_pred
+  task_overrides:
+    video:
+      worker_batch_size: 1
+      max_new_tokens: 8
+      num_beams: 4
+      num_return_sequences: 4
+      num_return_thinking_sequences: 1
+    label_pred:
+      worker_batch_size: 1

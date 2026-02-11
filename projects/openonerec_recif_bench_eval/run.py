@@ -167,7 +167,6 @@ def _run_eval(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
         sys.path.insert(0, benchmarks_dir)
 
     from benchmark import Benchmark  # type: ignore
-    from projects.openonerec_recif_bench_eval.hf_generator import BenchmarkTransformersGenerator
 
     eval_cfg = cfg.get("eval", {}) or {}
     data_version = str(eval_cfg.get("data_version") or "v1.0")
@@ -191,16 +190,46 @@ def _run_eval(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
     beam_batch_size_raw = gen_cfg.get("beam_batch_size")
     beam_batch_size = int(beam_batch_size_raw) if beam_batch_size_raw is not None else None
     prefer_tpu = bool(gen_cfg.get("prefer_tpu", True))
+    backend = str(gen_cfg.get("backend") or "sglang_jax_engine").strip().lower()
 
-    generator = BenchmarkTransformersGenerator(
-        model_repo_id,
-        torch_dtype=str(torch_dtype),
-        trust_remote_code=trust_remote_code,
-        prefer_tpu=prefer_tpu,
-        batch_size=batch_size,
-        max_batch_size=max_batch_size,
-        beam_batch_size=beam_batch_size,
-    )
+    generator_cls: Any
+    if backend in {"sglang_jax_engine", "sglang_jax", "sglang-jax-engine"}:
+        from projects.openonerec_recif_bench_eval.sglang_jax_engine_generator import (
+            BenchmarkSglangJaxEngineGenerator,
+        )
+
+        generator_cls = BenchmarkSglangJaxEngineGenerator
+    elif backend in {"hf", "transformers", "hf_transformers"}:
+        from projects.openonerec_recif_bench_eval.hf_generator import BenchmarkTransformersGenerator
+
+        generator_cls = BenchmarkTransformersGenerator
+    else:
+        raise ValueError(
+            f"Unsupported generator.backend={backend!r}. "
+            "Expected one of: sglang_jax_engine, hf"
+        )
+
+    generator_kwargs: dict[str, Any] = {
+        "torch_dtype": str(torch_dtype),
+        "trust_remote_code": trust_remote_code,
+        "prefer_tpu": prefer_tpu,
+        "batch_size": batch_size,
+        "max_batch_size": max_batch_size,
+        "beam_batch_size": beam_batch_size,
+    }
+    if backend in {"sglang_jax_engine", "sglang_jax", "sglang-jax-engine"}:
+        engine_kwargs = gen_cfg.get("engine") or {}
+        beam_emulation = gen_cfg.get("beam_emulation") or {}
+        if not isinstance(engine_kwargs, dict):
+            raise ValueError(f"generator.engine must be a mapping, got: {type(engine_kwargs)}")
+        if not isinstance(beam_emulation, dict):
+            raise ValueError(
+                f"generator.beam_emulation must be a mapping, got: {type(beam_emulation)}"
+            )
+        generator_kwargs["engine_kwargs"] = dict(engine_kwargs)
+        generator_kwargs["beam_emulation"] = dict(beam_emulation)
+
+    generator = generator_cls(model_repo_id, **generator_kwargs)
 
     # Match upstream eval_script.sh ordering + per-task overrides.
     task_runs: list[tuple[str, dict[str, Any]]] = [

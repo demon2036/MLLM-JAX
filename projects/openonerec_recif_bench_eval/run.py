@@ -188,6 +188,8 @@ def _run_eval(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
     gen_cfg = cfg.get("generator", {}) or {}
     batch_size = int(gen_cfg.get("batch_size", 8))
     max_batch_size = int(gen_cfg.get("max_batch_size", 64))
+    beam_batch_size_raw = gen_cfg.get("beam_batch_size")
+    beam_batch_size = int(beam_batch_size_raw) if beam_batch_size_raw is not None else None
     prefer_tpu = bool(gen_cfg.get("prefer_tpu", True))
 
     generator = BenchmarkTransformersGenerator(
@@ -197,6 +199,7 @@ def _run_eval(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
         prefer_tpu=prefer_tpu,
         batch_size=batch_size,
         max_batch_size=max_batch_size,
+        beam_batch_size=beam_batch_size,
     )
 
     # Match upstream eval_script.sh ordering + per-task overrides.

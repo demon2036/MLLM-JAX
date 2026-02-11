@@ -136,6 +136,7 @@ class TransformersGenerator:
         prefer_tpu: bool = True,
         batch_size: int = 8,
         max_batch_size: int = 64,
+        beam_batch_size: int | None = None,
     ) -> None:
         _unset_socks_proxies()
 
@@ -144,6 +145,7 @@ class TransformersGenerator:
         self.torch_dtype = _as_torch_dtype(torch_dtype)
         self.batch_size = int(batch_size)
         self.max_batch_size = int(max_batch_size)
+        self.beam_batch_size = int(beam_batch_size) if beam_batch_size is not None else None
 
         device = _get_xla_device() if prefer_tpu else None
         if device is None:
@@ -741,9 +743,10 @@ class TransformersGenerator:
         sample_ids = list(prompts.keys())
         prompt_texts = [prompts[sid] for sid in sample_ids]
 
-        batch_size = self._resolve_batch_size(kwargs)
-
         num_beams = kwargs.get("num_beams", None)
+        batch_size = self._resolve_batch_size(kwargs)
+        if num_beams is not None and self.beam_batch_size is not None and self.beam_batch_size > 0:
+            batch_size = max(1, min(batch_size, int(self.beam_batch_size)))
         num_return_sequences = int(kwargs.get("num_return_sequences", 1) or 1)
         max_new_tokens = int(kwargs.get("max_new_tokens", 128) or 128)
         repetition_penalty = kwargs.get("repetition_penalty", None)

@@ -37,6 +37,7 @@ generator:
     log_level: error
     skip_server_warmup: true
     stream_output: false
+    enable_single_process: true
     chunked_prefill_size: 4096
     max_prefill_tokens: 16384
     max_running_requests: 64

@@ -20,12 +20,12 @@ data:
 
 generator:
   backend: sglang_jax_engine
-  prefer_tpu: false
+  prefer_tpu: true
   batch_size: 1
   max_batch_size: 1
   beam_batch_size: 1
   engine:
-    device: cpu
+    device: tpu
     tp_size: 1
     dp_size: 1
     trust_remote_code: true
@@ -33,6 +33,7 @@ generator:
     log_level: error
     skip_server_warmup: true
     stream_output: false
+    enable_single_process: true
   beam_emulation:
     temperature: 0.7
     top_p: 0.95

@@ -68,6 +68,7 @@
 - GRPO runner metrics: `docs/sops/grpo-gsm8k-metrics.md`
 - GRPO length + eval knobs: `docs/sops/grpo-gsm8k-length-and-eval.md`
 - GRPO token-focus mask (prob threshold, first-K): `docs/sops/grpo-token-focus-prob-threshold-mask.md`
+- GRPO token-focus sweep (p, max_tokens_per_sequence): `docs/sops/grpo-token-focus-sweep.md`
 - GSM8K GRPO/MaxRL bs16 n128 with eval_rollout_n=1 full sweep: `docs/sops/gsm8k-grpo-maxrl-bs16-n128-eval1-fullsweep.md`
 - W&B GRPO/MaxRL 配置字段来源与 v2 显式化修复: `docs/sops/wandb-grpo-config-field-expansion.md`
 - GRPO/MaxRL estimator/update 默认值与 v2 schema 约束: `docs/sops/grpo-estimator-defaults-estimator-specific.md`

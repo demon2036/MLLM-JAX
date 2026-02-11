@@ -905,12 +905,13 @@ class TransformersGenerator:
                     "times": [batch_dt],
                 }
 
-            try:
-                import torch_xla.core.xla_model as xm  # type: ignore
+            if self.device.type == "xla":
+                try:
+                    import torch_xla.core.xla_model as xm  # type: ignore
 
-                xm.mark_step()
-            except Exception:
-                pass
+                    xm.mark_step()
+                except Exception:
+                    pass
 
         return results, logprobs, mfu_stats
 
@@ -968,12 +969,13 @@ class TransformersGenerator:
                     "times": [batch_dt],
                 }
 
-            try:
-                import torch_xla.core.xla_model as xm  # type: ignore
+            if self.device.type == "xla":
+                try:
+                    import torch_xla.core.xla_model as xm  # type: ignore
 
-                xm.mark_step()
-            except Exception:
-                pass
+                    xm.mark_step()
+                except Exception:
+                    pass
 
         return results, {}, mfu_stats
 

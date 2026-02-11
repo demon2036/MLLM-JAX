@@ -538,22 +538,47 @@ class TransformersGenerator:
 
                 done = torch.zeros((bucket_micro_bs,), dtype=torch.bool, device=self.device)
 
-                # Copy DynamicCache -> StaticCache to keep decode shapes fixed.
+                # Copy prefill cache -> StaticCache to keep decode shapes fixed.
+                # transformers versions differ here:
+                # - newer builds may return DynamicCache (with `.layers`)
+                # - older/legacy paths may return tuple[(k, v), ...]
                 static_past = None
                 try:
                     from transformers.cache_utils import StaticCache  # type: ignore
                 except Exception:
                     static_past = None
                 else:
+                    layer_kv_pairs: list[tuple[torch.Tensor, torch.Tensor]] | None = None
                     if dyn_past is not None and hasattr(dyn_past, "layers"):
-                        static_past = StaticCache(self.model.config, max_cache_len=max_cache_len)
-                        prefill_cache_position = torch.arange(bucket_len, device=self.device)
-                        for layer_idx, layer in enumerate(getattr(dyn_past, "layers", [])):
+                        pairs: list[tuple[torch.Tensor, torch.Tensor]] = []
+                        for layer in getattr(dyn_past, "layers", []):
                             keys = getattr(layer, "keys", None)
                             values = getattr(layer, "values", None)
                             if keys is None or values is None:
-                                static_past = None
+                                pairs = []
                                 break
+                            pairs.append((keys, values))
+                        if pairs:
+                            layer_kv_pairs = pairs
+                    elif isinstance(dyn_past, (tuple, list)):
+                        pairs = []
+                        for layer in dyn_past:
+                            if not isinstance(layer, (tuple, list)) or len(layer) < 2:
+                                pairs = []
+                                break
+                            keys = layer[0]
+                            values = layer[1]
+                            if keys is None or values is None:
+                                pairs = []
+                                break
+                            pairs.append((keys, values))
+                        if pairs:
+                            layer_kv_pairs = pairs
+
+                    if layer_kv_pairs:
+                        static_past = StaticCache(self.model.config, max_cache_len=max_cache_len)
+                        prefill_cache_position = torch.arange(bucket_len, device=self.device)
+                        for layer_idx, (keys, values) in enumerate(layer_kv_pairs):
                             static_past.update(
                                 keys,
                                 values,

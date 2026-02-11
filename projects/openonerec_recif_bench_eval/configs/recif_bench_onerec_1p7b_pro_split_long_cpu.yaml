@@ -1,0 +1,42 @@
+project:
+  wandb_project: openonerec-recif-bench
+  wandb_mode: online
+  run_name: onerec-1p7b-pro-recif-bench
+
+model:
+  repo_id: OpenOneRec/OneRec-1.7B-pro
+  torch_dtype: bfloat16
+  trust_remote_code: true
+
+upstream:
+  repo_url: https://github.com/Kuaishou-OneRec/OpenOneRec.git
+  checkout_dir: workdirs/OpenOneRec
+
+data:
+  hf_dataset: OpenOneRec/OpenOneRec-RecIF
+  local_dir: workdirs/raw_data/onerec_data
+  include:
+    - benchmark_data/**
+
+llm:
+  gemini_project: civil-rarity-482610-s5
+  gemini_location: us-central1
+
+generator:
+  prefer_tpu: false
+  batch_size: 1
+  max_batch_size: 1
+
+eval:
+  data_version: v1.0
+  enable_thinking: false
+  overwrite: true
+  sample_size: full
+  tasks:
+    - rec_reason
+    - item_understand
+  task_overrides:
+    rec_reason:
+      worker_batch_size: 1
+    item_understand:
+      worker_batch_size: 1

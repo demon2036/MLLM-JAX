@@ -978,6 +978,14 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         if t_update > 0:
             train_log["throughput/train/valid_tokens_per_s_update"] = float(valid_tokens_global) / float(t_update)
 
+        # --- Token-focus diagnostics (emitted by the train module) ---
+        for k, v in last_meta.items():
+            if isinstance(k, str) and k.startswith("token_focus/"):
+                try:
+                    train_log[k] = _as_float(v)
+                except Exception:  # pragma: no cover
+                    continue
+
         if wandb is not None and jax.process_index() == 0:
             wandb.log(train_log, step=step)
 

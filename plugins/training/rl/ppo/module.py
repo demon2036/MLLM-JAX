@@ -130,6 +130,17 @@ class PPOActorCriticModule(nn.Module):
         )
         selected_counts_f = selected_counts.astype(jnp.float32)
 
+        eligible_counts = jnp.zeros_like(selected_counts, dtype=jnp.int32)
+        if bool(self.token_focus_enabled):
+            logp_threshold = jnp.log(jnp.asarray(float(self.token_focus_prob_threshold), dtype=focus_logps.dtype))
+            eligible = jnp.logical_and(mask_loss > 0, focus_logps < logp_threshold)
+            eligible_counts = eligible.astype(jnp.int32).sum(axis=-1)
+        eligible_counts_f = eligible_counts.astype(jnp.float32)
+        if bool(self.token_focus_enabled):
+            eligible_fraction = eligible_counts_f.sum() / (mask_loss.sum() + 1e-8)
+        else:
+            eligible_fraction = jnp.asarray(0.0, dtype=jnp.float32)
+
         mask_policy = mask_loss * focus_mask
         if bool(self.token_focus_enabled):
             policy_denom = jnp.maximum(mask_policy.sum(), 1.0)
@@ -190,6 +201,10 @@ class PPOActorCriticModule(nn.Module):
                 float(self.token_focus_max_tokens_per_sequence), dtype=jnp.float32
             ),
             "token_focus/use_old_logps": jnp.asarray(1.0 if bool(self.token_focus_use_old_logps) else 0.0, dtype=jnp.float32),
+            "token_focus/eligible_fraction": eligible_fraction,
+            "token_focus/eligible_tokens_mean": eligible_counts_f.mean(),
+            "token_focus/eligible_tokens_min": eligible_counts_f.min(),
+            "token_focus/eligible_tokens_max": eligible_counts_f.max(),
             "token_focus/selected_tokens_mean": selected_counts_f.mean(),
             "token_focus/selected_tokens_min": selected_counts_f.min(),
             "token_focus/selected_tokens_max": selected_counts_f.max(),

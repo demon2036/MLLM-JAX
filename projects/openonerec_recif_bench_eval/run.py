@@ -236,20 +236,25 @@ def _run_eval(cfg: dict[str, Any], *, config_path: str) -> dict[str, Any]:
 
     splits = ["test"]
     for task_name, overrides in task_runs:
+        run_overrides = dict(overrides)
+        task_enable_thinking = bool(run_overrides.pop("enable_thinking", enable_thinking))
+        task_sample_size = run_overrides.pop("sample_size", sample_size)
+        task_overwrite = bool(run_overrides.pop("overwrite", overwrite))
+
         benchmark = Benchmark(
             model_path=model_repo_id,
             task_types=[task_name],
             splits=splits,
             data_dir=data_dir,
-            enable_thinking=enable_thinking,
+            enable_thinking=task_enable_thinking,
         )
         benchmark.run(
             generator=generator,
             output_dir=output_dir,
-            overwrite=overwrite,
-            enable_thinking=enable_thinking,
-            sample_size=sample_size,
-            **overrides,
+            overwrite=task_overwrite,
+            enable_thinking=task_enable_thinking,
+            sample_size=task_sample_size,
+            **run_overrides,
         )
         for split in splits:
             _require_generated_file(

@@ -98,6 +98,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "eval_split": "test",
     # Eval rollout count per prompt (kept independent from train rollout.n).
     "eval_rollout_n": 1,
+    # Run a full-split eval sweep every N steps (0 disables).
+    "eval_full_every_steps": 0,
     # Whether to run a full-split eval sweep once at the end.
     "eval_full_sweep": False,
 }

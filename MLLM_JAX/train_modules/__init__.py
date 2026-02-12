@@ -249,7 +249,14 @@ class TrainGRPOModule(nn.Module):
             window_mask = window_mask_full[:, 1:].astype(jnp.float32)
             window_mask = window_mask * mask_loss
             mask_zero = window_mask * adv_zero_seq[:, None]
-            adv_zero = float(self.adv_zero_think_penalty_value) * window_mask
+            scale_raw = inputs.get("adv_zero_think_scale", None)
+            if scale_raw is None:
+                scale_seq = jnp.ones((int(mask_loss.shape[0]),), dtype=jnp.float32)
+            else:
+                scale_seq = jnp.asarray(scale_raw, dtype=jnp.float32).reshape((-1,))
+                scale_seq = jnp.clip(scale_seq, 0.0, 1.0)
+                scale_seq = jnp.broadcast_to(scale_seq, (int(mask_loss.shape[0]),))
+            adv_zero = float(self.adv_zero_think_penalty_value) * scale_seq[:, None] * window_mask
 
             per_token_loss1_zero = ratio * adv_zero
             per_token_loss2_zero = clipped_ratio * adv_zero

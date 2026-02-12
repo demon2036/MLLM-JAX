@@ -228,6 +228,7 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
             "penalty": -0.5,
             "no_think_policy": "first_tokens",
             "normalize": "per_sequence",
+            "scale_mode": "fixed",
         }
     elif isinstance(adv_zero_think_raw, dict):
         allowed = {
@@ -238,6 +239,7 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
             "penalty",
             "no_think_policy",
             "normalize",
+            "scale_mode",
         }
         unknown_adv0 = sorted(set(adv_zero_think_raw.keys()) - allowed)
         if unknown_adv0:
@@ -266,6 +268,9 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
         normalize = str(adv_zero_think_raw.get("normalize", "per_sequence")).strip().lower()
         if normalize not in {"per_sequence", "global_token"}:
             raise ValueError("algo.update.kwargs.adv_zero_think_penalty.normalize must be one of: per_sequence, global_token")
+        scale_mode = str(adv_zero_think_raw.get("scale_mode", "fixed")).strip().lower()
+        if scale_mode not in {"fixed", "reward_gap"}:
+            raise ValueError("algo.update.kwargs.adv_zero_think_penalty.scale_mode must be one of: fixed, reward_gap")
         adv_zero_think_penalty = {
             "enabled": bool(enabled),
             "tag": tag,
@@ -274,6 +279,7 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
             "penalty": float(penalty),
             "no_think_policy": str(no_think_policy),
             "normalize": str(normalize),
+            "scale_mode": str(scale_mode),
         }
     else:
         raise ValueError("algo.update.kwargs.adv_zero_think_penalty must be a dict or boolean when provided")

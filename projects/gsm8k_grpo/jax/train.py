@@ -561,6 +561,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     adv_zero_think_window_tokens = 20
     adv_zero_think_start_after_tag = True
     adv_zero_think_no_think_policy = "first_tokens"
+    adv_zero_think_scale_mode = "fixed"
+    adv_zero_think_max_total_reward = 0.0
     if adv_zero_think_enabled:
         tag_text = str(adv_zero_think_cfg.get("tag", "<think>"))
         encode_tokenizer = sampler.tokenizer if sampler is not None else tokenizer
@@ -572,6 +574,18 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         adv_zero_think_no_think_policy = str(
             adv_zero_think_cfg.get("no_think_policy", adv_zero_think_no_think_policy)
         ).strip().lower()
+        adv_zero_think_scale_mode = str(adv_zero_think_cfg.get("scale_mode", adv_zero_think_scale_mode)).strip().lower()
+        if adv_zero_think_scale_mode not in {"fixed", "reward_gap"}:
+            raise ValueError(
+                "algo.update.kwargs.adv_zero_think_penalty.scale_mode must be one of: fixed, reward_gap; "
+                f"got {adv_zero_think_scale_mode!r}"
+            )
+        adv_zero_think_max_total_reward = float(sum(float(x) for x in cfg.reward_weights))
+        if adv_zero_think_scale_mode == "reward_gap" and adv_zero_think_max_total_reward <= 0:
+            raise ValueError(
+                "reward-gap adv_zero_think_penalty scaling requires sum(reward_weights) > 0, "
+                f"got reward_weights={cfg.reward_weights!r}"
+            )
 
     last_full_eval_step: int | None = None
 
@@ -760,6 +774,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     for step in range(cfg.steps):
         t_step0 = time.perf_counter()
         adv_zero_think_has_tag_fraction_adv_zero = 0.0
+        adv_zero_think_scale_mean_adv_zero = 0.0
+        adv_zero_think_scale_zero_fraction_adv_zero = 0.0
+        adv_zero_think_eligible_fraction_adv_zero = 0.0
 
         # --- Rollout (sampling) ---
         # Keep rollout logic local to avoid cross-host coupling; global sync happens at the batch->global array step.
@@ -1022,6 +1039,16 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
         if adv_zero_think_enabled and datas_np and advantages_np.ndim == 1:
             adv_zero_seq_mask = np.asarray(advantages_np == 0, dtype=bool).reshape(-1)
+            if adv_zero_think_scale_mode == "reward_gap":
+                rewards_f = np.asarray(rewards_np, dtype=np.float32).reshape(-1)
+                gap = np.maximum(float(adv_zero_think_max_total_reward) - rewards_f, 0.0)
+                scale = np.clip(gap / float(adv_zero_think_max_total_reward), 0.0, 1.0).astype(np.float32)
+            else:
+                scale = np.ones((int(adv_zero_seq_mask.shape[0]),), dtype=np.float32)
+
+            datas_np["adv_zero_think_scale"] = scale
+
+            eligible_mask = np.logical_and(adv_zero_seq_mask, scale > 0)
             window_mask, tag_found = build_adv_zero_think_window_mask(
                 input_ids=np.asarray(datas_np["input_ids"]),
                 labels=np.asarray(datas_np["labels"]),
@@ -1029,12 +1056,20 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 window_tokens=int(adv_zero_think_window_tokens),
                 start_after_tag=bool(adv_zero_think_start_after_tag),
                 no_think_policy=str(adv_zero_think_no_think_policy),
-                sequence_mask=adv_zero_seq_mask,
+                sequence_mask=eligible_mask,
             )
             datas_np["adv_zero_window_mask"] = window_mask
+
             adv_zero_count = int(adv_zero_seq_mask.sum())
             if adv_zero_count > 0:
-                adv_zero_think_has_tag_fraction_adv_zero = float(tag_found[adv_zero_seq_mask].mean())
+                scale_adv0 = scale[adv_zero_seq_mask]
+                adv_zero_think_scale_mean_adv_zero = float(scale_adv0.mean())
+                adv_zero_think_scale_zero_fraction_adv_zero = float((scale_adv0 <= 0).mean())
+                adv_zero_think_eligible_fraction_adv_zero = float((scale_adv0 > 0).mean())
+
+            eligible_count = int(eligible_mask.sum())
+            if eligible_count > 0:
+                adv_zero_think_has_tag_fraction_adv_zero = float(tag_found[eligible_mask].mean())
 
         rewards_global = np.asarray(process_allgather(rewards_np)).reshape(-1)
         reward_global_stats = _stats_1d(rewards_global)
@@ -1117,6 +1152,11 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             "train-other/total_valid_token_count": valid_tokens_global,
             # adv==0 think-window penalty diagnostics (host-side)
             "adv_zero_think/has_tag_fraction_adv_zero": float(adv_zero_think_has_tag_fraction_adv_zero),
+            "adv_zero_think/scale_mode_reward_gap": float(1.0 if adv_zero_think_scale_mode == "reward_gap" else 0.0),
+            "adv_zero_think/max_total_reward": float(adv_zero_think_max_total_reward),
+            "adv_zero_think/scale_mean_adv_zero": float(adv_zero_think_scale_mean_adv_zero),
+            "adv_zero_think/scale_zero_fraction_adv_zero": float(adv_zero_think_scale_zero_fraction_adv_zero),
+            "adv_zero_think/eligible_fraction_adv_zero": float(adv_zero_think_eligible_fraction_adv_zero),
             # Reward / advantage
             "train-reward/total/mean": reward_global_stats["mean"],
             "train-reward/total/std": reward_global_stats["std"],

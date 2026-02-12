@@ -78,6 +78,27 @@ class TestRlConfigSchemaV2(unittest.TestCase):
         self.assertLess(float(adv0["penalty"]), 0.0)
         self.assertEqual(str(adv0["no_think_policy"]), "first_tokens")
         self.assertEqual(str(adv0["normalize"]), "per_sequence")
+        self.assertEqual(str(adv0["scale_mode"]), "fixed")
+
+    def test_adv_zero_think_penalty_accepts_reward_gap_scale_mode(self) -> None:
+        normalized, _algo_name, _estimator_name, update_name = normalize_algo_config(
+            AlgoConfig(
+                estimator=PluginConfig(name="grpo", kwargs={}),
+                update=PluginConfig(
+                    name="policy_gradient",
+                    kwargs={
+                        "adv_zero_think_penalty": {
+                            "enabled": True,
+                            "penalty": -0.1,
+                            "scale_mode": "reward_gap",
+                        }
+                    },
+                ),
+            )
+        )
+        self.assertEqual(update_name, "policy_gradient")
+        adv0 = normalized.update.kwargs["adv_zero_think_penalty"]
+        self.assertEqual(str(adv0["scale_mode"]), "reward_gap")
 
     def test_adv_zero_think_penalty_rejects_non_negative_penalty(self) -> None:
         with self.assertRaises(ValueError):
@@ -90,6 +111,24 @@ class TestRlConfigSchemaV2(unittest.TestCase):
                             "adv_zero_think_penalty": {
                                 "enabled": True,
                                 "penalty": 0.0,
+                            }
+                        },
+                    ),
+                )
+            )
+
+    def test_adv_zero_think_penalty_rejects_invalid_scale_mode(self) -> None:
+        with self.assertRaises(ValueError):
+            normalize_algo_config(
+                AlgoConfig(
+                    estimator=PluginConfig(name="grpo", kwargs={}),
+                    update=PluginConfig(
+                        name="policy_gradient",
+                        kwargs={
+                            "adv_zero_think_penalty": {
+                                "enabled": True,
+                                "penalty": -0.1,
+                                "scale_mode": "unknown",
                             }
                         },
                     ),

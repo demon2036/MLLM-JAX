@@ -9,5 +9,10 @@
   - Create a Python env (choose a name) and upgrade pip:
     - `gcloud alpha compute tpus tpu-vm ssh root@"$TPU_NAME" --zone="$ZONE" --quiet --command 'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true; conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true; ENV_NAME=mllm-jax; if ! conda env list | awk \"{print \\$1}\" | grep -qx \"$ENV_NAME\"; then conda create -y -n \"$ENV_NAME\" python=3.12; fi; conda activate \"$ENV_NAME\"; python --version; pip install -U pip'`
   **Expected Result**: Miniconda installed and the conda env exists
-  **Troubleshooting**: If conda prompts for Terms of Service, re-run the `conda tos accept` commands
+  **Troubleshooting**:
+  - If conda prompts for Terms of Service, re-run the `conda tos accept` commands.
+  - If Orbax checkpoints to `gs://...` fail with `ImportError: Please install gcsfs to access Google Storage`, install `gcsfs` (and keep `fsspec` compatible with `datasets`):
+    - `gcloud alpha compute tpus tpu-vm ssh root@"$TPU_NAME" --zone="$ZONE" --quiet --command 'set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate mllm-jax; pip install -U fsspec==2025.10.0 gcsfs==2025.10.0'`
+  - If JAX TPU init fails with `/dev/vfio/*: Device or resource busy`, restart the runtime container:
+    - `gcloud alpha compute tpus tpu-vm ssh root@"$TPU_NAME" --zone="$ZONE" --quiet --command 'set -euo pipefail; docker restart tpu-runtime'`
   **References**: https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh

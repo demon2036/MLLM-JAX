@@ -494,7 +494,7 @@ class SglangJaxEngineGenerator:
             raw_outputs = self._engine_generate(
                 prompts=request_prompts,
                 sampling_params=sampling_params,
-                return_logprob=True,
+                return_logprob=False,
                 top_logprobs_num=self.beam_emulation_top_logprobs_num,
             )
 

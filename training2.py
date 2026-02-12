@@ -61,6 +61,7 @@ def get_state(
     model_ref = get_model(mesh, model_path=model_path, only_model=True) if beta != 0 else None
 
     token_focus_enabled = False
+    token_focus_metrics_enabled = False
     token_focus_prob_threshold = 0.3
     token_focus_max_tokens_per_sequence = 10
     token_focus_use_old_logps = True
@@ -69,6 +70,7 @@ def get_state(
         if isinstance(update_kwargs, dict):
             token_focus_raw = update_kwargs.get("token_focus")
             if isinstance(token_focus_raw, dict):
+                token_focus_metrics_enabled = True
                 token_focus_enabled = bool(token_focus_raw.get("enabled", False))
                 token_focus_prob_threshold = float(token_focus_raw.get("prob_threshold", token_focus_prob_threshold))
                 token_focus_max_tokens_per_sequence = int(
@@ -76,6 +78,7 @@ def get_state(
                 )
                 token_focus_use_old_logps = bool(token_focus_raw.get("use_old_logps", token_focus_use_old_logps))
             elif isinstance(token_focus_raw, bool):
+                token_focus_metrics_enabled = True
                 token_focus_enabled = bool(token_focus_raw)
             elif token_focus_raw is not None:
                 raise ValueError("algo.update.kwargs.token_focus must be a dict or boolean when provided")
@@ -92,6 +95,7 @@ def get_state(
             beta=beta,
             max_lengths=max_lengths,
             token_focus_enabled=token_focus_enabled,
+            token_focus_metrics_enabled=token_focus_metrics_enabled,
             token_focus_prob_threshold=token_focus_prob_threshold,
             token_focus_max_tokens_per_sequence=token_focus_max_tokens_per_sequence,
             token_focus_use_old_logps=token_focus_use_old_logps,
@@ -105,6 +109,7 @@ def get_state(
             beta=beta,
             max_lengths=max_lengths,
             token_focus_enabled=token_focus_enabled,
+            token_focus_metrics_enabled=token_focus_metrics_enabled,
             token_focus_prob_threshold=token_focus_prob_threshold,
             token_focus_max_tokens_per_sequence=token_focus_max_tokens_per_sequence,
             token_focus_use_old_logps=token_focus_use_old_logps,

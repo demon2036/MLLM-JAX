@@ -94,6 +94,7 @@ class TrainGRPOModule(nn.Module):
     epsilon_high: float = 0.3
     entropy_threshold: float = 0.3 # Used only for monitoring metrics now
     token_focus_enabled: bool = False
+    token_focus_metrics_enabled: bool = False
     token_focus_prob_threshold: float = 0.3
     token_focus_max_tokens_per_sequence: int = 10
     token_focus_use_old_logps: bool = True
@@ -175,6 +176,9 @@ class TrainGRPOModule(nn.Module):
             focus_logps = old_per_token_logps
         focus_logps = jax.lax.stop_gradient(focus_logps)
 
+        token_focus_apply = bool(self.token_focus_enabled)
+        token_focus_metrics = token_focus_apply or bool(self.token_focus_metrics_enabled)
+
         focus_mask, selected_counts = (
             build_token_focus_mask(
                 focus_logps,
@@ -182,18 +186,18 @@ class TrainGRPOModule(nn.Module):
                 prob_threshold=float(self.token_focus_prob_threshold),
                 max_tokens_per_sequence=int(self.token_focus_max_tokens_per_sequence),
             )
-            if bool(self.token_focus_enabled)
+            if token_focus_apply
             else (jnp.ones_like(mask_loss, dtype=jnp.float32), mask_loss.sum(axis=-1).astype(jnp.int32))
         )
         selected_counts_f = selected_counts.astype(jnp.float32)
 
         eligible_counts = jnp.zeros_like(selected_counts, dtype=jnp.int32)
-        if bool(self.token_focus_enabled):
+        if token_focus_metrics:
             logp_threshold = jnp.log(jnp.asarray(float(self.token_focus_prob_threshold), dtype=focus_logps.dtype))
             eligible = jnp.logical_and(mask_loss > 0, focus_logps < logp_threshold)
             eligible_counts = eligible.astype(jnp.int32).sum(axis=-1)
         eligible_counts_f = eligible_counts.astype(jnp.float32)
-        if bool(self.token_focus_enabled):
+        if token_focus_metrics:
             eligible_fraction = eligible_counts_f.sum() / (mask_loss.sum() + 1e-8)
         else:
             eligible_fraction = jnp.asarray(0.0, dtype=jnp.float32)
@@ -211,7 +215,7 @@ class TrainGRPOModule(nn.Module):
         per_token_loss=-per_token_ppo_loss
         total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
 
-        if bool(self.token_focus_enabled):
+        if token_focus_apply:
             mask_policy = mask_loss * focus_mask
             denom = jnp.maximum(mask_policy.sum(), 1.0)
         else:
@@ -293,7 +297,11 @@ class TrainGRPOModule(nn.Module):
             # Monitoring outputs related to original entropy calculation:
             'entropy': avg_entropy_per_sample,
             'entropy_loss': avg_entropy_per_sample_truncated,
-            "token_focus/enabled": jnp.asarray(1.0 if bool(self.token_focus_enabled) else 0.0, dtype=jnp.float32),
+            "token_focus/enabled": jnp.asarray(1.0 if token_focus_apply else 0.0, dtype=jnp.float32),
+            "token_focus/metrics_enabled": jnp.asarray(1.0 if token_focus_metrics else 0.0, dtype=jnp.float32),
+            "token_focus/stats_only": jnp.asarray(
+                1.0 if (token_focus_metrics and not token_focus_apply) else 0.0, dtype=jnp.float32
+            ),
             "token_focus/prob_threshold": jnp.asarray(float(self.token_focus_prob_threshold), dtype=jnp.float32),
             "token_focus/max_tokens_per_sequence": jnp.asarray(
                 float(self.token_focus_max_tokens_per_sequence), dtype=jnp.float32

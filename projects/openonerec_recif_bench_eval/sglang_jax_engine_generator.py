@@ -59,6 +59,72 @@ def _load_engine_class():
             ) from exc
 
 
+def _patch_sglang_logprob_source_file() -> None:
+    target_path: Path | None = None
+
+    try:
+        import inspect
+        import sgl_jax.srt.layers.logits_processor as logits_processor
+
+        src = inspect.getsourcefile(logits_processor)
+        if src:
+            target_path = Path(src)
+    except Exception:
+        target_path = None
+
+    if target_path is None:
+        candidate = (
+            Path(__file__).resolve().parents[2]
+            / "workdirs"
+            / "sglang-jax"
+            / "python"
+            / "sgl_jax"
+            / "srt"
+            / "layers"
+            / "logits_processor.py"
+        )
+        if candidate.is_file():
+            target_path = candidate
+
+    if target_path is None or not target_path.is_file():
+        return
+
+    try:
+        source = target_path.read_text(encoding="utf-8")
+    except Exception:
+        return
+
+    if 'if hasattr(batch.extend_logprob_start_lens, "tolist")' in source:
+        return
+
+    old = """extend_logprob_start_lens_cpu=(
+                batch.extend_logprob_start_lens.tolist()
+                if batch.return_logprob and batch.extend_logprob_start_lens is not None
+                else None
+            ),"""
+    new = """extend_logprob_start_lens_cpu=(
+                (
+                    batch.extend_logprob_start_lens.tolist()
+                    if hasattr(batch.extend_logprob_start_lens, "tolist")
+                    else list(batch.extend_logprob_start_lens)
+                )
+                if batch.return_logprob and batch.extend_logprob_start_lens is not None
+                else None
+            ),"""
+
+    if old not in source:
+        return
+
+    patched = source.replace(old, new, 1)
+    if patched == source:
+        return
+
+    try:
+        target_path.write_text(patched, encoding="utf-8")
+    except Exception:
+        return
+
+
 def _patch_sglang_logprob_batch_types() -> None:
     try:
         import numpy as np
@@ -256,6 +322,7 @@ class SglangJaxEngineGenerator:
                     "(sglang-jax requires tokenizer batch encode off when using pre-tokenized input_ids)."
                 )
 
+        _patch_sglang_logprob_source_file()
         _patch_sglang_logprob_batch_types()
         engine_class = _load_engine_class()
 
@@ -494,7 +561,7 @@ class SglangJaxEngineGenerator:
             raw_outputs = self._engine_generate(
                 prompts=request_prompts,
                 sampling_params=sampling_params,
-                return_logprob=False,
+                return_logprob=True,
                 top_logprobs_num=self.beam_emulation_top_logprobs_num,
             )
 

@@ -227,10 +227,13 @@ class TrainGRPOModule(nn.Module):
             adv_neg_fraction = jnp.asarray(0.0, dtype=jnp.float32)
             selected_fraction_adv_pos = jnp.asarray(0.0, dtype=jnp.float32)
             selected_fraction_adv_neg = jnp.asarray(0.0, dtype=jnp.float32)
+            selected_fraction_adv_zero = jnp.asarray(0.0, dtype=jnp.float32)
             eligible_fraction_adv_pos = jnp.asarray(0.0, dtype=jnp.float32)
             eligible_fraction_adv_neg = jnp.asarray(0.0, dtype=jnp.float32)
+            eligible_fraction_adv_zero = jnp.asarray(0.0, dtype=jnp.float32)
             empty_seq_fraction_adv_pos = jnp.asarray(0.0, dtype=jnp.float32)
             empty_seq_fraction_adv_neg = jnp.asarray(0.0, dtype=jnp.float32)
+            empty_seq_fraction_adv_zero = jnp.asarray(0.0, dtype=jnp.float32)
         else:
             adv = jnp.asarray(advantages, dtype=jnp.float32).reshape(-1)
             adv_zero = (adv == 0).astype(jnp.float32)
@@ -245,10 +248,13 @@ class TrainGRPOModule(nn.Module):
 
             pos_valid_tokens = (valid_counts_f * adv_pos).sum()
             neg_valid_tokens = (valid_counts_f * adv_neg).sum()
+            zero_valid_tokens = (valid_counts_f * adv_zero).sum()
             pos_selected_tokens = (selected_counts_f * adv_pos).sum()
             neg_selected_tokens = (selected_counts_f * adv_neg).sum()
+            zero_selected_tokens = (selected_counts_f * adv_zero).sum()
             pos_eligible_tokens = (eligible_counts_f * adv_pos).sum()
             neg_eligible_tokens = (eligible_counts_f * adv_neg).sum()
+            zero_eligible_tokens = (eligible_counts_f * adv_zero).sum()
 
             selected_fraction_adv_pos = jnp.where(
                 pos_valid_tokens > 0, pos_selected_tokens / (pos_valid_tokens + 1e-8), 0.0
@@ -256,18 +262,28 @@ class TrainGRPOModule(nn.Module):
             selected_fraction_adv_neg = jnp.where(
                 neg_valid_tokens > 0, neg_selected_tokens / (neg_valid_tokens + 1e-8), 0.0
             )
+            selected_fraction_adv_zero = jnp.where(
+                zero_valid_tokens > 0, zero_selected_tokens / (zero_valid_tokens + 1e-8), 0.0
+            )
             eligible_fraction_adv_pos = jnp.where(
                 pos_valid_tokens > 0, pos_eligible_tokens / (pos_valid_tokens + 1e-8), 0.0
             )
             eligible_fraction_adv_neg = jnp.where(
                 neg_valid_tokens > 0, neg_eligible_tokens / (neg_valid_tokens + 1e-8), 0.0
             )
+            eligible_fraction_adv_zero = jnp.where(
+                zero_valid_tokens > 0, zero_eligible_tokens / (zero_valid_tokens + 1e-8), 0.0
+            )
 
             pos_seq = adv_pos.sum()
             neg_seq = adv_neg.sum()
+            zero_seq = adv_zero.sum()
             empty_seq = (selected_counts == 0).astype(jnp.float32)
             empty_seq_fraction_adv_pos = jnp.where(pos_seq > 0, (empty_seq * adv_pos).sum() / (pos_seq + 1e-8), 0.0)
             empty_seq_fraction_adv_neg = jnp.where(neg_seq > 0, (empty_seq * adv_neg).sum() / (neg_seq + 1e-8), 0.0)
+            empty_seq_fraction_adv_zero = jnp.where(
+                zero_seq > 0, (empty_seq * adv_zero).sum() / (zero_seq + 1e-8), 0.0
+            )
 
         # --- Return Dictionary ---
         # Stop gradient on values returned only for monitoring or next step's input
@@ -294,10 +310,13 @@ class TrainGRPOModule(nn.Module):
             "token_focus/selected_fraction": selected_counts_f.sum() / (mask_loss.sum() + 1e-8),
             "token_focus/selected_fraction_adv_pos": selected_fraction_adv_pos,
             "token_focus/selected_fraction_adv_neg": selected_fraction_adv_neg,
+            "token_focus/selected_fraction_adv_zero": selected_fraction_adv_zero,
             "token_focus/eligible_fraction_adv_pos": eligible_fraction_adv_pos,
             "token_focus/eligible_fraction_adv_neg": eligible_fraction_adv_neg,
+            "token_focus/eligible_fraction_adv_zero": eligible_fraction_adv_zero,
             "token_focus/empty_seq_fraction_adv_pos": empty_seq_fraction_adv_pos,
             "token_focus/empty_seq_fraction_adv_neg": empty_seq_fraction_adv_neg,
+            "token_focus/empty_seq_fraction_adv_zero": empty_seq_fraction_adv_zero,
             "adv/zero_fraction": adv_zero_fraction,
             "adv/pos_fraction": adv_pos_fraction,
             "adv/neg_fraction": adv_neg_fraction,

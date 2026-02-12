@@ -48,11 +48,42 @@ for cfg in "${configs[@]}"; do
   fi
 done
 
+ENTITY="${WANDB_ENTITY:-johntitordemon2036}"
+PROJECT="mllm-jax-grpo-gsm8k-tokenfocus-sweep-steps100"
+FILTER_SUBSTR="projects/gsm8k_grpo/configs/token_focus_sweep_steps100/"
+
+finished_configs=""
+if [[ -n "${WANDB_API_KEY:-}" ]]; then
+  echo "Querying W&B for finished runs to resume sweep..."
+  set +e
+  finished_configs="$(python -u scripts/wandb_list_finished_runs_config_paths.py \
+    --entity "$ENTITY" \
+    --project "$PROJECT" \
+    --filter-config-substr "$FILTER_SUBSTR" 2>/dev/null)"
+  status="$?"
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    echo "WARNING: failed to query W&B finished runs; sweep will run all configs."
+    finished_configs=""
+  else
+    finished_count="$(printf '%s\n' "$finished_configs" | grep -c '.' || true)"
+    echo "wandb_entity=$ENTITY wandb_project=$PROJECT finished_configs=$finished_count"
+  fi
+else
+  echo "WANDB_API_KEY not set; sweep will run all configs."
+fi
+
 for cfg in "${configs[@]}"; do
+  if [[ -n "$finished_configs" ]] && printf '%s\n' "$finished_configs" | grep -Fxq "$cfg"; then
+    echo
+    echo "============================================================"
+    echo "SKIP (already finished): $cfg"
+    echo "============================================================"
+    continue
+  fi
   echo
   echo "============================================================"
   echo "RUN: $cfg"
   echo "============================================================"
   python -u projects/gsm8k_grpo/scripts/run_train.py --config "$cfg"
 done
-

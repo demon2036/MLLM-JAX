@@ -55,6 +55,7 @@
 - TPU v6e-8 literal batch128 roll8 (1024 seq/step) validation + OOM evidence: `docs/sops/tpu-vm-v6e-8-gsm8k-qwen25-3b-literal-batch128-roll8.md`
 - TPU v4-8 MiniOneRec SID RL from saved SFT (Qwen2.5-1.5B, W&B): `docs/sops/tpu-vm-v4-8-minionerec-sid-rl-from-sft.md`
 - TPU v6e-8 vs v6e-16 speed gap debug (multihost + mesh): `docs/sops/tpu-vm-v6e-8-v6e-16-grpo-gsm8k-speed-gap-debug.md`
+- TPU v6e-32 spot create internal error fallback (v6e-16): `docs/sops/tpu-vm-v6e-32-spot-internal-error-fallback-v6e-16.md`
 - TPU bf16 attention-score precision (dot_general fp32 output): `docs/sops/tpu-bf16-attention-score-f32.md`
 - TPU v4-8 timing (len=1024, 20 steps, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`
 - TPU v4-8 timing (bs=32, len=1024, k=1, micro_batch=4, avg dt steps 10–19): `docs/sops/tpu-vm-v4-8-grpo-gsm8k-bs32-len1024-k1-mb4-20steps-timing.md`
@@ -69,6 +70,7 @@
 - GRPO length + eval knobs: `docs/sops/grpo-gsm8k-length-and-eval.md`
 - GRPO token-focus mask (prob threshold, first-K): `docs/sops/grpo-token-focus-prob-threshold-mask.md`
 - GRPO token-focus sweep (p, max_tokens_per_sequence): `docs/sops/grpo-token-focus-sweep.md`
+- GRPO adv==0 `<think>` window penalty（reward-gap scaled, -0.1 / full-score skip）: `docs/sops/grpo-adv0-think-penalty-balance.md`
 - GSM8K GRPO/MaxRL bs16 n128 with eval_rollout_n=1 full sweep: `docs/sops/gsm8k-grpo-maxrl-bs16-n128-eval1-fullsweep.md`
 - W&B GRPO/MaxRL 配置字段来源与 v2 显式化修复: `docs/sops/wandb-grpo-config-field-expansion.md`
 - GRPO/MaxRL estimator/update 默认值与 v2 schema 约束: `docs/sops/grpo-estimator-defaults-estimator-specific.md`
@@ -118,6 +120,7 @@
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-bs128-steps100.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - `docs/sops/tpu-vm-v6e-8-v6e-16-grpo-gsm8k-speed-gap-debug.md`
+- `docs/sops/tpu-vm-v6e-32-spot-internal-error-fallback-v6e-16.md`
 - `docs/sops/tpu-bf16-attention-score-f32.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-len1024-20steps-timing.md`
 - `docs/sops/tpu-vm-v4-8-grpo-gsm8k-bs32-len1024-k1-mb4-20steps-timing.md`

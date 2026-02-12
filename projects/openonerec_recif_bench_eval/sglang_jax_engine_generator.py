@@ -59,6 +59,40 @@ def _load_engine_class():
             ) from exc
 
 
+def _patch_sglang_logprob_batch_types() -> None:
+    try:
+        import numpy as np
+        from sgl_jax.srt.layers.logits_processor import LogitsMetadata
+    except Exception:
+        return
+
+    if bool(getattr(LogitsMetadata, "_openonerec_logprob_batch_patch", False)):
+        return
+
+    original = LogitsMetadata.from_model_worker_batch.__func__
+
+    @classmethod
+    def _patched_from_model_worker_batch(cls, batch, mesh=None):
+        extend_seq_lens = getattr(batch, "extend_seq_lens", None)
+        if extend_seq_lens is not None and not hasattr(extend_seq_lens, "tolist"):
+            try:
+                batch.extend_seq_lens = np.asarray(extend_seq_lens, dtype=np.int32)
+            except Exception:
+                pass
+
+        extend_logprob_start_lens = getattr(batch, "extend_logprob_start_lens", None)
+        if extend_logprob_start_lens is not None and not hasattr(extend_logprob_start_lens, "tolist"):
+            try:
+                batch.extend_logprob_start_lens = np.asarray(extend_logprob_start_lens, dtype=np.int32)
+            except Exception:
+                pass
+
+        return original(cls, batch, mesh)
+
+    LogitsMetadata.from_model_worker_batch = _patched_from_model_worker_batch
+    setattr(LogitsMetadata, "_openonerec_logprob_batch_patch", True)
+
+
 def _sum_output_logprob(meta_info: dict[str, Any]) -> float:
     raw = meta_info.get("output_token_logprobs") or []
     total = 0.0
@@ -222,6 +256,7 @@ class SglangJaxEngineGenerator:
                     "(sglang-jax requires tokenizer batch encode off when using pre-tokenized input_ids)."
                 )
 
+        _patch_sglang_logprob_batch_types()
         engine_class = _load_engine_class()
 
         self.engine_kwargs = cfg

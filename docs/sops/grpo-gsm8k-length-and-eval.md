@@ -46,6 +46,17 @@
   - `eval_batches_per_process * prompts_per_pass * rollout.n * process_count`
 - Why it exists: increase it if you want a more stable eval estimate (averaged over more prompts) at the cost of more eval time.
 
+### `eval_full_every_steps`
+
+- Meaning: run a **full-split** eval sweep every **N** steps (`0` disables).
+- Where it’s used: in `projects/gsm8k_grpo/jax/train.py`, it triggers the same full-split logic used by `eval_full_sweep`, but periodically.
+- What it logs: `eval_full/*` plus mirrored `eval/accuracy/*` keys at the triggering train step.
+- Cost: expensive (runs the whole eval split); use only when you need stable accuracy curves.
+
+### `eval_full_sweep`
+
+- Meaning: run a **full-split** eval sweep **once at the end** of training (boolean).
+
 ## References
 
 - `projects/gsm8k_grpo/jax/train.py`

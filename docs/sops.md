@@ -64,6 +64,7 @@
 - GSM8K configs minimal set + YAML-only launcher policy: `docs/sops/gsm8k-config-minimal-yaml-only-launcher.md`
 - GRPO runner metrics: `docs/sops/grpo-gsm8k-metrics.md`
 - GRPO length + eval knobs: `docs/sops/grpo-gsm8k-length-and-eval.md`
+- GRPO adv==0 conditional entropy reg: `docs/sops/grpo-gsm8k-adv0-entropy-regularization.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
 - GRPO rollout backend abstraction (naive): `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - AReaL RL organization notes (for modularizing training): `docs/sops/areal-rl-organization.md`

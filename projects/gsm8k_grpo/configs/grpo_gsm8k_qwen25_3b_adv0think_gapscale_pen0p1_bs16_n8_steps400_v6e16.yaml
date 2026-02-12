@@ -1,0 +1,94 @@
+# GRPO/GSM8K adv==0 "<think>"-window negative-advantage variant (balanced)
+#
+# Workload:
+# - rollout.batch_size = 16 global prompts per step
+# - rollout.n = 8 completions per prompt
+# - sequences per step = 16 * 8 = 128
+#
+# TPU target:
+# - v6e-16 (multi-host). Use `mesh_shape: auto` + multihost launcher.
+#
+# Eval:
+# - Full test-set eval every 50 steps.
+#
+# max_length_total = 512 + 1024 = 1536
+model_path: Qwen/Qwen2.5-3B-Instruct
+steps: 400
+
+rollout:
+  backend: naive
+  batch_size: 16
+  n: 8
+  global_length: 512
+  max_length_sample: 1024
+  micro_batch_size: null
+  # sequences/device/pass (v6e-16 has local_device_count=4 per process)
+  micro_batch_size_per_device: 32
+  dynamic_sampling:
+    enabled: false
+    trigger: homogeneous_group
+    metric: acc
+    homogeneity_threshold: 1.0
+    min_unique_reward_values: 2
+    max_extra_roll_rounds: 10
+    target_valid_groups: null
+    fallback_policy: keep_last
+
+train:
+  micro_batch_size: null
+  micro_batch_size_per_device: 4
+  max_length_total: 1536
+  ppo_epochs: 1
+  grad_accum_steps: 4
+  beta: 0.0
+  gradient_checkpointing: true
+  optimizer:
+    name: lion
+    kwargs:
+      clip_norm: 1.0
+      weight_decay: 1.0e-8
+    lr_schedule:
+      name: warmup_cosine
+      kwargs:
+        init_value: 0.0
+        peak_value: 1.0e-6
+        end_value: 0.0
+        warmup_ratio: 0.05
+        warmup_steps: null
+
+algo:
+  estimator:
+    name: grpo
+    kwargs:
+      eps: 1.0e-4
+      clip_range: null
+  update:
+    name: policy_gradient
+    kwargs:
+      # Stats-only (no masking of policy loss).
+      token_focus: false
+      adv_zero_think_penalty:
+        enabled: true
+        tag: "<think>"
+        start_after_tag: true
+        window_tokens: 20
+        penalty: -0.1
+        no_think_policy: first_tokens
+        normalize: per_sequence
+        scale_mode: reward_gap
+
+mesh_shape: auto
+
+wandb_project: mllm-jax-grpo-gsm8k-adv0think-balance-batchscale
+wandb_mode: online
+wandb_name: null
+
+reward_weights: [1.0, 0.5, 0.5]
+
+eval_every_steps: 0
+eval_batches_per_process: 1
+eval_split: test
+eval_rollout_n: 1
+eval_full_every_steps: 50
+eval_full_sweep: false
+

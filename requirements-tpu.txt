@@ -21,3 +21,4 @@ webdataset
 pyyaml
 einops
 huggingface_hub[hf_transfer]
+gcsfs

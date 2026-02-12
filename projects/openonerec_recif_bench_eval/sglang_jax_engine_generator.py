@@ -103,6 +103,37 @@ def _extract_token_probs_from_meta(
     return out
 
 
+def _extract_top_token_candidates(
+    meta_info: dict[str, Any],
+    *,
+    max_count: int,
+) -> List[Tuple[int, float]]:
+    raw = meta_info.get("output_top_logprobs") or []
+    if not raw or not isinstance(raw, list):
+        return []
+
+    first_pos = raw[0] if raw else None
+    if not isinstance(first_pos, list):
+        return []
+
+    best_by_token: Dict[int, float] = {}
+    for item in first_pos:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        logprob = _as_float(item[0], float("-inf"))
+        token_id = _as_int(item[1], -1)
+        if token_id < 0 or not math.isfinite(logprob):
+            continue
+        prev = best_by_token.get(token_id)
+        if prev is None or logprob > prev:
+            best_by_token[token_id] = float(logprob)
+
+    candidates = sorted(best_by_token.items(), key=lambda x: x[1], reverse=True)
+    if max_count > 0:
+        candidates = candidates[:max_count]
+    return candidates
+
+
 class SglangJaxEngineGenerator:
     """`sglang-jax` Engine backend compatible with OpenOneRec benchmark generator contract.
 
@@ -161,6 +192,20 @@ class SglangJaxEngineGenerator:
         )
         self.beam_emulation_top_k = _normalize_top_k(beam_emulation_cfg.get("top_k", 50))
         self.beam_emulation_deduplicate = bool(beam_emulation_cfg.get("deduplicate", True))
+        self.beam_emulation_mode = str(
+            beam_emulation_cfg.get("mode") or "sampling_rerank"
+        ).strip().lower()
+        self.beam_emulation_use_task_sampling_params = bool(
+            beam_emulation_cfg.get("use_task_sampling_params", True)
+        )
+        self.beam_emulation_candidate_multiplier = max(
+            1,
+            _as_int(beam_emulation_cfg.get("candidate_multiplier", 1), 1),
+        )
+        self.beam_emulation_top_logprobs_num = max(
+            1,
+            _as_int(beam_emulation_cfg.get("top_logprobs_num", 64), 64),
+        )
 
         cfg = dict(engine_kwargs or {})
         cfg.setdefault("model_path", model_name_or_path)
@@ -235,15 +280,24 @@ class SglangJaxEngineGenerator:
     def _engine_generate(
         self,
         *,
-        prompts: List[str],
+        prompts: List[str] | None,
         sampling_params: dict[str, Any],
         return_logprob: bool,
+        input_ids: List[List[int]] | None = None,
+        top_logprobs_num: int | None = None,
         token_ids_logprob: List[int] | None = None,
     ) -> List[dict[str, Any]]:
+        if prompts is None and input_ids is None:
+            raise ValueError("Either prompts or input_ids must be provided")
+        if prompts is not None and input_ids is not None:
+            raise ValueError("Only one of prompts or input_ids can be provided")
+
         ret = self.engine.generate(
             prompt=prompts,
+            input_ids=input_ids,
             sampling_params=sampling_params,
             return_logprob=bool(return_logprob),
+            top_logprobs_num=top_logprobs_num,
             token_ids_logprob=token_ids_logprob,
             stream=False,
         )
@@ -271,13 +325,32 @@ class SglangJaxEngineGenerator:
         repetition_penalty = _as_float(repetition_penalty_raw, 1.0)
 
         if use_beam_emulation:
+            if self.beam_emulation_use_task_sampling_params:
+                temperature = _as_float(
+                    kwargs.get("temperature", self.beam_emulation_temperature),
+                    self.beam_emulation_temperature,
+                )
+                top_p = _as_float(
+                    kwargs.get("top_p", self.beam_emulation_top_p),
+                    self.beam_emulation_top_p,
+                )
+                top_k = _normalize_top_k(
+                    kwargs.get("top_k", self.beam_emulation_top_k),
+                )
+            else:
+                temperature = self.beam_emulation_temperature
+                top_p = self.beam_emulation_top_p
+                top_k = self.beam_emulation_top_k
+
             sampling_params: dict[str, Any] = {
                 "n": int(max(1, n)),
                 "max_new_tokens": max_new_tokens,
-                "temperature": float(max(self.beam_emulation_temperature, 1e-5)),
-                "top_p": float(self.beam_emulation_top_p),
-                "top_k": int(self.beam_emulation_top_k),
+                "temperature": float(max(temperature, 1e-5)),
+                "top_p": float(top_p),
+                "top_k": int(top_k),
                 "repetition_penalty": repetition_penalty,
+                "frequency_penalty": _as_float(kwargs.get("frequency_penalty", 0.0), 0.0),
+                "presence_penalty": _as_float(kwargs.get("presence_penalty", 0.0), 0.0),
             }
         else:
             do_sample = bool(kwargs.get("do_sample", True))
@@ -304,6 +377,164 @@ class SglangJaxEngineGenerator:
         if stop_sequences:
             sampling_params["stop"] = stop_sequences
         return sampling_params
+
+    def _generate_beam_with_top_logprobs(
+        self,
+        *,
+        batch_ids: List[str],
+        batch_texts: List[str],
+        kwargs: dict[str, Any],
+        num_beams: int,
+        n_candidates: int,
+        want_logprobs: bool,
+    ) -> tuple[Dict[str, List[str]], Dict[str, List[float]], Dict[str, Dict[str, List[Any]]]]:
+        batch_results: Dict[str, List[str]] = {}
+        batch_logprobs: Dict[str, List[float]] = {}
+        batch_mfu_stats: Dict[str, Dict[str, List[Any]]] = {}
+
+        prompt_token_ids_by_sid: Dict[str, List[int]] = {}
+        for sid, text in zip(batch_ids, batch_texts):
+            prompt_token_ids_by_sid[sid] = [
+                int(tok)
+                for tok in self.tokenizer.encode(str(text), add_special_tokens=False)
+            ]
+
+        requested_max_new = _as_int(kwargs.get("max_new_tokens", 128), 128)
+        clipped_max_new = self._clip_max_new_tokens_for_prompts(batch_texts, requested_max_new)
+        if clipped_max_new <= 0:
+            for sid in batch_ids:
+                batch_results[sid] = [""] * n_candidates
+                if want_logprobs:
+                    batch_logprobs[sid] = [float("-inf")] * n_candidates
+                batch_mfu_stats[sid] = {
+                    "input_tokens": [len(prompt_token_ids_by_sid[sid])],
+                    "output_tokens": [0],
+                    "times": [0.0],
+                }
+            return batch_results, batch_logprobs, batch_mfu_stats
+
+        repetition_penalty = _as_float(kwargs.get("repetition_penalty", 1.0), 1.0)
+        frequency_penalty = _as_float(kwargs.get("frequency_penalty", 0.0), 0.0)
+        presence_penalty = _as_float(kwargs.get("presence_penalty", 0.0), 0.0)
+
+        beams_by_sid: Dict[str, List[tuple[List[int], float]]] = {
+            sid: [([], 0.0)] for sid in batch_ids
+        }
+
+        t0 = time.time()
+        for _ in range(int(clipped_max_new)):
+            request_input_ids: List[List[int]] = []
+            request_owner: List[tuple[str, List[int], float]] = []
+
+            for sid in batch_ids:
+                base_ids = prompt_token_ids_by_sid[sid]
+                row_beams = beams_by_sid.get(sid) or []
+                for prefix_ids, score in row_beams:
+                    request_input_ids.append(base_ids + prefix_ids)
+                    request_owner.append((sid, prefix_ids, score))
+
+            if not request_input_ids:
+                break
+
+            sampling_params = {
+                "n": 1,
+                "max_new_tokens": 1,
+                "temperature": 1.0,
+                "top_p": 1.0,
+                "top_k": -1,
+                "repetition_penalty": repetition_penalty,
+                "frequency_penalty": frequency_penalty,
+                "presence_penalty": presence_penalty,
+            }
+
+            raw_outputs = self._engine_generate(
+                prompts=None,
+                input_ids=request_input_ids,
+                sampling_params=sampling_params,
+                return_logprob=True,
+                top_logprobs_num=self.beam_emulation_top_logprobs_num,
+            )
+
+            if len(raw_outputs) != len(request_owner):
+                raise RuntimeError(
+                    "sglang-jax output count mismatch in top-logprobs beam: "
+                    f"expected {len(request_owner)}, got {len(raw_outputs)}"
+                )
+
+            expanded_by_sid: Dict[str, List[tuple[List[int], float]]] = {sid: [] for sid in batch_ids}
+            for (sid, prefix_ids, base_score), out in zip(request_owner, raw_outputs):
+                meta = out.get("meta_info") or {}
+                top_candidates = _extract_top_token_candidates(
+                    meta,
+                    max_count=self.beam_emulation_top_logprobs_num,
+                )
+
+                if not top_candidates:
+                    out_ids = out.get("output_ids") or []
+                    output_token_logprobs = meta.get("output_token_logprobs") or []
+                    fallback_lp = float("-inf")
+                    if output_token_logprobs and isinstance(output_token_logprobs[0], (list, tuple)):
+                        fallback_lp = _as_float(output_token_logprobs[0][0], float("-inf"))
+                    if out_ids:
+                        top_candidates = [(int(out_ids[0]), float(fallback_lp))]
+
+                for token_id, token_lp in top_candidates:
+                    expanded_by_sid[sid].append((prefix_ids + [int(token_id)], float(base_score + token_lp)))
+
+            for sid in batch_ids:
+                row_candidates = expanded_by_sid.get(sid) or []
+                if not row_candidates:
+                    continue
+                row_candidates = sorted(row_candidates, key=lambda x: x[1], reverse=True)
+
+                if self.beam_emulation_deduplicate:
+                    deduped: List[tuple[List[int], float]] = []
+                    seen: set[tuple[int, ...]] = set()
+                    for token_ids, score in row_candidates:
+                        key = tuple(int(tok) for tok in token_ids)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        deduped.append((token_ids, score))
+                    row_candidates = deduped
+
+                beams_by_sid[sid] = row_candidates[:num_beams]
+
+        batch_dt = time.time() - t0
+
+        for sid in batch_ids:
+            row_beams = beams_by_sid.get(sid) or []
+            row_beams = sorted(row_beams, key=lambda x: x[1], reverse=True)
+            row_beams = row_beams[:n_candidates]
+
+            decoded: List[str] = []
+            scores: List[float] = []
+            output_tokens_total = 0
+            for token_ids, score in row_beams:
+                decoded.append(
+                    self.tokenizer.decode(
+                        token_ids,
+                        skip_special_tokens=True,
+                    )
+                )
+                scores.append(float(score))
+                output_tokens_total += len(token_ids)
+
+            if len(decoded) < n_candidates:
+                pad_count = n_candidates - len(decoded)
+                decoded.extend([""] * pad_count)
+                scores.extend([float("-inf")] * pad_count)
+
+            batch_results[sid] = decoded
+            if want_logprobs:
+                batch_logprobs[sid] = scores
+            batch_mfu_stats[sid] = {
+                "input_tokens": [len(prompt_token_ids_by_sid[sid])],
+                "output_tokens": [int(max(0, output_tokens_total))],
+                "times": [batch_dt],
+            }
+
+        return batch_results, batch_logprobs, batch_mfu_stats
 
     def generate_standard(
         self,
@@ -336,6 +567,10 @@ class SglangJaxEngineGenerator:
         else:
             n_candidates = num_return_sequences
 
+        candidate_pool_size = n_candidates
+        if use_beam_emulation:
+            candidate_pool_size = int(max(n_candidates, n_candidates * self.beam_emulation_candidate_multiplier))
+
         want_logprobs = bool(
             kwargs.get("return_logprobs")
             or kwargs.get("output_scores")
@@ -351,10 +586,29 @@ class SglangJaxEngineGenerator:
             batch_ids = sample_ids[start:end]
             batch_texts = prompt_texts[start:end]
 
+            if use_beam_emulation and self.beam_emulation_mode in {
+                "top_logprobs_beam",
+                "toplogprobs_beam",
+                "token_beam",
+            }:
+                beam_results, beam_logprobs, beam_mfu = self._generate_beam_with_top_logprobs(
+                    batch_ids=batch_ids,
+                    batch_texts=batch_texts,
+                    kwargs=dict(kwargs),
+                    num_beams=int(num_beams or n_candidates),
+                    n_candidates=n_candidates,
+                    want_logprobs=want_logprobs,
+                )
+                results.update(beam_results)
+                if want_logprobs:
+                    logprobs.update(beam_logprobs)
+                mfu_stats.update(beam_mfu)
+                continue
+
             expanded_texts: List[str] = []
             expanded_owner: List[str] = []
             for sid, text in zip(batch_ids, batch_texts):
-                for _ in range(n_candidates):
+                for _ in range(candidate_pool_size):
                     expanded_texts.append(text)
                     expanded_owner.append(sid)
 

@@ -1179,6 +1179,22 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             train_log["train-ppo/value_pred_mean"] = _as_float(last_meta["value_pred_mean"])
         if "return_mean" in last_meta:
             train_log["train-ppo/return_mean"] = _as_float(last_meta["return_mean"])
+        has_adv0_entropy_meta = False
+        if "loss_pg" in last_meta:
+            train_log["train-adv0_entropy/loss_pg"] = _as_float(last_meta["loss_pg"])
+            has_adv0_entropy_meta = True
+        if "loss_entropy_adv0" in last_meta:
+            train_log["train-adv0_entropy/loss_entropy_adv0"] = _as_float(last_meta["loss_entropy_adv0"])
+            has_adv0_entropy_meta = True
+        if "adv0_token_frac" in last_meta:
+            train_log["train-adv0_entropy/adv0_token_frac"] = _as_float(last_meta["adv0_token_frac"])
+            has_adv0_entropy_meta = True
+        if "entropy_adv0_mean" in last_meta:
+            train_log["train-adv0_entropy/entropy_adv0_mean"] = _as_float(last_meta["entropy_adv0_mean"])
+            has_adv0_entropy_meta = True
+        if has_adv0_entropy_meta:
+            train_log["train-adv0_entropy/coef"] = float(adv0_entropy_coef)
+            train_log["train-adv0_entropy/eps"] = float(adv0_entropy_eps)
         if len(step_times) >= 10:
             train_log["time/train/step_avg_last10_s"] = float(sum(step_times[-10:]) / 10.0)
         for name, mean_value in zip(reward_func_names, per_func_means):

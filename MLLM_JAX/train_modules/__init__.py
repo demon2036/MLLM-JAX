@@ -91,6 +91,8 @@ class TrainGRPOModule(nn.Module):
     epsilon_low: float = 0.2
     epsilon_high: float = 0.3
     entropy_threshold: float = 0.3 # Used only for monitoring metrics now
+    adv0_entropy_coef: float = 0.0
+    adv0_entropy_eps: float = 0.0
 
     def __call__(self, inputs) -> ArrayTree:
         input_ids = inputs['input_ids']
@@ -176,13 +178,28 @@ class TrainGRPOModule(nn.Module):
 
         per_token_loss=-per_token_ppo_loss
         total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
-        loss = ((per_token_loss * mask_loss).sum()) / total_valid_token_count
+        loss_pg = ((per_token_loss * mask_loss).sum()) / total_valid_token_count
+
+        # --- Entropy Regularization (advantage==0 only) ---
+        adv0_sample_mask = (jnp.abs(inputs['advantages']) <= self.adv0_entropy_eps)  # Shape: [B]
+        adv0_token_mask = mask_loss * adv0_sample_mask[..., None]  # Shape: [B, L-1]
+        adv0_token_count = adv0_token_mask.sum()
+        entropy_adv0_sum = (token_entropy * adv0_token_mask).sum()
+        loss_entropy_adv0 = -self.adv0_entropy_coef * entropy_adv0_sum / total_valid_token_count
+
+        loss = loss_pg + loss_entropy_adv0
+        adv0_token_frac = jnp.where(total_valid_token_count > 0, adv0_token_count / total_valid_token_count, 0.0)
+        entropy_adv0_mean = jnp.where(adv0_token_count > 0, entropy_adv0_sum / adv0_token_count, 0.0)
 
 
         # --- Return Dictionary ---
         # Stop gradient on values returned only for monitoring or next step's input
         return {
             "loss": loss, # The main loss to minimize
+            "loss_pg": loss_pg,
+            "loss_entropy_adv0": loss_entropy_adv0,
+            "adv0_token_frac": adv0_token_frac,
+            "entropy_adv0_mean": entropy_adv0_mean,
             'per_token_logps': jax.lax.stop_gradient(per_token_logps), # Needed for next iteration's old_logps
             # Monitoring outputs related to original entropy calculation:
             'entropy': avg_entropy_per_sample,

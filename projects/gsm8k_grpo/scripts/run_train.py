@@ -593,6 +593,10 @@ def main() -> None:
         print(f"WARNING: ignoring deprecated env var overrides (use YAML instead): {details}")
 
     config_path = str(args.config or "")
+    if config_path.strip() == "":
+        # Treat an explicitly empty `--config ""` as "use the default config path"
+        # (mainly for print-config workflows / tests).
+        config_path = str(parser.get_default("config") or "")
     cfg_dict = load_config(config_path if config_path else None, args.set)
     _strict_legacy_key_guard(cfg_dict)
     cfg = _cfg_from_dict(cfg_dict, config_path=config_path or "<default>")

@@ -15,7 +15,10 @@ DEFAULT_ESTIMATOR_KWARGS: dict[str, dict[str, Any]] = {
 }
 
 DEFAULT_UPDATE_KWARGS: dict[str, dict[str, Any]] = {
-    "policy_gradient": {},
+    "policy_gradient": {
+        "adv0_entropy_coef": 0.0,
+        "adv0_entropy_eps": 0.0,
+    },
     "ppo": {
         "value_coef": 0.5,
         "value_clip_range": 0.2,
@@ -175,7 +178,16 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
 
     merged = {**defaults, **kwargs}
     if update_name == "policy_gradient":
-        return {}
+        adv0_entropy_coef = float(merged["adv0_entropy_coef"])
+        adv0_entropy_eps = float(merged["adv0_entropy_eps"])
+        if adv0_entropy_coef < 0:
+            raise ValueError("algo.update.kwargs.adv0_entropy_coef must be >= 0")
+        if adv0_entropy_eps < 0:
+            raise ValueError("algo.update.kwargs.adv0_entropy_eps must be >= 0")
+        return {
+            "adv0_entropy_coef": adv0_entropy_coef,
+            "adv0_entropy_eps": adv0_entropy_eps,
+        }
 
     return {
         "value_coef": float(merged["value_coef"]),

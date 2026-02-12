@@ -65,6 +65,10 @@ def get_state(
     token_focus_prob_threshold = 0.3
     token_focus_max_tokens_per_sequence = 10
     token_focus_use_old_logps = True
+    adv_zero_think_penalty_enabled = False
+    adv_zero_think_penalty_value = -0.5
+    adv_zero_think_penalty_window_tokens = 20
+    adv_zero_think_penalty_normalize = "per_sequence"
     if update_cfg is not None:
         update_kwargs = getattr(update_cfg, "kwargs", None)
         if isinstance(update_kwargs, dict):
@@ -83,6 +87,21 @@ def get_state(
             elif token_focus_raw is not None:
                 raise ValueError("algo.update.kwargs.token_focus must be a dict or boolean when provided")
 
+            adv_zero_think_raw = update_kwargs.get("adv_zero_think_penalty")
+            if isinstance(adv_zero_think_raw, dict):
+                adv_zero_think_penalty_enabled = bool(adv_zero_think_raw.get("enabled", False))
+                adv_zero_think_penalty_value = float(adv_zero_think_raw.get("penalty", adv_zero_think_penalty_value))
+                adv_zero_think_penalty_window_tokens = int(
+                    adv_zero_think_raw.get("window_tokens", adv_zero_think_penalty_window_tokens)
+                )
+                adv_zero_think_penalty_normalize = str(
+                    adv_zero_think_raw.get("normalize", adv_zero_think_penalty_normalize)
+                )
+            elif isinstance(adv_zero_think_raw, bool):
+                adv_zero_think_penalty_enabled = bool(adv_zero_think_raw)
+            elif adv_zero_think_raw is not None:
+                raise ValueError("algo.update.kwargs.adv_zero_think_penalty must be a dict or boolean when provided")
+
     if bool(gradient_checkpointing):
         train_module = flax.linen.remat(
             TrainGRPOModule,
@@ -99,6 +118,10 @@ def get_state(
             token_focus_prob_threshold=token_focus_prob_threshold,
             token_focus_max_tokens_per_sequence=token_focus_max_tokens_per_sequence,
             token_focus_use_old_logps=token_focus_use_old_logps,
+            adv_zero_think_penalty_enabled=adv_zero_think_penalty_enabled,
+            adv_zero_think_penalty_value=adv_zero_think_penalty_value,
+            adv_zero_think_penalty_window_tokens=adv_zero_think_penalty_window_tokens,
+            adv_zero_think_penalty_normalize=adv_zero_think_penalty_normalize,
         )
     else:
         train_module = TrainGRPOModule(
@@ -113,6 +136,10 @@ def get_state(
             token_focus_prob_threshold=token_focus_prob_threshold,
             token_focus_max_tokens_per_sequence=token_focus_max_tokens_per_sequence,
             token_focus_use_old_logps=token_focus_use_old_logps,
+            adv_zero_think_penalty_enabled=adv_zero_think_penalty_enabled,
+            adv_zero_think_penalty_value=adv_zero_think_penalty_value,
+            adv_zero_think_penalty_window_tokens=adv_zero_think_penalty_window_tokens,
+            adv_zero_think_penalty_normalize=adv_zero_think_penalty_normalize,
         )
 
 

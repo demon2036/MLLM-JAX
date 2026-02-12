@@ -14,6 +14,7 @@ from plugins.training.core.data.padding import pad_2d_right
 from plugins.training.core.sharding.batch import local_from_global, make_form_training_global_array
 from plugins.training.core.logging.wandb import maybe_init_wandb
 from plugins.training.core.tokenizer import prepare_tokenizer
+from plugins.training.rl.adv_zero_think_penalty import build_adv_zero_think_window_mask
 from plugins.training.rl.advantage.estimators import compute_gae_advantages
 from plugins.training.rl.algorithms import create_algorithm
 from plugins.training.rl.ppo import get_ppo_state, ppo_training_step
@@ -553,6 +554,25 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             return params
         return {"model": params["model"], "lm_head": params["lm_head"]}
 
+    update_kwargs = dict(getattr(cfg.algo.update, "kwargs", None) or {})
+    adv_zero_think_cfg = update_kwargs.get("adv_zero_think_penalty")
+    adv_zero_think_enabled = bool(isinstance(adv_zero_think_cfg, dict) and bool(adv_zero_think_cfg.get("enabled", False)))
+    adv_zero_think_tag_token_ids: list[int] = []
+    adv_zero_think_window_tokens = 20
+    adv_zero_think_start_after_tag = True
+    adv_zero_think_no_think_policy = "first_tokens"
+    if adv_zero_think_enabled:
+        tag_text = str(adv_zero_think_cfg.get("tag", "<think>"))
+        encode_tokenizer = sampler.tokenizer if sampler is not None else tokenizer
+        adv_zero_think_tag_token_ids = list(encode_tokenizer.encode(tag_text, add_special_tokens=False))
+        if not adv_zero_think_tag_token_ids:
+            raise ValueError(f"adv_zero_think_penalty.tag produced empty tokenization: tag={tag_text!r}")
+        adv_zero_think_window_tokens = int(adv_zero_think_cfg.get("window_tokens", adv_zero_think_window_tokens))
+        adv_zero_think_start_after_tag = bool(adv_zero_think_cfg.get("start_after_tag", adv_zero_think_start_after_tag))
+        adv_zero_think_no_think_policy = str(
+            adv_zero_think_cfg.get("no_think_policy", adv_zero_think_no_think_policy)
+        ).strip().lower()
+
     last_full_eval_step: int | None = None
 
     def _run_full_eval_sweep(*, step_for_logging: int) -> None:
@@ -739,6 +759,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     step_times: list[float] = []
     for step in range(cfg.steps):
         t_step0 = time.perf_counter()
+        adv_zero_think_has_tag_fraction_adv_zero = 0.0
 
         # --- Rollout (sampling) ---
         # Keep rollout logic local to avoid cross-host coupling; global sync happens at the batch->global array step.
@@ -999,6 +1020,22 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             datas_np["advantages"] = advantages_np
             t_adv += time.perf_counter() - t_adv0
 
+        if adv_zero_think_enabled and datas_np and advantages_np.ndim == 1:
+            adv_zero_seq_mask = np.asarray(advantages_np == 0, dtype=bool).reshape(-1)
+            window_mask, tag_found = build_adv_zero_think_window_mask(
+                input_ids=np.asarray(datas_np["input_ids"]),
+                labels=np.asarray(datas_np["labels"]),
+                tag_token_ids=adv_zero_think_tag_token_ids,
+                window_tokens=int(adv_zero_think_window_tokens),
+                start_after_tag=bool(adv_zero_think_start_after_tag),
+                no_think_policy=str(adv_zero_think_no_think_policy),
+                sequence_mask=adv_zero_seq_mask,
+            )
+            datas_np["adv_zero_window_mask"] = window_mask
+            adv_zero_count = int(adv_zero_seq_mask.sum())
+            if adv_zero_count > 0:
+                adv_zero_think_has_tag_fraction_adv_zero = float(tag_found[adv_zero_seq_mask].mean())
+
         rewards_global = np.asarray(process_allgather(rewards_np)).reshape(-1)
         reward_global_stats = _stats_1d(rewards_global)
 
@@ -1078,6 +1115,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             "train-other/batch_global": global_batch,
             "train-other/batch_local": int(local_batch),
             "train-other/total_valid_token_count": valid_tokens_global,
+            # adv==0 think-window penalty diagnostics (host-side)
+            "adv_zero_think/has_tag_fraction_adv_zero": float(adv_zero_think_has_tag_fraction_adv_zero),
             # Reward / advantage
             "train-reward/total/mean": reward_global_stats["mean"],
             "train-reward/total/std": reward_global_stats["std"],
@@ -1165,7 +1204,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
         # --- Diagnostics emitted by the train module ---
         for k, v in last_meta.items():
-            if isinstance(k, str) and (k.startswith("token_focus/") or k.startswith("adv/")):
+            if isinstance(k, str) and (k.startswith("token_focus/") or k.startswith("adv/") or k.startswith("adv_zero_think/")):
                 try:
                     train_log[k] = _as_float(v)
                 except Exception:  # pragma: no cover

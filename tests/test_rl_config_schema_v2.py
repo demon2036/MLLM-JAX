@@ -52,6 +52,50 @@ class TestRlConfigSchemaV2(unittest.TestCase):
         self.assertEqual(int(token_focus["max_tokens_per_sequence"]), 10)
         self.assertTrue(bool(token_focus["use_old_logps"]))
 
+    def test_policy_gradient_accepts_adv_zero_think_penalty(self) -> None:
+        normalized, _algo_name, _estimator_name, update_name = normalize_algo_config(
+            AlgoConfig(
+                estimator=PluginConfig(name="grpo", kwargs={}),
+                update=PluginConfig(
+                    name="policy_gradient",
+                    kwargs={
+                        "adv_zero_think_penalty": {
+                            "enabled": True,
+                            "tag": "<think>",
+                            "window_tokens": 20,
+                            "penalty": -0.5,
+                        }
+                    },
+                ),
+            )
+        )
+        self.assertEqual(update_name, "policy_gradient")
+        adv0 = normalized.update.kwargs["adv_zero_think_penalty"]
+        self.assertTrue(bool(adv0["enabled"]))
+        self.assertEqual(str(adv0["tag"]), "<think>")
+        self.assertTrue(bool(adv0["start_after_tag"]))
+        self.assertEqual(int(adv0["window_tokens"]), 20)
+        self.assertLess(float(adv0["penalty"]), 0.0)
+        self.assertEqual(str(adv0["no_think_policy"]), "first_tokens")
+        self.assertEqual(str(adv0["normalize"]), "per_sequence")
+
+    def test_adv_zero_think_penalty_rejects_non_negative_penalty(self) -> None:
+        with self.assertRaises(ValueError):
+            normalize_algo_config(
+                AlgoConfig(
+                    estimator=PluginConfig(name="grpo", kwargs={}),
+                    update=PluginConfig(
+                        name="policy_gradient",
+                        kwargs={
+                            "adv_zero_think_penalty": {
+                                "enabled": True,
+                                "penalty": 0.0,
+                            }
+                        },
+                    ),
+                )
+            )
+
     def test_ppo_defaults_filled(self) -> None:
         normalized, _algo_name, estimator_name, update_name = normalize_algo_config(
             AlgoConfig(

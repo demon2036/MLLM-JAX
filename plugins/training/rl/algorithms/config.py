@@ -15,12 +15,13 @@ DEFAULT_ESTIMATOR_KWARGS: dict[str, dict[str, Any]] = {
 }
 
 DEFAULT_UPDATE_KWARGS: dict[str, dict[str, Any]] = {
-    "policy_gradient": {"token_focus": None},
+    "policy_gradient": {"token_focus": None, "adv_zero_think_penalty": None},
     "ppo": {
         "value_coef": 0.5,
         "value_clip_range": 0.2,
         "entropy_coef": 0.0,
         "token_focus": None,
+        "adv_zero_think_penalty": None,
     },
 }
 
@@ -214,8 +215,76 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
     else:
         raise ValueError("algo.update.kwargs.token_focus must be a dict or boolean when provided")
 
+    adv_zero_think_raw = merged.get("adv_zero_think_penalty")
+    adv_zero_think_penalty: dict[str, Any] | None
+    if adv_zero_think_raw is None:
+        adv_zero_think_penalty = None
+    elif isinstance(adv_zero_think_raw, bool):
+        adv_zero_think_penalty = {
+            "enabled": bool(adv_zero_think_raw),
+            "tag": "<think>",
+            "start_after_tag": True,
+            "window_tokens": 20,
+            "penalty": -0.5,
+            "no_think_policy": "first_tokens",
+            "normalize": "per_sequence",
+        }
+    elif isinstance(adv_zero_think_raw, dict):
+        allowed = {
+            "enabled",
+            "tag",
+            "start_after_tag",
+            "window_tokens",
+            "penalty",
+            "no_think_policy",
+            "normalize",
+        }
+        unknown_adv0 = sorted(set(adv_zero_think_raw.keys()) - allowed)
+        if unknown_adv0:
+            raise ValueError(
+                "Unsupported algo.update.kwargs.adv_zero_think_penalty keys: "
+                f"{unknown_adv0}; allowed={sorted(allowed)}"
+            )
+        enabled = _as_bool(
+            adv_zero_think_raw.get("enabled", False),
+            label="algo.update.kwargs.adv_zero_think_penalty.enabled",
+        )
+        tag = str(adv_zero_think_raw.get("tag", "<think>"))
+        start_after_tag = _as_bool(
+            adv_zero_think_raw.get("start_after_tag", True),
+            label="algo.update.kwargs.adv_zero_think_penalty.start_after_tag",
+        )
+        window_tokens = int(adv_zero_think_raw.get("window_tokens", 20))
+        if window_tokens < 1:
+            raise ValueError("algo.update.kwargs.adv_zero_think_penalty.window_tokens must be >= 1")
+        penalty = float(adv_zero_think_raw.get("penalty", -0.5))
+        if penalty >= 0:
+            raise ValueError("algo.update.kwargs.adv_zero_think_penalty.penalty must be < 0")
+        no_think_policy = str(adv_zero_think_raw.get("no_think_policy", "first_tokens")).strip().lower()
+        if no_think_policy not in {"first_tokens", "mask_all"}:
+            raise ValueError("algo.update.kwargs.adv_zero_think_penalty.no_think_policy must be one of: first_tokens, mask_all")
+        normalize = str(adv_zero_think_raw.get("normalize", "per_sequence")).strip().lower()
+        if normalize not in {"per_sequence", "global_token"}:
+            raise ValueError("algo.update.kwargs.adv_zero_think_penalty.normalize must be one of: per_sequence, global_token")
+        adv_zero_think_penalty = {
+            "enabled": bool(enabled),
+            "tag": tag,
+            "start_after_tag": bool(start_after_tag),
+            "window_tokens": int(window_tokens),
+            "penalty": float(penalty),
+            "no_think_policy": str(no_think_policy),
+            "normalize": str(normalize),
+        }
+    else:
+        raise ValueError("algo.update.kwargs.adv_zero_think_penalty must be a dict or boolean when provided")
+
     if update_name == "policy_gradient":
-        return {} if token_focus is None else {"token_focus": token_focus}
+        out: dict[str, Any] = {}
+        if token_focus is not None:
+            out["token_focus"] = token_focus
+        if adv_zero_think_penalty is not None:
+            out["adv_zero_think_penalty"] = adv_zero_think_penalty
+        return out
 
     normalized: dict[str, Any] = {
         "value_coef": float(merged["value_coef"]),
@@ -224,6 +293,8 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
     }
     if token_focus is not None:
         normalized["token_focus"] = token_focus
+    if adv_zero_think_penalty is not None:
+        normalized["adv_zero_think_penalty"] = adv_zero_think_penalty
     return normalized
 
 

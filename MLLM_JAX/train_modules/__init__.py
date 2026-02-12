@@ -98,6 +98,10 @@ class TrainGRPOModule(nn.Module):
     token_focus_prob_threshold: float = 0.3
     token_focus_max_tokens_per_sequence: int = 10
     token_focus_use_old_logps: bool = True
+    adv_zero_think_penalty_enabled: bool = False
+    adv_zero_think_penalty_value: float = -0.5
+    adv_zero_think_penalty_window_tokens: int = 20
+    adv_zero_think_penalty_normalize: str = "per_sequence"
 
     def __call__(self, inputs) -> ArrayTree:
         input_ids = inputs['input_ids']
@@ -206,25 +210,67 @@ class TrainGRPOModule(nn.Module):
         ratio = jnp.exp(per_token_logps - old_per_token_logps)
         clipped_ratio = jnp.clip(ratio, 1.0 - self.epsilon_low, 1.0 + self.epsilon_high)
 
-        # Advantages shape [B] -> [B, 1] for broadcasting
-        adv_broadcast=inputs['advantages'][...,None]
-        per_token_loss1 = ratio * adv_broadcast
-        per_token_loss2 = clipped_ratio * adv_broadcast
-        per_token_ppo_loss = jnp.minimum(per_token_loss1, per_token_loss2) # Shape: [B, L-1]
-
-        per_token_loss=-per_token_ppo_loss
         total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
 
-        if token_focus_apply:
-            mask_policy = mask_loss * focus_mask
-            denom = jnp.maximum(mask_policy.sum(), 1.0)
-        else:
-            mask_policy = mask_loss
-            denom = total_valid_token_count
-
-        loss = ((per_token_loss * mask_policy).sum()) / denom
-
         advantages = inputs.get("advantages")
+        if advantages is None:
+            adv_seq = jnp.zeros((int(mask_loss.shape[0]),), dtype=jnp.float32)
+        else:
+            adv_seq = jnp.asarray(advantages, dtype=jnp.float32).reshape(-1)
+        if adv_seq.shape[0] != mask_loss.shape[0]:
+            raise ValueError(
+                f"advantages must have shape [B], got {adv_seq.shape} but B={int(mask_loss.shape[0])}"
+            )
+
+        adv_zero_seq = (adv_seq == 0).astype(jnp.float32)
+        adv_nonzero_seq = 1.0 - adv_zero_seq
+
+        if token_focus_apply:
+            mask_policy_base = mask_loss * focus_mask
+            denom_nonzero = jnp.maximum((mask_policy_base * adv_nonzero_seq[:, None]).sum(), 1.0)
+        else:
+            mask_policy_base = mask_loss
+            denom_nonzero = total_valid_token_count
+
+        # --- Standard GRPO term: only adv != 0 sequences contribute ---
+        adv_nonzero = adv_seq[:, None]
+        per_token_loss1_nonzero = ratio * adv_nonzero
+        per_token_loss2_nonzero = clipped_ratio * adv_nonzero
+        per_token_ppo_loss_nonzero = jnp.minimum(per_token_loss1_nonzero, per_token_loss2_nonzero)
+        per_token_loss_nonzero = -per_token_ppo_loss_nonzero
+
+        mask_nonzero = mask_policy_base * adv_nonzero_seq[:, None]
+        loss_nonzero = (per_token_loss_nonzero * mask_nonzero).sum() / denom_nonzero
+
+        # --- adv==0 think-window penalty term (optional) ---
+        adv_zero_think_apply = bool(self.adv_zero_think_penalty_enabled)
+        if adv_zero_think_apply:
+            window_mask_full = inputs["adv_zero_window_mask"].astype(jnp.float32)
+            window_mask = window_mask_full[:, 1:].astype(jnp.float32)
+            window_mask = window_mask * mask_loss
+            mask_zero = window_mask * adv_zero_seq[:, None]
+            adv_zero = float(self.adv_zero_think_penalty_value) * window_mask
+
+            per_token_loss1_zero = ratio * adv_zero
+            per_token_loss2_zero = clipped_ratio * adv_zero
+            per_token_ppo_loss_zero = jnp.minimum(per_token_loss1_zero, per_token_loss2_zero)
+            per_token_loss_zero = -per_token_ppo_loss_zero
+
+            normalize_mode = str(self.adv_zero_think_penalty_normalize or "per_sequence").strip().lower()
+            if normalize_mode == "global_token":
+                denom_zero = jnp.maximum(mask_zero.sum(), 1.0)
+                loss_zero = (per_token_loss_zero * mask_zero).sum() / denom_zero
+            else:
+                per_seq_denom = jnp.maximum(mask_zero.sum(axis=-1), 1.0)
+                loss_zero_seq = (per_token_loss_zero * mask_zero).sum(axis=-1) / per_seq_denom
+                denom_seq = jnp.maximum(adv_zero_seq.sum(), 1.0)
+                loss_zero = (loss_zero_seq * adv_zero_seq).sum() / denom_seq
+        else:
+            mask_zero = jnp.zeros_like(mask_loss, dtype=jnp.float32)
+            loss_zero = jnp.asarray(0.0, dtype=jnp.float32)
+
+        loss = loss_nonzero + loss_zero
+
         if advantages is None:
             adv_zero_fraction = jnp.asarray(0.0, dtype=jnp.float32)
             adv_pos_fraction = jnp.asarray(0.0, dtype=jnp.float32)
@@ -238,9 +284,11 @@ class TrainGRPOModule(nn.Module):
             empty_seq_fraction_adv_pos = jnp.asarray(0.0, dtype=jnp.float32)
             empty_seq_fraction_adv_neg = jnp.asarray(0.0, dtype=jnp.float32)
             empty_seq_fraction_adv_zero = jnp.asarray(0.0, dtype=jnp.float32)
+            adv_zero_think_tokens_mean = jnp.asarray(0.0, dtype=jnp.float32)
+            adv_zero_think_empty_seq_fraction = jnp.asarray(0.0, dtype=jnp.float32)
         else:
-            adv = jnp.asarray(advantages, dtype=jnp.float32).reshape(-1)
-            adv_zero = (adv == 0).astype(jnp.float32)
+            adv = adv_seq
+            adv_zero = adv_zero_seq
             adv_pos = (adv > 0).astype(jnp.float32)
             adv_neg = (adv < 0).astype(jnp.float32)
 
@@ -288,6 +336,20 @@ class TrainGRPOModule(nn.Module):
             empty_seq_fraction_adv_zero = jnp.where(
                 zero_seq > 0, (empty_seq * adv_zero).sum() / (zero_seq + 1e-8), 0.0
             )
+            if adv_zero_think_apply:
+                adv_zero_mask_counts = mask_zero.sum(axis=-1).astype(jnp.float32)
+                adv_zero_count = adv_zero.sum()
+                adv_zero_think_tokens_mean = jnp.where(
+                    adv_zero_count > 0, adv_zero_mask_counts.sum() / (adv_zero_count + 1e-8), 0.0
+                )
+                adv_zero_think_empty_seq_fraction = jnp.where(
+                    adv_zero_count > 0,
+                    ((adv_zero_mask_counts == 0).astype(jnp.float32) * adv_zero).sum() / (adv_zero_count + 1e-8),
+                    0.0,
+                )
+            else:
+                adv_zero_think_tokens_mean = jnp.asarray(0.0, dtype=jnp.float32)
+                adv_zero_think_empty_seq_fraction = jnp.asarray(0.0, dtype=jnp.float32)
 
         # --- Return Dictionary ---
         # Stop gradient on values returned only for monitoring or next step's input
@@ -297,6 +359,13 @@ class TrainGRPOModule(nn.Module):
             # Monitoring outputs related to original entropy calculation:
             'entropy': avg_entropy_per_sample,
             'entropy_loss': avg_entropy_per_sample_truncated,
+            "adv_zero_think/enabled": jnp.asarray(1.0 if adv_zero_think_apply else 0.0, dtype=jnp.float32),
+            "adv_zero_think/penalty": jnp.asarray(float(self.adv_zero_think_penalty_value), dtype=jnp.float32),
+            "adv_zero_think/window_tokens": jnp.asarray(float(self.adv_zero_think_penalty_window_tokens), dtype=jnp.float32),
+            "adv_zero_think/loss_nonzero": jnp.asarray(loss_nonzero, dtype=jnp.float32),
+            "adv_zero_think/loss_zero": jnp.asarray(loss_zero, dtype=jnp.float32),
+            "adv_zero_think/masked_tokens_mean_adv_zero": adv_zero_think_tokens_mean,
+            "adv_zero_think/empty_seq_fraction_adv_zero": adv_zero_think_empty_seq_fraction,
             "token_focus/enabled": jnp.asarray(1.0 if token_focus_apply else 0.0, dtype=jnp.float32),
             "token_focus/metrics_enabled": jnp.asarray(1.0 if token_focus_metrics else 0.0, dtype=jnp.float32),
             "token_focus/stats_only": jnp.asarray(

@@ -28,7 +28,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # `projects/gsm8k_grpo` requires `micro_batch_size_per_device` to be set
         # in YAML (no hidden rollout auto-split heuristics).
         "micro_batch_size": None,
-        "micro_batch_size_per_device": None,
+        "micro_batch_size_per_device": 32,
         "dynamic_sampling": {
             "enabled": False,
             "trigger": "homogeneous_group",

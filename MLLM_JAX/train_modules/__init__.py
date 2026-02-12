@@ -91,6 +91,8 @@ class TrainGRPOModule(nn.Module):
     epsilon_low: float = 0.2
     epsilon_high: float = 0.3
     entropy_threshold: float = 0.3 # Used only for monitoring metrics now
+    adv_zero_entropy_coef: float = 0.0
+    adv_zero_epsilon: float = 0.0
 
     def __call__(self, inputs) -> ArrayTree:
         input_ids = inputs['input_ids']
@@ -117,6 +119,7 @@ class TrainGRPOModule(nn.Module):
         chosen_ids = input_ids[:, 1:]  # (B, L-1)
         # *** IMPORTANT: Use pad_token_id to create the mask correctly ***
         mask_loss = labels[:, 1:] # Shape: [B, L-1]
+        mask_loss_f = mask_loss.astype(jnp.float32)
         # Avoid division by zero for counts
 
         # Log probs of chosen tokens under current policy
@@ -137,9 +140,9 @@ class TrainGRPOModule(nn.Module):
         token_entropy = -jnp.sum(probs * jax.lax.log(probs + 1e-9), axis=-1)  # Shape: [B, L-1]
 
         # 2. Average entropy per sample (using the correct mask)
-        masked_token_entropy = token_entropy * mask_loss
+        masked_token_entropy = token_entropy * mask_loss_f
         sum_entropy_per_sample = masked_token_entropy.sum(axis=-1) # Shape: [B]
-        avg_entropy_per_sample = sum_entropy_per_sample / mask_loss.sum(axis=-1) # Shape: [B]
+        avg_entropy_per_sample = sum_entropy_per_sample / mask_loss_f.sum(axis=-1) # Shape: [B]
 
         # --- Monitoring Metrics (Optional: Original entropy/entropy_loss calculation) ---
         # These are NOT part of the main loss calculation anymore, just for logging.
@@ -175,17 +178,41 @@ class TrainGRPOModule(nn.Module):
         per_token_ppo_loss = jnp.minimum(per_token_loss1, per_token_loss2) # Shape: [B, L-1]
 
         per_token_loss=-per_token_ppo_loss
-        total_valid_token_count = inputs.get("total_valid_token_count", mask_loss.sum())
-        loss = ((per_token_loss * mask_loss).sum()) / total_valid_token_count
+        total_valid_token_count = jnp.asarray(inputs.get("total_valid_token_count", mask_loss_f.sum()), dtype=jnp.float32)
+        total_valid_token_count = jnp.maximum(total_valid_token_count, 1.0)
+
+        loss_pg = ((per_token_loss * mask_loss_f).sum()) / total_valid_token_count
+
+        advantages = jnp.asarray(inputs["advantages"], dtype=jnp.float32).reshape(-1)
+        adv_zero_eps = float(self.adv_zero_epsilon)
+        adv_zero_mask = jnp.abs(advantages) <= adv_zero_eps
+        adv_zero_seq_fraction = adv_zero_mask.astype(jnp.float32).mean()
+
+        adv_zero_token_mask = mask_loss_f * adv_zero_mask[:, None].astype(jnp.float32)
+        adv_zero_token_count = adv_zero_token_mask.sum()
+        adv_zero_token_fraction = adv_zero_token_count / total_valid_token_count
+
+        adv_zero_entropy_sum = (token_entropy * adv_zero_token_mask).sum()
+        entropy_adv0_per_valid_token = adv_zero_entropy_sum / total_valid_token_count
+        entropy_adv0_mean_per_adv0_token = adv_zero_entropy_sum / (adv_zero_token_count + 1e-8)
+
+        loss_entropy_adv0 = -float(self.adv_zero_entropy_coef) * entropy_adv0_per_valid_token
+        loss = loss_pg + loss_entropy_adv0
 
 
         # --- Return Dictionary ---
         # Stop gradient on values returned only for monitoring or next step's input
         return {
             "loss": loss, # The main loss to minimize
+            "loss_pg": loss_pg,
+            "loss_entropy_adv0": loss_entropy_adv0,
             'per_token_logps': jax.lax.stop_gradient(per_token_logps), # Needed for next iteration's old_logps
             # Monitoring outputs related to original entropy calculation:
             'entropy': avg_entropy_per_sample,
             'entropy_loss': avg_entropy_per_sample_truncated,
+            "adv_zero_seq_fraction": adv_zero_seq_fraction,
+            "adv_zero_token_fraction": adv_zero_token_fraction,
+            "entropy_adv0_per_valid_token": entropy_adv0_per_valid_token,
+            "entropy_adv0_mean_per_adv0_token": entropy_adv0_mean_per_adv0_token,
             # 'per_token_kl':per_token_kl_metrics
         }

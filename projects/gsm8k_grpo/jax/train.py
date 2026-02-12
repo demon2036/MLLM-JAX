@@ -395,8 +395,12 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             print("WARNING: EVAL_FULL_SWEEP env override is deprecated; use eval_full_sweep in YAML.")
         full_sweep_enabled = True
 
+    eval_full_every_steps = int(getattr(cfg, "eval_full_every_steps", 0) or 0)
+    if eval_full_every_steps < 0:
+        raise ValueError("eval_full_every_steps must be >= 0")
+
     eval_qas: list[dict[str, str]] = []
-    if int(cfg.eval_every_steps) > 0 or full_sweep_enabled:
+    if int(cfg.eval_every_steps) > 0 or full_sweep_enabled or eval_full_every_steps > 0:
         eval_dataset = load_dataset("openai/gsm8k", "main", split=str(cfg.eval_split))
         eval_qas = [{"Q": q, "A": a.split("####")[-1].strip()} for q, a in zip(eval_dataset["question"], eval_dataset["answer"])]
         if jax.process_count() > 1:
@@ -460,6 +464,10 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
         value_fn = jax.jit(_value_forward)
     else:
+        update_kwargs = dict(getattr(cfg.algo.update, "kwargs", {}) or {})
+        adv_zero_entropy_coef = float(update_kwargs.get("adv_zero_entropy_coef", 0.0))
+        adv_zero_epsilon = float(update_kwargs.get("adv_zero_epsilon", 0.0))
+
         state, sampler, _state_sharding = get_state(
             mesh,
             training_steps=cfg.steps,
@@ -471,6 +479,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             gradient_checkpointing=cfg.train.gradient_checkpointing,
             create_sampler=True,
             tx=tx,
+            adv_zero_entropy_coef=adv_zero_entropy_coef,
+            adv_zero_epsilon=adv_zero_epsilon,
         )
         train_fn = jax.jit(training_step, donate_argnums=(0,))
     if os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1":
@@ -543,6 +553,206 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         mode=cfg.wandb_mode,
         process_index=jax.process_index(),
     )
+
+    adv_zero_epsilon_for_sign = float((getattr(cfg.algo.update, "kwargs", {}) or {}).get("adv_zero_epsilon", 0.0) or 0.0)
+    if adv_zero_epsilon_for_sign < 0:
+        raise ValueError("algo.update.kwargs.adv_zero_epsilon must be >= 0")
+
+    def _run_eval_full_sweep(*, state, step: int) -> None:
+        """Full-split eval sweep (no updates), logged at the given train step."""
+        if not eval_qas:
+            return
+
+        # Full-sweep eval is intended to match the "full test split" metric.
+        # Keep eval rollout count independent from train rollout count.
+        train_prompts_per_pass = int(prompts_per_pass)
+        train_n = int(n)
+        local_seq_batch_train = train_prompts_per_pass * train_n
+
+        eval_n = int(eval_rollout_n)
+        if eval_n < 1:
+            raise ValueError(f"eval_rollout_n must be >= 1, got {eval_n}")
+        if local_seq_batch_train % eval_n != 0:
+            raise ValueError(
+                "eval_rollout_n must divide the per-process sequence batch size: "
+                f"eval_rollout_n={eval_n} local_seq_batch_train={local_seq_batch_train}"
+            )
+
+        prompt_batch_size = local_seq_batch_train // eval_n
+
+        t_eval0 = time.perf_counter()
+        t_eval_sync_s = 0.0
+        t_eval_rollout_generate_s = 0.0
+        t_eval_rollout_flush_s = 0.0
+        t_eval_reward_s = 0.0
+        t_eval_release_s = 0.0
+
+        local_question_count = int(len(eval_qas))
+        local_prompt_sum_accuracy = 0.0
+        local_prompt_count = 0
+
+        local_completion_sum_correct = 0.0
+        local_completion_sum_format = 0.0
+        local_completion_sum_tag = 0.0
+        local_completion_count = 0
+
+        t0 = time.perf_counter()
+        eval_policy_params = _policy_params_for_rollout(state.params)
+        eval_rollout_module.sync_weights(eval_policy_params)
+        t_eval_sync_s += time.perf_counter() - t0
+
+        pad_item = eval_qas[0]
+        for start in range(0, local_question_count, prompt_batch_size):
+            batch_items = eval_qas[start : start + prompt_batch_size]
+            valid_prompts = int(len(batch_items))
+            if valid_prompts <= 0:
+                continue
+            if valid_prompts < prompt_batch_size:
+                batch_items = batch_items + [pad_item] * (prompt_batch_size - valid_prompts)
+
+            eval_prompts_base = [item["Q"] for item in batch_items]
+            eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(eval_n)]
+            eval_repeated_items = [item for item in batch_items for _ in range(eval_n)]
+
+            t0 = time.perf_counter()
+            eval_rollout = eval_rollout_module.rollout(
+                prompts=eval_repeated_prompts,
+                sampler=eval_sampler,
+                params=eval_policy_params,
+                system_prompt=system_prompt,
+                global_length=int(cfg.rollout.global_length),
+                max_length_sample=cfg.rollout.max_length_sample,
+            )
+            eval_answers = eval_rollout.answers
+            t_eval_rollout_generate_s += time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            eval_rollout_module.flush_cache()
+            t_eval_rollout_flush_s += time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            eval_rewards_out = reward_module.compute(inputs=eval_repeated_items, answers=eval_answers)
+            eval_rewards_per_func = eval_rewards_out.rewards_per_func
+            t_eval_reward_s += time.perf_counter() - t0
+
+            correct_per_completion = np.asarray(eval_rewards_per_func[0], dtype=np.float32).reshape(-1)
+            format_per_completion = np.asarray(eval_rewards_per_func[1], dtype=np.float32).reshape(-1)
+            tag_per_completion = np.asarray(eval_rewards_per_func[2], dtype=np.float32).reshape(-1)
+
+            prompt_mask = np.zeros((prompt_batch_size,), dtype=np.float32)
+            prompt_mask[:valid_prompts] = 1.0
+            completion_mask = np.repeat(prompt_mask, eval_n)
+
+            # "Accuracy" is defined as correctness of the first (or only)
+            # completion per prompt, matching the "each question once" metric.
+            if eval_n == 1:
+                local_prompt_sum_accuracy += float((correct_per_completion * prompt_mask).sum())
+            else:
+                pass_at_1, _pass_at_k, _mean_at_k = _group_correct_per_prompt(correct_per_completion, n=eval_n)
+                local_prompt_sum_accuracy += float((pass_at_1 * prompt_mask).sum())
+            local_prompt_count += int(valid_prompts)
+
+            local_completion_sum_correct += float((correct_per_completion * completion_mask).sum())
+            local_completion_sum_format += float((format_per_completion * completion_mask).sum())
+            local_completion_sum_tag += float((tag_per_completion * completion_mask).sum())
+            local_completion_count += int(valid_prompts) * int(eval_n)
+
+        t0 = time.perf_counter()
+        eval_rollout_module.release_weights()
+        t_eval_release_s += time.perf_counter() - t0
+
+        # Aggregate across processes.
+        # Order:
+        # - question_count
+        # - prompt_count
+        # - prompt_sum_accuracy
+        # - completion_count
+        # - completion_sum_correct
+        # - completion_sum_format
+        # - completion_sum_tag
+        local_stats = np.asarray(
+            [
+                float(local_question_count),
+                float(local_prompt_count),
+                float(local_prompt_sum_accuracy),
+                float(local_completion_count),
+                float(local_completion_sum_correct),
+                float(local_completion_sum_format),
+                float(local_completion_sum_tag),
+            ],
+            dtype=np.float64,
+        )
+        gathered = np.asarray(process_allgather(local_stats))
+        global_stats = gathered.sum(axis=0)
+
+        global_question_count = int(global_stats[0])
+        global_prompt_count = int(global_stats[1])
+        global_prompt_sum_accuracy = float(global_stats[2])
+        global_completion_count = int(global_stats[3])
+        global_completion_sum_correct = float(global_stats[4])
+        global_completion_sum_format = float(global_stats[5])
+        global_completion_sum_tag = float(global_stats[6])
+
+        t_eval_s = time.perf_counter() - t_eval0
+        prompt_denom = max(global_prompt_count, 1)
+        completion_denom = max(global_completion_count, 1)
+
+        accuracy_global = global_prompt_sum_accuracy / float(prompt_denom)
+        mean_correct_per_completion = global_completion_sum_correct / float(completion_denom)
+        mean_format_per_completion = global_completion_sum_format / float(completion_denom)
+        mean_tag_per_completion = global_completion_sum_tag / float(completion_denom)
+
+        full_eval_logs: dict[str, Any] = {
+            "eval_full/enabled": 1,
+            "eval_full/split": str(cfg.eval_split),
+            "eval_full/questions_global": global_question_count,
+            "eval_full/samples_per_question": int(eval_n),
+            "eval_full/accuracy": float(accuracy_global),
+            # Backward-compatible alias (previously logged as pass@1).
+            "eval_full/accuracy/pass_at_1": float(accuracy_global),
+            # Per-completion means (kept for reference; NOT the main "accuracy").
+            "eval_full/reward_correct/mean_per_completion": float(mean_correct_per_completion),
+            "eval_full/reward_format/mean_per_completion": float(mean_format_per_completion),
+            "eval_full/tag_count_reward/mean_per_completion": float(mean_tag_per_completion),
+            "time/eval_full/sync_s": float(t_eval_sync_s),
+            "time/eval_full/rollout_generate_s": float(t_eval_rollout_generate_s),
+            "time/eval_full/rollout_flush_s": float(t_eval_rollout_flush_s),
+            "time/eval_full/reward_s": float(t_eval_reward_s),
+            "time/eval_full/release_s": float(t_eval_release_s),
+            "time/eval_full/step_s": float(t_eval_s),
+        }
+        if global_question_count > 0:
+            full_eval_logs["time/eval_full/s_per_question"] = float(t_eval_s) / float(global_question_count)
+
+        # Mirror key names under `eval/accuracy/*` so dashboards don't need to change.
+        full_eval_logs.update(
+            {
+                "eval/accuracy/full_sweep": 1,
+                "eval/accuracy/split": str(cfg.eval_split),
+                "eval/accuracy/questions_global": global_question_count,
+                "eval/accuracy/samples_per_question": int(eval_n),
+                "eval/accuracy/accuracy": float(accuracy_global),
+                # Backward-compatible alias (previously logged as pass@1).
+                "eval/accuracy/pass_at_1": float(accuracy_global),
+            }
+        )
+
+        if jax.process_index() == 0:
+            print(
+                "eval_full "
+                + " ".join(
+                    [
+                        f"step={int(step)}",
+                        f"split={cfg.eval_split}",
+                        f"questions={global_question_count}",
+                        f"samples_per_question={eval_n}",
+                        f"accuracy={accuracy_global:.4f}",
+                        f"t={t_eval_s:.2f}s",
+                    ]
+                )
+            )
+        if wandb is not None and jax.process_index() == 0:
+            wandb.log(full_eval_logs, step=int(step))
 
     def _policy_params_for_rollout(params):
         if not use_value_head:
@@ -854,14 +1064,32 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             entropy_value = _as_float(entropy)
 
         # --- Derived stats (global) ---
+        adv_sign_log: dict[str, Any] = {}
         if advantages_np.ndim == 1:
             advantages_global = np.asarray(process_allgather(advantages_np)).reshape(-1)
             adv_global_stats = _stats_1d(advantages_global)
+            adv_values = advantages_global.astype(np.float32).reshape(-1)
         else:
             advantages_global = np.asarray(process_allgather(advantages_np))
             mask_global = np.asarray(process_allgather(np.asarray(datas_np["labels"][:, 1:], dtype=np.float32)))
             advantages_flat = advantages_global[mask_global > 0]
             adv_global_stats = _stats_1d(advantages_flat.astype(np.float32))
+            adv_values = advantages_flat.astype(np.float32).reshape(-1)
+
+        if adv_values.size > 0:
+            eps = float(adv_zero_epsilon_for_sign)
+            adv_zero = int((np.abs(adv_values) <= eps).sum())
+            adv_pos = int((adv_values > eps).sum())
+            adv_neg = int((adv_values < -eps).sum())
+            adv_total = int(adv_values.size)
+            adv_sign_log = {
+                "train-reward/advantage/sign/zero_count": adv_zero,
+                "train-reward/advantage/sign/pos_count": adv_pos,
+                "train-reward/advantage/sign/neg_count": adv_neg,
+                "train-reward/advantage/sign/zero_fraction": float(adv_zero) / float(adv_total),
+                "train-reward/advantage/sign/pos_fraction": float(adv_pos) / float(adv_total),
+                "train-reward/advantage/sign/neg_fraction": float(adv_neg) / float(adv_total),
+            }
 
         rewards_per_func_global = np.asarray(process_allgather(rewards_per_func))
         # shape [process_count, num_funcs, B_local]
@@ -920,6 +1148,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             "time/train/update_s": float(t_update),
             "time/train/step_s": float(t_step),
         }
+        if adv_sign_log:
+            train_log.update(adv_sign_log)
         if dynamic_enabled:
             if dynamic_total_groups > 0:
                 initial_ratio = float(dynamic_initial_homogeneous) / float(dynamic_total_groups)
@@ -967,6 +1197,18 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             train_log["train-ppo/value_pred_mean"] = _as_float(last_meta["value_pred_mean"])
         if "return_mean" in last_meta:
             train_log["train-ppo/return_mean"] = _as_float(last_meta["return_mean"])
+        if "loss_pg" in last_meta:
+            train_log["train-loss/policy_gradient"] = _as_float(last_meta["loss_pg"])
+        if "loss_entropy_adv0" in last_meta:
+            train_log["train-loss/entropy_adv0_reg"] = _as_float(last_meta["loss_entropy_adv0"])
+        if "adv_zero_seq_fraction" in last_meta:
+            train_log["train-adv_zero/seq_fraction"] = _as_float(last_meta["adv_zero_seq_fraction"])
+        if "adv_zero_token_fraction" in last_meta:
+            train_log["train-adv_zero/token_fraction"] = _as_float(last_meta["adv_zero_token_fraction"])
+        if "entropy_adv0_per_valid_token" in last_meta:
+            train_log["train-adv_zero/entropy_per_valid_token"] = _as_float(last_meta["entropy_adv0_per_valid_token"])
+        if "entropy_adv0_mean_per_adv0_token" in last_meta:
+            train_log["train-adv_zero/entropy_mean_per_adv0_token"] = _as_float(last_meta["entropy_adv0_mean_per_adv0_token"])
         if len(step_times) >= 10:
             train_log["time/train/step_avg_last10_s"] = float(sum(step_times[-10:]) / 10.0)
         for name, mean_value in zip(reward_func_names, per_func_means):
@@ -1120,6 +1362,10 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             if wandb is not None and jax.process_index() == 0:
                 wandb.log(eval_logs, step=step)
 
+        # --- Full eval sweep every N steps (optional; no updates) ---
+        if eval_full_every_steps > 0 and eval_qas and ((step + 1) % int(eval_full_every_steps) == 0):
+            _run_eval_full_sweep(state=state, step=int(step))
+
     # --- Full eval sweep (optional; no updates) ---
     #
     # Motivation: the lightweight eval above uses a small subset of the eval split
@@ -1128,194 +1374,4 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     #
     # Enable via YAML (`eval_full_sweep: true`).
     if full_sweep_enabled and eval_qas:
-        # Full-sweep eval is intended to match the "full test split" metric.
-        # Keep eval rollout count independent from train rollout count.
-        train_prompts_per_pass = int(prompts_per_pass)
-        train_n = int(n)
-        local_seq_batch_train = train_prompts_per_pass * train_n
-
-        eval_n = int(eval_rollout_n)
-        if eval_n < 1:
-            raise ValueError(f"eval_rollout_n must be >= 1, got {eval_n}")
-        if local_seq_batch_train % eval_n != 0:
-            raise ValueError(
-                "eval_rollout_n must divide the per-process sequence batch size: "
-                f"eval_rollout_n={eval_n} local_seq_batch_train={local_seq_batch_train}"
-            )
-
-        prompt_batch_size = local_seq_batch_train // eval_n
-
-        t_eval0 = time.perf_counter()
-        t_eval_sync_s = 0.0
-        t_eval_rollout_generate_s = 0.0
-        t_eval_rollout_flush_s = 0.0
-        t_eval_reward_s = 0.0
-        t_eval_release_s = 0.0
-
-        local_question_count = int(len(eval_qas))
-        local_prompt_sum_accuracy = 0.0
-        local_prompt_count = 0
-
-        local_completion_sum_correct = 0.0
-        local_completion_sum_format = 0.0
-        local_completion_sum_tag = 0.0
-        local_completion_count = 0
-
-        t0 = time.perf_counter()
-        eval_policy_params = _policy_params_for_rollout(state.params)
-        eval_rollout_module.sync_weights(eval_policy_params)
-        t_eval_sync_s += time.perf_counter() - t0
-
-        pad_item = eval_qas[0]
-        for start in range(0, local_question_count, prompt_batch_size):
-            batch_items = eval_qas[start : start + prompt_batch_size]
-            valid_prompts = int(len(batch_items))
-            if valid_prompts <= 0:
-                continue
-            if valid_prompts < prompt_batch_size:
-                batch_items = batch_items + [pad_item] * (prompt_batch_size - valid_prompts)
-
-            eval_prompts_base = [item["Q"] for item in batch_items]
-            eval_repeated_prompts = [p for p in eval_prompts_base for _ in range(eval_n)]
-            eval_repeated_items = [item for item in batch_items for _ in range(eval_n)]
-
-            t0 = time.perf_counter()
-            eval_rollout = eval_rollout_module.rollout(
-                prompts=eval_repeated_prompts,
-                sampler=eval_sampler,
-                params=eval_policy_params,
-                system_prompt=system_prompt,
-                global_length=int(cfg.rollout.global_length),
-                max_length_sample=cfg.rollout.max_length_sample,
-            )
-            eval_answers = eval_rollout.answers
-            t_eval_rollout_generate_s += time.perf_counter() - t0
-
-            t0 = time.perf_counter()
-            eval_rollout_module.flush_cache()
-            t_eval_rollout_flush_s += time.perf_counter() - t0
-
-            t0 = time.perf_counter()
-            eval_rewards_out = reward_module.compute(inputs=eval_repeated_items, answers=eval_answers)
-            eval_rewards_per_func = eval_rewards_out.rewards_per_func
-            t_eval_reward_s += time.perf_counter() - t0
-
-            correct_per_completion = np.asarray(eval_rewards_per_func[0], dtype=np.float32).reshape(-1)
-            format_per_completion = np.asarray(eval_rewards_per_func[1], dtype=np.float32).reshape(-1)
-            tag_per_completion = np.asarray(eval_rewards_per_func[2], dtype=np.float32).reshape(-1)
-
-            prompt_mask = np.zeros((prompt_batch_size,), dtype=np.float32)
-            prompt_mask[:valid_prompts] = 1.0
-            completion_mask = np.repeat(prompt_mask, eval_n)
-
-            # "Accuracy" is defined as correctness of the first (or only)
-            # completion per prompt, matching the "each question once" metric.
-            if eval_n == 1:
-                local_prompt_sum_accuracy += float((correct_per_completion * prompt_mask).sum())
-            else:
-                pass_at_1, _pass_at_k, _mean_at_k = _group_correct_per_prompt(
-                    correct_per_completion, n=eval_n
-                )
-                local_prompt_sum_accuracy += float((pass_at_1 * prompt_mask).sum())
-            local_prompt_count += int(valid_prompts)
-
-            local_completion_sum_correct += float((correct_per_completion * completion_mask).sum())
-            local_completion_sum_format += float((format_per_completion * completion_mask).sum())
-            local_completion_sum_tag += float((tag_per_completion * completion_mask).sum())
-            local_completion_count += int(valid_prompts) * int(eval_n)
-
-        t0 = time.perf_counter()
-        eval_rollout_module.release_weights()
-        t_eval_release_s += time.perf_counter() - t0
-
-        # Aggregate across processes.
-        # Order:
-        # - question_count
-        # - prompt_count
-        # - prompt_sum_accuracy
-        # - completion_count
-        # - completion_sum_correct
-        # - completion_sum_format
-        # - completion_sum_tag
-        local_stats = np.asarray(
-            [
-                float(local_question_count),
-                float(local_prompt_count),
-                float(local_prompt_sum_accuracy),
-                float(local_completion_count),
-                float(local_completion_sum_correct),
-                float(local_completion_sum_format),
-                float(local_completion_sum_tag),
-            ],
-            dtype=np.float64,
-        )
-        gathered = np.asarray(process_allgather(local_stats))
-        global_stats = gathered.sum(axis=0)
-
-        global_question_count = int(global_stats[0])
-        global_prompt_count = int(global_stats[1])
-        global_prompt_sum_accuracy = float(global_stats[2])
-        global_completion_count = int(global_stats[3])
-        global_completion_sum_correct = float(global_stats[4])
-        global_completion_sum_format = float(global_stats[5])
-        global_completion_sum_tag = float(global_stats[6])
-
-        t_eval_s = time.perf_counter() - t_eval0
-        prompt_denom = max(global_prompt_count, 1)
-        completion_denom = max(global_completion_count, 1)
-
-        accuracy_global = global_prompt_sum_accuracy / float(prompt_denom)
-        mean_correct_per_completion = global_completion_sum_correct / float(completion_denom)
-        mean_format_per_completion = global_completion_sum_format / float(completion_denom)
-        mean_tag_per_completion = global_completion_sum_tag / float(completion_denom)
-
-        full_eval_logs: dict[str, Any] = {
-            "eval_full/enabled": 1,
-            "eval_full/split": str(cfg.eval_split),
-            "eval_full/questions_global": global_question_count,
-            "eval_full/samples_per_question": int(eval_n),
-            "eval_full/accuracy": float(accuracy_global),
-            # Backward-compatible alias (previously logged as pass@1).
-            "eval_full/accuracy/pass_at_1": float(accuracy_global),
-            # Per-completion means (kept for reference; NOT the main "accuracy").
-            "eval_full/reward_correct/mean_per_completion": float(mean_correct_per_completion),
-            "eval_full/reward_format/mean_per_completion": float(mean_format_per_completion),
-            "eval_full/tag_count_reward/mean_per_completion": float(mean_tag_per_completion),
-            "time/eval_full/sync_s": float(t_eval_sync_s),
-            "time/eval_full/rollout_generate_s": float(t_eval_rollout_generate_s),
-            "time/eval_full/rollout_flush_s": float(t_eval_rollout_flush_s),
-            "time/eval_full/reward_s": float(t_eval_reward_s),
-            "time/eval_full/release_s": float(t_eval_release_s),
-            "time/eval_full/step_s": float(t_eval_s),
-        }
-        if global_question_count > 0:
-            full_eval_logs["time/eval_full/s_per_question"] = float(t_eval_s) / float(global_question_count)
-
-        # Mirror key names under `eval/accuracy/*` so dashboards don't need to change.
-        full_eval_logs.update(
-            {
-                "eval/accuracy/full_sweep": 1,
-                "eval/accuracy/split": str(cfg.eval_split),
-                "eval/accuracy/questions_global": global_question_count,
-                "eval/accuracy/samples_per_question": int(eval_n),
-                "eval/accuracy/accuracy": float(accuracy_global),
-                # Backward-compatible alias (previously logged as pass@1).
-                "eval/accuracy/pass_at_1": float(accuracy_global),
-            }
-        )
-
-        if jax.process_index() == 0:
-            print(
-                "eval_full "
-                + " ".join(
-                    [
-                        f"split={cfg.eval_split}",
-                        f"questions={global_question_count}",
-                        f"samples_per_question={eval_n}",
-                        f"accuracy={accuracy_global:.4f}",
-                        f"t={t_eval_s:.2f}s",
-                    ]
-                )
-            )
-        if wandb is not None and jax.process_index() == 0:
-            wandb.log(full_eval_logs, step=int(cfg.steps) - 1)
+        _run_eval_full_sweep(state=state, step=int(cfg.steps) - 1)

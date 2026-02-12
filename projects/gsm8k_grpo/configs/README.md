@@ -6,6 +6,8 @@ This folder keeps explicit full-schema configs for the main TPU runs:
 - `rl_gsm8k_qwen25_3b_batch128_roll8_literal_maxrl_v6e8.yaml`
 - `grpo_gsm8k_qwen25_3b_batch16_roll128_eval1full_v6e8.yaml`
 - `rl_gsm8k_qwen25_3b_batch16_roll128_eval1full_maxrl_v6e8.yaml`
+- `grpo_gsm8k_qwen25_3b_batch16_roll8_steps400_evalfull50_v6e8.yaml`
+- `grpo_gsm8k_qwen25_3b_batch16_roll8_steps400_evalfull50_adv0entropy0p01_v6e8.yaml`
 
 All configs are explicit (no hidden defaults). Common fixed values:
 

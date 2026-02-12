@@ -15,7 +15,14 @@ DEFAULT_ESTIMATOR_KWARGS: dict[str, dict[str, Any]] = {
 }
 
 DEFAULT_UPDATE_KWARGS: dict[str, dict[str, Any]] = {
-    "policy_gradient": {},
+    "policy_gradient": {
+        # Conditional entropy regularization applied only when advantage is (near) zero.
+        #
+        # These knobs are intentionally defined at the update-plugin level so they are
+        # logged to W&B configs and can be changed only via YAML (no env overrides).
+        "adv_zero_entropy_coef": 0.0,
+        "adv_zero_epsilon": 0.0,
+    },
     "ppo": {
         "value_coef": 0.5,
         "value_clip_range": 0.2,
@@ -175,7 +182,16 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
 
     merged = {**defaults, **kwargs}
     if update_name == "policy_gradient":
-        return {}
+        adv_zero_entropy_coef = float(merged["adv_zero_entropy_coef"])
+        adv_zero_epsilon = float(merged["adv_zero_epsilon"])
+        if adv_zero_entropy_coef < 0:
+            raise ValueError("algo.update.kwargs.adv_zero_entropy_coef must be >= 0")
+        if adv_zero_epsilon < 0:
+            raise ValueError("algo.update.kwargs.adv_zero_epsilon must be >= 0")
+        return {
+            "adv_zero_entropy_coef": adv_zero_entropy_coef,
+            "adv_zero_epsilon": adv_zero_epsilon,
+        }
 
     return {
         "value_coef": float(merged["value_coef"]),

@@ -214,6 +214,14 @@ class SglangJaxEngineGenerator:
         if torch_dtype is not None:
             cfg.setdefault("dtype", str(torch_dtype))
 
+        if self.beam_emulation_mode in {"top_logprobs_beam", "toplogprobs_beam", "token_beam"}:
+            if bool(cfg.get("enable_tokenizer_batch_encode", False)):
+                cfg["enable_tokenizer_batch_encode"] = False
+                print(
+                    "[warn] Disabled engine.enable_tokenizer_batch_encode for top-logprobs beam mode "
+                    "(sglang-jax requires tokenizer batch encode off when using pre-tokenized input_ids)."
+                )
+
         engine_class = _load_engine_class()
 
         self.engine_kwargs = cfg

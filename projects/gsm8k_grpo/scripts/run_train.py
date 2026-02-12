@@ -22,6 +22,7 @@ from plugins.training.rl.algorithms import (
     normalize_algo_config,
 )
 from projects.gsm8k_grpo.config_schema import (
+    GRPOCheckpointConfig,
     GRPODynamicSamplingConfig,
     GRPOGsm8kConfig,
     GRPORolloutConfig,
@@ -496,6 +497,50 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     eval_full_sweep_raw = cfg.get("eval_full_sweep")
     eval_full_sweep = _as_bool(eval_full_sweep_raw, label="eval_full_sweep") if eval_full_sweep_raw is not None else False
 
+    checkpoint_raw = cfg.get("checkpoint")
+    if checkpoint_raw is None:
+        checkpoint_cfg = GRPOCheckpointConfig()
+    elif not isinstance(checkpoint_raw, dict):
+        raise ValueError("checkpoint must be a dict when provided")
+    else:
+        dir_raw = checkpoint_raw.get("dir")
+        if dir_raw is None:
+            dir_raw = checkpoint_raw.get("path")
+        ckpt_dir = str(dir_raw or "").strip()
+
+        save_every_raw = checkpoint_raw.get("save_every_steps")
+        if save_every_raw is None:
+            save_every_raw = checkpoint_raw.get("every_steps")
+        save_every_steps = int(save_every_raw or 0)
+        if save_every_steps < 0:
+            raise ValueError("checkpoint.save_every_steps must be >= 0")
+
+        max_to_keep_raw = checkpoint_raw.get("max_to_keep")
+        if max_to_keep_raw is None:
+            max_to_keep = 3
+        else:
+            if isinstance(max_to_keep_raw, str) and max_to_keep_raw.strip().lower() in {"none", "null"}:
+                max_to_keep = None
+            elif max_to_keep_raw is None:
+                max_to_keep = None
+            else:
+                max_to_keep = int(max_to_keep_raw)
+                if max_to_keep <= 0:
+                    raise ValueError("checkpoint.max_to_keep must be > 0 when set")
+
+        resume_raw = checkpoint_raw.get("resume")
+        resume = True if resume_raw is None else _as_bool(resume_raw, label="checkpoint.resume")
+
+        if ckpt_dir != "" and save_every_steps == 0:
+            raise ValueError("checkpoint.dir is set but checkpoint.save_every_steps=0 (disabled). Set it to >= 1.")
+
+        checkpoint_cfg = GRPOCheckpointConfig(
+            dir=ckpt_dir,
+            save_every_steps=save_every_steps,
+            max_to_keep=max_to_keep,
+            resume=resume,
+        )
+
     return GRPOGsm8kConfig(
         config_path=str(config_path),
         model_path=model_path,
@@ -532,6 +577,7 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
         eval_rollout_n=eval_rollout_n,
         eval_full_every_steps=eval_full_every_steps,
         eval_full_sweep=eval_full_sweep,
+        checkpoint=checkpoint_cfg,
     )
 
 

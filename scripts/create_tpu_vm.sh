@@ -8,7 +8,7 @@ Create a Cloud TPU VM (spot by default).
 Usage:
   scripts/create_tpu_vm.sh [--type v2-8|v3-8|v4-8|v6e-8] [--zone ZONE] [--name TPU_NAME]
                            [--version RUNTIME_VERSION] [--project PROJECT]
-                           [--spot|--on-demand] [--async] [--dry-run]
+                           [--spot|--on-demand] [--autocheckpoint] [--async] [--dry-run]
 
 Defaults:
   --type    v6e-8
@@ -42,6 +42,7 @@ RUNTIME_VERSION=""
 PROJECT=""
 USE_SPOT="1"
 USE_ASYNC="0"
+AUTOCKPT="0"
 DRY_RUN="0"
 
 while [[ $# -gt 0 ]]; do
@@ -60,6 +61,8 @@ while [[ $# -gt 0 ]]; do
       USE_SPOT="1"; shift ;;
     --on-demand|--no-spot)
       USE_SPOT="0"; shift ;;
+    --autocheckpoint|--autocheckpoint-enabled)
+      AUTOCKPT="1"; shift ;;
     --async)
       USE_ASYNC="1"; shift ;;
     --dry-run)
@@ -114,6 +117,9 @@ create_args=(
 if [[ "$USE_SPOT" == "1" ]]; then
   create_args+=("--spot")
 fi
+if [[ "$AUTOCKPT" == "1" ]]; then
+  create_args+=("--autocheckpoint-enabled")
+fi
 if [[ "$USE_ASYNC" == "1" ]]; then
   create_args+=("--async")
 fi
@@ -124,6 +130,7 @@ echo "TPU name:        $TPU_NAME"
 echo "Accelerator:     $TPU_TYPE"
 echo "Runtime version: $RUNTIME_VERSION"
 echo "Provisioning:    $([[ "$USE_SPOT" == "1" ]] && echo spot || echo on-demand)"
+echo "Autocheckpoint:  $([[ "$AUTOCKPT" == "1" ]] && echo enabled || echo disabled)"
 echo
 
 echo "gcloud ${create_args[*]}"

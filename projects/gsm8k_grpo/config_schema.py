@@ -7,6 +7,19 @@ from plugins.training.rl.algorithms import AlgoConfig, sanitize_algo_config_for_
 
 
 @dataclass(frozen=True)
+class GRPOCheckpointConfig:
+    # Root directory for Orbax checkpoints. Empty disables checkpointing.
+    # Supports local paths and remote paths like `gs://bucket/path`.
+    dir: str = ""
+    # Save interval in train steps. 0 disables checkpointing.
+    save_every_steps: int = 0
+    # How many checkpoints to keep (None keeps all).
+    max_to_keep: int | None = 3
+    # Restore from the latest checkpoint if present.
+    resume: bool = True
+
+
+@dataclass(frozen=True)
 class GRPODynamicSamplingConfig:
     # Enable rollout-time dynamic re-sampling for homogeneous prompt-groups.
     enabled: bool = False
@@ -97,6 +110,7 @@ class GRPOGsm8kConfig:
     eval_full_every_steps: int = 0
     # Whether to run a full-split eval sweep once at the end of training.
     eval_full_sweep: bool = False
+    checkpoint: GRPOCheckpointConfig = field(default_factory=GRPOCheckpointConfig)
 
     def to_logging_dict(self) -> dict[str, object]:
         return {
@@ -144,7 +158,19 @@ class GRPOGsm8kConfig:
             "eval_rollout_n": int(self.eval_rollout_n),
             "eval_full_every_steps": int(self.eval_full_every_steps),
             "eval_full_sweep": bool(self.eval_full_sweep),
+            "checkpoint": {
+                "dir": str(self.checkpoint.dir),
+                "save_every_steps": int(self.checkpoint.save_every_steps),
+                "max_to_keep": self.checkpoint.max_to_keep,
+                "resume": bool(self.checkpoint.resume),
+            },
         }
 
 
-__all__ = ["GRPODynamicSamplingConfig", "GRPORolloutConfig", "GRPOTrainConfig", "GRPOGsm8kConfig"]
+__all__ = [
+    "GRPOCheckpointConfig",
+    "GRPODynamicSamplingConfig",
+    "GRPORolloutConfig",
+    "GRPOTrainConfig",
+    "GRPOGsm8kConfig",
+]

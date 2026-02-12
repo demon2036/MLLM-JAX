@@ -554,6 +554,39 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         process_index=jax.process_index(),
     )
 
+    # --- Checkpointing (Orbax) ---
+    ckpt_cfg = getattr(cfg, "checkpoint", None)
+    ckpt_dir = str(getattr(ckpt_cfg, "dir", "") or "").strip()
+    ckpt_save_every_steps = int(getattr(ckpt_cfg, "save_every_steps", 0) or 0)
+    ckpt_max_to_keep = getattr(ckpt_cfg, "max_to_keep", None)
+    ckpt_resume = bool(getattr(ckpt_cfg, "resume", True))
+
+    ckpt_manager = None
+    start_step = 0
+    if ckpt_dir != "" and ckpt_save_every_steps > 0:
+        import orbax.checkpoint as ocp
+
+        options = ocp.CheckpointManagerOptions(
+            save_interval_steps=int(ckpt_save_every_steps),
+            max_to_keep=ckpt_max_to_keep,
+            create=True,
+        )
+        ckpt_manager = ocp.CheckpointManager(ckpt_dir, ocp.PyTreeCheckpointer(), options)
+        if ckpt_resume:
+            latest = ckpt_manager.latest_step()
+            if latest is not None:
+                if jax.process_index() == 0:
+                    print(f"checkpoint_restore step={int(latest)} dir={ckpt_dir}")
+                state = ckpt_manager.restore(latest, items=state)
+                start_step = int(latest) + 1
+    if start_step >= int(cfg.steps):
+        if jax.process_index() == 0:
+            print(f"checkpoint indicates training complete (start_step={start_step} >= steps={int(cfg.steps)}); exiting.")
+        if ckpt_manager is not None:
+            ckpt_manager.wait_until_finished()
+            ckpt_manager.close()
+        return
+
     adv_zero_epsilon_for_sign = float((getattr(cfg.algo.update, "kwargs", {}) or {}).get("adv_zero_epsilon", 0.0) or 0.0)
     if adv_zero_epsilon_for_sign < 0:
         raise ValueError("algo.update.kwargs.adv_zero_epsilon must be >= 0")
@@ -759,9 +792,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             return params
         return {"model": params["model"], "lm_head": params["lm_head"]}
 
-    rng = random.Random(0xC0FFEE + jax.process_index())
+    rng = random.Random(0xC0FFEE + jax.process_index() + int(start_step))
     step_times: list[float] = []
-    for step in range(cfg.steps):
+    for step in range(int(start_step), int(cfg.steps)):
         t_step0 = time.perf_counter()
 
         # --- Rollout (sampling) ---
@@ -1255,6 +1288,25 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 )
             print(" ".join(parts))
 
+        # --- Checkpoint save (after update; before optional eval) ---
+        if ckpt_manager is not None:
+            preempt = bool(ckpt_manager.reached_preemption(int(step)))
+            ckpt_saved = bool(ckpt_manager.save(int(step), items=state, force=preempt))
+            if preempt:
+                ckpt_manager.wait_until_finished()
+                if jax.process_index() == 0:
+                    print(
+                        "preemption_detected "
+                        + " ".join(
+                            [
+                                f"step={int(step)}",
+                                f"checkpoint_saved={int(ckpt_saved)}",
+                                f"dir={ckpt_dir}",
+                            ]
+                        )
+                    )
+                raise SystemExit(42)
+
         # --- Eval (optional; no updates) ---
         if eval_qas and int(cfg.eval_every_steps) > 0 and ((step + 1) % int(cfg.eval_every_steps) == 0):
             eval_logs: dict[str, Any] = {}
@@ -1375,3 +1427,9 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     # Enable via YAML (`eval_full_sweep: true`).
     if full_sweep_enabled and eval_qas:
         _run_eval_full_sweep(state=state, step=int(cfg.steps) - 1)
+
+    if ckpt_manager is not None:
+        # Ensure pending async operations are flushed before shutdown.
+        ckpt_manager.save(int(cfg.steps) - 1, items=state, force=True)
+        ckpt_manager.wait_until_finished()
+        ckpt_manager.close()

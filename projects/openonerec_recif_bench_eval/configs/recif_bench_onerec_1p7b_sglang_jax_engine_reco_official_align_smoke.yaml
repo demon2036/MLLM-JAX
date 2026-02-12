@@ -46,9 +46,8 @@ generator:
     precompile_token_paddings: [8192]
     page_size: 64
   beam_emulation:
-    mode: top_logprobs_beam
-    top_logprobs_num: 128
-    candidate_multiplier: 1
+    mode: sampling_rerank
+    candidate_multiplier: 4
     use_task_sampling_params: false
     temperature: 0.6
     top_p: 0.95

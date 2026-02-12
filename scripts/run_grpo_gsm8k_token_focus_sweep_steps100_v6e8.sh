@@ -48,6 +48,18 @@ for cfg in "${configs[@]}"; do
   fi
 done
 
+if [[ -z "${WANDB_API_KEY:-}" ]]; then
+  if [[ -f "./.env" ]]; then
+    set -a
+    source "./.env"
+    set +a
+  elif [[ -f "/root/.env" ]]; then
+    set -a
+    source "/root/.env"
+    set +a
+  fi
+fi
+
 ENTITY="${WANDB_ENTITY:-johntitordemon2036}"
 PROJECT="mllm-jax-grpo-gsm8k-tokenfocus-sweep-steps100"
 FILTER_SUBSTR="projects/gsm8k_grpo/configs/token_focus_sweep_steps100/"

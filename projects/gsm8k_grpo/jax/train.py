@@ -1136,10 +1136,14 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         step_times.append(float(t_step))
 
         loss_value = _as_float(last_meta["loss"])
-        if entropy is None:
-            entropy_value = _as_float(jnp.mean(last_meta["entropy"]))
-        else:
+        if entropy is not None:
             entropy_value = _as_float(entropy)
+        else:
+            entropy_meta = last_meta.get("entropy")
+            if entropy_meta is None:
+                entropy_value = float("nan")
+            else:
+                entropy_value = _as_float(jnp.mean(entropy_meta))
 
         # --- Derived stats (global) ---
         adv_sign_log: dict[str, Any] = {}

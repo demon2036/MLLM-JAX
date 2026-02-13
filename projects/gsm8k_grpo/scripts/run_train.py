@@ -107,7 +107,6 @@ def _as_bool(value: Any, *, label: str) -> bool:
 def _strict_legacy_key_guard(cfg: dict[str, Any]) -> None:
     # Intentionally breaking migration: old shape keys are rejected.
     legacy_paths = {
-        "algo.name": _get_by_path(cfg, "algo.name"),
         "algo.estimator.eps": _get_by_path(cfg, "algo.estimator.eps"),
         "algo.estimator.clip_range": _get_by_path(cfg, "algo.estimator.clip_range"),
         "algo.estimator.dapo_alpha": _get_by_path(cfg, "algo.estimator.dapo_alpha"),

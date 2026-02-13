@@ -65,6 +65,7 @@
 - GRPO runner metrics: `docs/sops/grpo-gsm8k-metrics.md`
 - GRPO length + eval knobs: `docs/sops/grpo-gsm8k-length-and-eval.md`
 - GRPO adv==0 conditional entropy reg: `docs/sops/grpo-gsm8k-adv0-entropy-regularization.md`
+- GRPO positive-advantage scaling (`pos_adv_scale`): `docs/sops/grpo-gsm8k-posadv-scale.md`
 - Audit GRPO sequence-level policy loss (`loss_level=sequence`): `docs/sops/audit-grpo-sequence-level-loss.md`
 - GRPO clean rerun (wipe ckpt bucket; W&B `test-monitor`): `docs/sops/grpo-gsm8k-test-monitor-clean-rerun.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`

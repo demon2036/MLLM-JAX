@@ -50,6 +50,7 @@ train:
         warmup_steps: null
 
 algo:
+  name: remax
   estimator:
     name: remax
     kwargs:

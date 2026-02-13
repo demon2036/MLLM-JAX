@@ -461,10 +461,12 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     elif isinstance(algo_raw, str):
         algo_cfg = AlgoConfig(estimator=PluginConfig(name=str(algo_raw), kwargs={}), update=defaults.update)
     elif isinstance(algo_raw, dict):
+        algo_name_raw = algo_raw.get("name")
+        algo_name = str(algo_name_raw) if algo_name_raw is not None else defaults.name
         estimator_cfg = _parse_plugin_config(algo_raw.get("estimator"), defaults=defaults.estimator, label="algo.estimator")
         update_cfg = _parse_plugin_config(algo_raw.get("update"), defaults=defaults.update, label="algo.update")
         algo_cfg = AlgoConfig(
-            name=defaults.name,
+            name=algo_name,
             estimator=estimator_cfg,
             update=update_cfg,
         )

@@ -35,6 +35,8 @@ DEFAULT_UPDATE_KWARGS: dict[str, dict[str, Any]] = {
     },
     "remax": {
         "gamma": 1.0,
+        "returns_style": "official",
+        "drop_baseline_rows": False,
     },
 }
 
@@ -240,7 +242,34 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
         gamma = float(merged["gamma"])
         if gamma <= 0:
             raise ValueError("algo.update.kwargs.gamma must be > 0")
-        return {"gamma": gamma}
+
+        returns_style_raw = merged.get("returns_style", "official")
+        returns_style = str(returns_style_raw).strip().lower()
+        returns_style_aliases = {
+            "official": "official",
+            "paper": "official",
+            "remax": "official",
+            "discounted_terminal": "official",
+            "terminal_discount": "official",
+            "verl": "verl",
+            "reverse_cumsum": "verl",
+            "cumsum": "verl",
+        }
+        if returns_style not in returns_style_aliases:
+            allowed = sorted(set(returns_style_aliases.values()))
+            raise ValueError(
+                "algo.update.kwargs.returns_style must be one of: "
+                + ", ".join(repr(x) for x in allowed)
+                + f"; got {returns_style_raw!r}"
+            )
+        returns_style = returns_style_aliases[returns_style]
+
+        drop_baseline_rows = _as_bool(
+            merged.get("drop_baseline_rows", False),
+            label="algo.update.kwargs.drop_baseline_rows",
+        )
+
+        return {"gamma": gamma, "returns_style": returns_style, "drop_baseline_rows": drop_baseline_rows}
 
     return {
         "value_coef": float(merged["value_coef"]),

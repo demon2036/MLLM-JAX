@@ -29,6 +29,7 @@ def get_remax_state(
     model_path: str,
     beta: float = 0.0,
     gamma: float = 1.0,
+    returns_style: str = "official",
     gradient_checkpointing: bool = True,
     create_sampler: bool = True,
     tx: Any | None = None,
@@ -38,25 +39,22 @@ def get_remax_state(
     model, params, tokenizer = get_model(mesh, model_path=model_path)
     ref_model = get_model(mesh, model_path=model_path, only_model=True) if float(beta) != 0.0 else None
 
+    module_kwargs = dict(
+        model=model,
+        pad_token_id=int(tokenizer.pad_token_id),
+        ref_model=ref_model,
+        kl_coef=float(beta),
+        gamma=float(gamma),
+        returns_style=str(returns_style),
+    )
+
     if bool(gradient_checkpointing):
         train_module = flax.linen.remat(
             ReMaxPolicyGradientModule,
             policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims,
-        )(
-            model=model,
-            pad_token_id=int(tokenizer.pad_token_id),
-            ref_model=ref_model,
-            kl_coef=float(beta),
-            gamma=float(gamma),
-        )
+        )(**module_kwargs)
     else:
-        train_module = ReMaxPolicyGradientModule(
-            model=model,
-            pad_token_id=int(tokenizer.pad_token_id),
-            ref_model=ref_model,
-            kl_coef=float(beta),
-            gamma=float(gamma),
-        )
+        train_module = ReMaxPolicyGradientModule(**module_kwargs)
 
     if tx is None:
         raise ValueError("get_remax_state requires an explicit Optax `tx` (use plugins.training.core.optim.build_tx).")

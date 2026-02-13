@@ -11,6 +11,27 @@ def _as_float32(x: Any) -> jnp.ndarray:
     return jnp.asarray(x, dtype=jnp.float32)
 
 
+def _reverse_cumsum(x: jnp.ndarray) -> jnp.ndarray:
+    if x.ndim != 2:
+        raise ValueError(f"reverse_cumsum expects rank-2 [B, T], got shape={x.shape}")
+    return jnp.cumsum(x[:, ::-1], axis=1)[:, ::-1]
+
+
+def _last_token_mask(completion_mask: jnp.ndarray) -> jnp.ndarray:
+    if completion_mask.ndim != 2:
+        raise ValueError(f"completion_mask must be rank-2 [B, T], got shape={completion_mask.shape}")
+
+    mask = _as_float32(completion_mask)
+    bsz, seq_len = mask.shape
+    del bsz
+
+    positions = jnp.arange(seq_len, dtype=jnp.int32)[None, :]
+    last_idx = jnp.max(jnp.where(mask > 0, positions, -jnp.ones_like(positions)), axis=1)
+
+    # For rows with an empty completion (e.g. baseline rows), last_idx=-1 and one_hot is all zeros.
+    return jax.nn.one_hot(last_idx, seq_len, dtype=jnp.float32)
+
+
 def _discounted_terminal_returns(
     *,
     terminal_reward: jnp.ndarray,
@@ -37,7 +58,6 @@ def _discounted_terminal_returns(
     if gamma_f <= 0:
         raise ValueError("gamma must be > 0")
 
-    # Only completion tokens contribute; prompt/pad tokens are masked out.
     discounted = _as_float32(terminal_reward)[:, None] * jnp.power(gamma_f, remaining)
     return discounted * mask
 
@@ -56,7 +76,15 @@ class ReMaxPolicyGradientModule(nn.Module):
     Notes
     -----
     - Baseline rows should have labels==0, so they contribute no gradients.
-    - KL shaping is token-local (no accumulation across time), matching official ReMax.
+    - `returns_style` selects how we spread the scalar outcome reward across tokens:
+
+      - "official": discounted terminal reward + token-local KL shaping
+        (matches DeepSpeed-Chat style reference).
+
+      - "verl": construct token-level rewards as:
+          token_level_scores = advantage placed on the last completion token
+          token_level_rewards = token_level_scores - beta * KL(token)
+        then compute per-token returns via reverse-cumsum.
     """
 
     model: Any
@@ -64,6 +92,7 @@ class ReMaxPolicyGradientModule(nn.Module):
     ref_model: Any | None = None
     kl_coef: float = 0.0
     gamma: float = 1.0
+    returns_style: str = "official"
 
     def __call__(self, inputs: Mapping[str, Any]) -> Mapping[str, Any]:
         input_ids = inputs["input_ids"]
@@ -113,15 +142,36 @@ class ReMaxPolicyGradientModule(nn.Module):
             kl_log_ratio = jax.lax.stop_gradient(per_token_logps - ref_per_token_logps)
             kl_shaping = -kl_coef * kl_log_ratio
 
-        # Terminal reward (baseline-subtracted) discounted across the completion.
-        terminal_returns = _discounted_terminal_returns(
-            terminal_reward=advantages,
-            completion_mask=completion_mask,
-            gamma=float(self.gamma),
-        )
+        style_raw = str(self.returns_style or "").strip().lower()
+        style_aliases = {
+            "": "official",
+            "official": "official",
+            "paper": "official",
+            "remax": "official",
+            "discounted_terminal": "official",
+            "terminal_discount": "official",
+            "verl": "verl",
+            "reverse_cumsum": "verl",
+            "cumsum": "verl",
+        }
+        returns_style = style_aliases.get(style_raw, style_raw)
 
-        # Official ReMax treats KL shaping as token-local (no discount + no accumulation).
-        returns = jax.lax.stop_gradient(terminal_returns + kl_shaping * completion_mask)
+        if returns_style == "official":
+            terminal_returns = _discounted_terminal_returns(
+                terminal_reward=advantages,
+                completion_mask=completion_mask,
+                gamma=float(self.gamma),
+            )
+            returns = terminal_returns + kl_shaping * completion_mask
+        elif returns_style == "verl":
+            last_token = _last_token_mask(completion_mask)
+            token_level_scores = advantages[:, None] * last_token
+            token_level_rewards = (token_level_scores + kl_shaping) * completion_mask
+            returns = _reverse_cumsum(token_level_rewards)
+        else:
+            raise ValueError(f"Unsupported returns_style={self.returns_style!r}; expected 'official' or 'verl'.")
+
+        returns = jax.lax.stop_gradient(returns)
 
         total_valid_token_count = _as_float32(inputs.get("total_valid_token_count", completion_mask.sum()))
         total_valid_token_count = jnp.maximum(total_valid_token_count, 1.0)
@@ -133,6 +183,7 @@ class ReMaxPolicyGradientModule(nn.Module):
         return_mean = jnp.sum(returns * completion_mask) / total_valid_token_count
         kl_mean = jnp.sum(kl_log_ratio * completion_mask) / total_valid_token_count
         baseline_fraction = _as_float32(inputs.get("is_baseline", jnp.zeros((advantages.shape[0],), dtype=jnp.int32))).mean()
+        returns_style_id = jnp.asarray(1.0 if returns_style == "verl" else 0.0, dtype=jnp.float32)
 
         return {
             "loss": policy_loss,
@@ -143,6 +194,7 @@ class ReMaxPolicyGradientModule(nn.Module):
             "kl_log_ratio_mean": kl_mean,
             "kl_coef": jnp.asarray(kl_coef, dtype=jnp.float32),
             "gamma": jnp.asarray(float(self.gamma), dtype=jnp.float32),
+            "returns_style_id": returns_style_id,
             "baseline_fraction": baseline_fraction,
             "per_token_logps": jax.lax.stop_gradient(per_token_logps),
         }

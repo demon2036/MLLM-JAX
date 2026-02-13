@@ -6,6 +6,9 @@
 - Clone reference repos into `workdir/`: `docs/sops/clone-reference-repos-into-workdir.md`
 - Align MaxRL estimator with upstream `tajwarfahim/maxrl`: `docs/sops/maxrl-estimator-upstream-alignment.md`
 - Check whether ReMax is implemented: `docs/sops/rl-algo-remax-check.md`
+- Deep-dive JAX ReMax implementation (this repo): `docs/sops/remax-jax-implementation-deepdive.md`
+- Deep-dive VERL ReMax implementation (workdir): `docs/sops/verl-remax-implementation-deepdive.md`
+- Align JAX ReMax with VERL returns semantics: `docs/sops/remax-verl-alignment.md`
 - Deep-dive official ReMax (DeepSpeed-Chat) reference repo: `docs/sops/remax-official-implementation-deepdive.md`
 - TPU v6e-8 ReMax/GSM8K bs16 roll8 KL0.04 mb2 (W&B online): `docs/sops/tpu-vm-v6e-8-remax-gsm8k-bs16-roll8-kl0p04-mb2.md`
 - TPU v6e-8 ReMax/GSM8K bs64 roll2 KL0.04 mb2 (official-aligned; W&B online): `docs/sops/tpu-vm-v6e-8-remax-gsm8k-bs64-roll2-kl0p04-mb2.md`

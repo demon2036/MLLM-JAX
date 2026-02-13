@@ -12,6 +12,7 @@ This folder keeps explicit full-schema configs for the main TPU runs:
 - `remax_gsm8k_qwen25_3b_batch16_roll8_steps400_evalfull50_kl0p04_ckptgcs_v6e8_testmonitor.yaml`
 - `remax_gsm8k_qwen25_3b_batch16_roll8_steps400_evalfull50_kl0p04_mb2_ckptgcs_v6e8_testmonitor.yaml`
 - `remax_gsm8k_qwen25_3b_batch64_roll2_steps400_evalfull50_kl0p04_mb2_ckptgcs_v6e8_testmonitor.yaml`
+- `remax_verlstyle_gsm8k_qwen25_3b_batch64_roll2_steps400_evalfull50_kl0p04_mb2_ckptgcs_v6e8_testmonitor.yaml`
 
 All configs are explicit (no hidden defaults). Common fixed values:
 

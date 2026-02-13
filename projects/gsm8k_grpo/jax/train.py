@@ -441,6 +441,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     tx = build_tx(training_steps=cfg.steps, cfg=cfg.train.optimizer)
 
     value_fn = None
+    remax_returns_style = "official"
+    remax_drop_baseline_rows = False
     if use_value_head:
         state, sampler, ppo_module = get_ppo_state(
             mesh,
@@ -467,6 +469,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
     elif algo.update_name == "remax":
         update_kwargs = dict(getattr(cfg.algo.update, "kwargs", {}) or {})
         gamma = float(update_kwargs.get("gamma", 1.0))
+        remax_returns_style = str(update_kwargs.get("returns_style", "official"))
+        remax_drop_baseline_rows = bool(update_kwargs.get("drop_baseline_rows", False))
         state, sampler, _state_sharding = get_remax_state(
             mesh,
             training_steps=cfg.steps,
@@ -474,6 +478,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             model_path=cfg.model_path,
             beta=cfg.train.beta,
             gamma=gamma,
+            returns_style=remax_returns_style,
             gradient_checkpointing=cfg.train.gradient_checkpointing,
             create_sampler=True,
             tx=tx,
@@ -1022,6 +1027,29 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
                 t_adv0 = time.perf_counter()
                 advantages_np = advantage_module.compute(rewards=rewards_np, group_ids=group_ids).advantages
                 t_adv += time.perf_counter() - t_adv0
+
+            if algo.update_name == "remax" and remax_drop_baseline_rows:
+                is_baseline = datas_np.get("is_baseline")
+                if is_baseline is None:
+                    raise ValueError("remax_drop_baseline_rows=1 requires rollout batch to include 'is_baseline'")
+                is_baseline = np.asarray(is_baseline, dtype=np.int32).reshape(-1)
+                if int(is_baseline.size) != int(rewards_np.size):
+                    raise ValueError(
+                        "is_baseline must align with rewards shape; "
+                        f"got is_baseline={is_baseline.shape} rewards={rewards_np.shape}"
+                    )
+                keep = is_baseline == 0
+                if int(keep.sum()) != int(keep.size):
+                    keep_list = keep.tolist()
+                    answers = [a for a, k in zip(answers, keep_list) if k]
+                    rewards_np = rewards_np[keep]
+                    rewards_per_func = rewards_per_func[:, keep]
+                    group_ids = group_ids[keep]
+                    if advantages_np is not None:
+                        advantages_np = advantages_np[keep]
+                    for k, v in list(datas_np.items()):
+                        if isinstance(v, np.ndarray) and v.shape[0] == keep.size:
+                            datas_np[k] = v[keep]
 
             datas_np = dict(datas_np)
             datas_np["rewards"] = rewards_np

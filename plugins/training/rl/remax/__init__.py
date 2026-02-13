@@ -1,9 +1,12 @@
 """ReMax algorithm building blocks (JAX).
 
-This package implements the core ReMax semantics used in the official reference:
-- greedy baseline advantage: r(sample) - r(greedy)
-- token-local KL shaping: -kl_coef * (logp - logp_ref)
-- discounted terminal reward propagated across completion tokens
+This package provides the ReMax update module with a configurable return shaping style:
+
+- "official": discounted terminal reward propagated across completion tokens + token-local KL shaping.
+- "verl": reverse-cumsum returns with KL-in-reward accumulation (VERL-aligned semantics).
+
+Both variants assume the input `advantages` are already greedy-baseline-subtracted:
+  advantage = r(sample) - r(greedy)
 """
 
 from plugins.training.rl.remax.module import ReMaxPolicyGradientModule

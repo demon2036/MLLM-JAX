@@ -65,6 +65,8 @@
 - GRPO runner metrics: `docs/sops/grpo-gsm8k-metrics.md`
 - GRPO length + eval knobs: `docs/sops/grpo-gsm8k-length-and-eval.md`
 - GRPO adv==0 conditional entropy reg: `docs/sops/grpo-gsm8k-adv0-entropy-regularization.md`
+- Audit GRPO sequence-level policy loss (`loss_level=sequence`): `docs/sops/audit-grpo-sequence-level-loss.md`
+- GRPO clean rerun (wipe ckpt bucket; W&B `test-monitor`): `docs/sops/grpo-gsm8k-test-monitor-clean-rerun.md`
 - Training modularization plan (plugins-first): `docs/sops/training-modularization-plan.md`
 - GRPO rollout backend abstraction (naive): `docs/sops/grpo-rollout-backend-abstraction-naive.md`
 - AReaL RL organization notes (for modularizing training): `docs/sops/areal-rl-organization.md`
@@ -141,6 +143,7 @@
 - `docs/sops/grpo-gsm8k-metrics.md`
 - `docs/sops/rl-ppo-reinforce-equivalence-ppo-epochs-1.md`
 - `docs/sops/grpo-gsm8k-length-and-eval.md`
+- `docs/sops/audit-grpo-sequence-level-loss.md`
 - `docs/sops/tpu-vm-v4-16-grpo-gsm8k-microbatch-smoke.md`
 - `docs/sops/tpu-vm-v6e-8-grpo-gsm8k-rollout-speed-debug-3b.md`
 - `docs/sops/tpu-vm-v6e-8-unified-api-refactor-sft-nanogpt-regression.md`

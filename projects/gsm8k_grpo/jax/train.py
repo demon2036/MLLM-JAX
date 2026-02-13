@@ -772,6 +772,16 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             }
         )
 
+        # Monitoring bundle: duplicate key metrics under a single `monitor/` prefix
+        # so dashboards can filter/group them easily.
+        full_eval_logs.update(
+            {
+                "monitor/eval_full/accuracy": float(accuracy_global),
+                "monitor/eval_full/questions_global": global_question_count,
+                "monitor/eval_full/samples_per_question": int(eval_n),
+            }
+        )
+
         if jax.process_index() == 0:
             print(
                 "eval_full "
@@ -1283,6 +1293,28 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             train_log["throughput/train/valid_tokens_per_s"] = float(valid_tokens_global) / float(t_step)
         if t_update > 0:
             train_log["throughput/train/valid_tokens_per_s_update"] = float(valid_tokens_global) / float(t_update)
+
+        # Monitoring bundle: duplicate key metrics under a single `monitor/` prefix
+        # so dashboards can filter/group them easily.
+        monitor_log: dict[str, Any] = {
+            "monitor/train/loss": loss_value,
+            "monitor/train/entropy": entropy_value,
+            "monitor/train/reward_mean": float(reward_global_stats["mean"]),
+            "monitor/train/adv_mean": float(adv_global_stats["mean"]),
+            "monitor/train/completion_len_mean": float(completion_stats["mean"]),
+            "monitor/train/completion_len_max": float(completion_stats["max"]),
+            "monitor/train/adv_zero_fraction": adv_sign_log.get("train-reward/advantage/sign/zero_fraction"),
+            "monitor/train/adv_pos_fraction": adv_sign_log.get("train-reward/advantage/sign/pos_fraction"),
+            "monitor/train/adv_neg_fraction": adv_sign_log.get("train-reward/advantage/sign/neg_fraction"),
+            "monitor/train/adv_token_weighted_minus_mean": adv_len_bias_log.get(
+                "train-reward/advantage/token_weighted_minus_mean"
+            ),
+            "monitor/train/adv_completion_len_corr": adv_len_bias_log.get("train-reward/advantage/completion_len_corr"),
+            "monitor/train/entropy_adv0_reg": train_log.get("train-loss/entropy_adv0_reg"),
+            "monitor/train/adv_zero_seq_fraction": train_log.get("train-adv_zero/seq_fraction"),
+            "monitor/train/adv_zero_token_fraction": train_log.get("train-adv_zero/token_fraction"),
+        }
+        train_log.update({k: v for k, v in monitor_log.items() if v is not None})
 
         if wandb is not None and jax.process_index() == 0:
             wandb.log(train_log, step=step)

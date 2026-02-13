@@ -8,6 +8,7 @@
 - Check whether ReMax is implemented: `docs/sops/rl-algo-remax-check.md`
 - Deep-dive official ReMax (DeepSpeed-Chat) reference repo: `docs/sops/remax-official-implementation-deepdive.md`
 - TPU v6e-8 ReMax/GSM8K bs16 roll8 KL0.04 mb2 (W&B online): `docs/sops/tpu-vm-v6e-8-remax-gsm8k-bs16-roll8-kl0p04-mb2.md`
+- TPU v6e-8 ReMax/GSM8K bs64 roll2 KL0.04 mb2 (official-aligned; W&B online): `docs/sops/tpu-vm-v6e-8-remax-gsm8k-bs64-roll2-kl0p04-mb2.md`
 - Clone AkaliKong/MiniOneRec into repo workdir: `docs/sops/clone-akalikong-minionerec-workdir.md`
 - MiniOneRec SID SFT + eval (projects/sid_sft): `docs/sops/minionerec-sid-sft-and-eval.md`
 - Inspect SFT + GRPO GSM8K data stack: `docs/sops/inspect-sft-grpo-data-stack.md`

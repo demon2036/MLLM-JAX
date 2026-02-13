@@ -82,6 +82,35 @@ class TestRlConfigSchemaV2(unittest.TestCase):
         self.assertEqual(estimator_name, "rloo")
         self.assertTrue(bool(normalized.estimator.kwargs["whiten"]))
 
+    def test_grpo_estimator_pos_adv_scale_defaults_to_one(self) -> None:
+        normalized, _algo_name, estimator_name, _update_name = normalize_algo_config(
+            AlgoConfig(
+                estimator=PluginConfig(name="grpo", kwargs={}),
+                update=PluginConfig(name="policy_gradient", kwargs={}),
+            )
+        )
+        self.assertEqual(estimator_name, "grpo")
+        self.assertEqual(float(normalized.estimator.kwargs["pos_adv_scale"]), 1.0)
+
+    def test_grpo_estimator_pos_adv_scale_is_configurable(self) -> None:
+        normalized, _algo_name, estimator_name, _update_name = normalize_algo_config(
+            AlgoConfig(
+                estimator=PluginConfig(name="grpo", kwargs={"pos_adv_scale": 4.0}),
+                update=PluginConfig(name="policy_gradient", kwargs={}),
+            )
+        )
+        self.assertEqual(estimator_name, "grpo")
+        self.assertEqual(float(normalized.estimator.kwargs["pos_adv_scale"]), 4.0)
+
+    def test_grpo_estimator_pos_adv_scale_invalid_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            normalize_algo_config(
+                AlgoConfig(
+                    estimator=PluginConfig(name="grpo", kwargs={"pos_adv_scale": 0.0}),
+                    update=PluginConfig(name="policy_gradient", kwargs={}),
+                )
+            )
+
     def test_dynamic_sampling_defaults(self) -> None:
         cfg = GRPODynamicSamplingConfig()
         self.assertFalse(cfg.enabled)

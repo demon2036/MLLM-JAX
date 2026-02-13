@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 DEFAULT_ESTIMATOR_KWARGS: dict[str, dict[str, Any]] = {
     "reinforce": {"eps": 1e-4, "clip_range": None},
-    "grpo": {"eps": 1e-4, "clip_range": None},
+    "grpo": {"eps": 1e-4, "clip_range": None, "pos_adv_scale": 1.0},
     "rloo": {"eps": 1e-4, "clip_range": None, "whiten": True},
     "dapo": {"eps": 1e-4, "clip_range": None, "alpha": 0.2},
     "reinforce++": {"eps": 1e-4, "clip_range": None},
@@ -160,6 +160,11 @@ def _normalize_estimator_kwargs(estimator_name: str, kwargs: dict[str, Any]) -> 
 
     if estimator_name == "rloo":
         normalized["whiten"] = _as_bool(merged["whiten"], label="algo.estimator.kwargs.whiten")
+    elif estimator_name == "grpo":
+        pos_adv_scale = float(merged["pos_adv_scale"])
+        if pos_adv_scale <= 0:
+            raise ValueError("algo.estimator.kwargs.pos_adv_scale must be > 0")
+        normalized["pos_adv_scale"] = pos_adv_scale
     elif estimator_name == "dapo":
         alpha = float(merged["alpha"])
         if alpha < 0:

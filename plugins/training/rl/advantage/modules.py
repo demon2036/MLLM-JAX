@@ -48,6 +48,7 @@ class GroupIdGRPOAdvantageModule:
 
     eps: float = 1e-4
     clip_range: float | None = None
+    pos_adv_scale: float = 1.0
 
     def compute(
         self,
@@ -62,6 +63,13 @@ class GroupIdGRPOAdvantageModule:
             group_ids=group_ids,
             eps=float(self.eps),
         )
+        pos_adv_scale = float(self.pos_adv_scale)
+        if pos_adv_scale <= 0:
+            raise ValueError("pos_adv_scale must be > 0")
+        if pos_adv_scale != 1.0:
+            import numpy as np
+
+            advantages = np.where(advantages > 0, advantages * pos_adv_scale, advantages).astype(np.float32)
         if self.clip_range is not None:
             import numpy as np
 

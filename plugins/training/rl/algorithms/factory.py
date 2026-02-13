@@ -63,7 +63,8 @@ def create_algorithm(
     clip_range = None if clip_range_raw is None else float(clip_range_raw)
 
     if estimator_name == "grpo":
-        advantage_module = GroupIdGRPOAdvantageModule(eps=eps, clip_range=clip_range)
+        pos_adv_scale = float(estimator_kwargs.get("pos_adv_scale", 1.0))
+        advantage_module = GroupIdGRPOAdvantageModule(eps=eps, clip_range=clip_range, pos_adv_scale=pos_adv_scale)
     elif estimator_name == "reinforce":
         advantage_module = GlobalNormAdvantageModule(eps=eps, clip_range=clip_range)
     elif estimator_name == "rloo":

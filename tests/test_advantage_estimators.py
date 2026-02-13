@@ -14,6 +14,7 @@ from plugins.training.rl.advantage.estimators import (
     compute_rloo_advantages_by_group_id,
 )
 from plugins.training.rl.advantage.grpo import compute_grpo_advantages_by_group_id
+from plugins.training.rl.advantage.modules import GroupIdGRPOAdvantageModule
 
 
 class TestAdvantageEstimators(unittest.TestCase):
@@ -56,6 +57,18 @@ class TestAdvantageEstimators(unittest.TestCase):
 
         out = compute_dapo_advantages_by_group_id(rewards=rewards, group_ids=group_ids, eps=eps, alpha=alpha)
         np.testing.assert_allclose(out, expected.astype(np.float32), rtol=0, atol=1e-6)
+
+    def test_grpo_advantage_module_positive_advantage_scaling(self) -> None:
+        rewards = np.asarray([0.0, 1.0], dtype=np.float32)
+        group_ids = np.asarray([0, 0], dtype=np.int32)
+        eps = 1e-6
+
+        module = GroupIdGRPOAdvantageModule(eps=eps, pos_adv_scale=4.0)
+        out = module.compute(rewards=rewards, group_ids=group_ids).advantages
+
+        base = compute_grpo_advantages_by_group_id(rewards=rewards, group_ids=group_ids, eps=eps)
+        expected = np.where(base > 0, base * 4.0, base).astype(np.float32)
+        np.testing.assert_allclose(out, expected, rtol=0, atol=1e-6)
 
     def test_maxrl_advantages_group_mean_normalization(self) -> None:
         rewards = np.asarray([1.0, 0.0, 2.0, 0.0], dtype=np.float32)

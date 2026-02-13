@@ -10,6 +10,7 @@ from plugins.training.rl.advantage.estimators import (
     compute_dapo_advantages_by_group_id,
     compute_global_normalized_advantages,
     compute_maxrl_advantages_by_group_id,
+    compute_remax_advantages_by_group_id,
     compute_reinforce_plus_plus_advantages_by_group_id,
     compute_rloo_advantages_by_group_id,
 )
@@ -96,6 +97,14 @@ class TestAdvantageEstimators(unittest.TestCase):
         # Upstream sets the singleton baseline mean to 0, so advantage == reward / eps.
         expected = np.asarray([2.0, 3.0], dtype=np.float32)
         out = compute_maxrl_advantages_by_group_id(rewards=rewards, group_ids=group_ids, eps=eps)
+        np.testing.assert_allclose(out, expected, rtol=0, atol=1e-6)
+
+    def test_remax_advantages_greedy_baseline(self) -> None:
+        rewards = np.asarray([0.2, 0.5, 0.1, 0.3, 0.4, 0.2], dtype=np.float32)
+        group_ids = np.asarray([0, 0, 0, 1, 1, 1], dtype=np.int32)
+
+        out = compute_remax_advantages_by_group_id(rewards=rewards, group_ids=group_ids, baseline_position=0)
+        expected = np.asarray([0.0, 0.3, -0.1, 0.0, 0.1, -0.1], dtype=np.float32)
         np.testing.assert_allclose(out, expected, rtol=0, atol=1e-6)
 
     def test_reinforce_plus_plus_is_rloo_whitened(self) -> None:

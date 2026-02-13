@@ -474,6 +474,23 @@ def _cfg_from_dict(cfg: dict[str, Any], *, config_path: str) -> GRPOGsm8kConfig:
     # strict normalization + cross-field validation
     algo_cfg, _algo_name, _estimator_name, _update_name = normalize_algo_config(algo_cfg)
 
+    if str(_update_name).strip().lower() == "remax":
+        rollout_backend_key = str(rollout_backend).strip().lower()
+        if rollout_backend_key not in {"remax_mixed_naive", "remax_mixed"}:
+            raise ValueError(
+                "algo.update.name=remax requires rollout.backend='remax_mixed_naive' "
+                "(injects 1 greedy baseline per prompt group)."
+            )
+        if int(rollout_n) < 2:
+            raise ValueError("algo.update.name=remax requires rollout.n >= 2 (1 baseline + >=1 sampled).")
+        if bool(dynamic_sampling_cfg.enabled):
+            raise ValueError(
+                "algo.update.name=remax is incompatible with rollout.dynamic_sampling.enabled=true "
+                "(baseline row changes per-group homogeneity checks). Set enabled=false."
+            )
+        if int(ppo_epochs) != 1:
+            raise ValueError("algo.update.name=remax requires train.ppo_epochs=1 for on-policy policy-gradient updates.")
+
     eval_every_steps = int(cfg.get("eval_every_steps") or 0)
     eval_batches_per_process = _get_int_from_aliases(
         cfg,

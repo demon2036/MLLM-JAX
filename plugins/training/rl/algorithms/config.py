@@ -11,6 +11,7 @@ DEFAULT_ESTIMATOR_KWARGS: dict[str, dict[str, Any]] = {
     "dapo": {"eps": 1e-4, "clip_range": None, "alpha": 0.2},
     "reinforce++": {"eps": 1e-4, "clip_range": None},
     "maxrl": {"eps": 1e-6, "clip_range": None},
+    "remax": {"eps": 1e-4, "clip_range": None, "baseline_position": 0},
     "gae": {"eps": 1e-4, "clip_range": None, "gamma": 1.0, "gae_lambda": 0.95, "normalize": True},
 }
 
@@ -31,6 +32,9 @@ DEFAULT_UPDATE_KWARGS: dict[str, dict[str, Any]] = {
         "value_coef": 0.5,
         "value_clip_range": 0.2,
         "entropy_coef": 0.0,
+    },
+    "remax": {
+        "gamma": 1.0,
     },
 }
 
@@ -88,12 +92,14 @@ def normalize_algo_name(name: str) -> str:
         "maxrl": "maxrl",
         "max-rl": "maxrl",
         "max_rl": "maxrl",
+        "remax": "remax",
         "rloo": "rloo",
         "grpo": "grpo",
         "ppo": "ppo",
         "dapo": "dapo",
         "reinforce": "reinforce",
     }
+
     return aliases.get(raw, raw)
 
 
@@ -119,6 +125,7 @@ def normalize_estimator_name(name: str) -> str:
         "rloo": "rloo",
         "grpo": "grpo",
         "dapo": "dapo",
+        "remax": "remax",
         "reinforce": "reinforce",
     }
     return aliases.get(raw, raw)
@@ -135,6 +142,7 @@ def normalize_update_name(name: str) -> str:
         "reinforce": "policy_gradient",
         "grpo": "policy_gradient",
         "ppo": "ppo",
+        "remax": "remax",
     }
     return aliases.get(raw, raw)
 
@@ -170,6 +178,11 @@ def _normalize_estimator_kwargs(estimator_name: str, kwargs: dict[str, Any]) -> 
         if alpha < 0:
             raise ValueError("algo.estimator.kwargs.alpha must be >= 0")
         normalized["alpha"] = alpha
+    elif estimator_name == "remax":
+        baseline_position = int(merged["baseline_position"])
+        if baseline_position < 0:
+            raise ValueError("algo.estimator.kwargs.baseline_position must be >= 0")
+        normalized["baseline_position"] = baseline_position
     elif estimator_name == "gae":
         gamma = float(merged["gamma"])
         gae_lambda = float(merged["gae_lambda"])
@@ -223,6 +236,12 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
             "loss_level": loss_level,
         }
 
+    if update_name == "remax":
+        gamma = float(merged["gamma"])
+        if gamma <= 0:
+            raise ValueError("algo.update.kwargs.gamma must be > 0")
+        return {"gamma": gamma}
+
     return {
         "value_coef": float(merged["value_coef"]),
         "value_clip_range": None if merged["value_clip_range"] is None else float(merged["value_clip_range"]),
@@ -239,7 +258,7 @@ def normalize_algo_config(cfg: AlgoConfig) -> tuple[AlgoConfig, str, str, str]:
     """
 
     algo_name = normalize_algo_name(cfg.name)
-    supported_algos = {"reinforce", "ppo", "grpo", "rloo", "dapo", "reinforce++", "maxrl"}
+    supported_algos = {"reinforce", "ppo", "grpo", "rloo", "dapo", "reinforce++", "maxrl", "remax"}
     if algo_name not in supported_algos:
         raise ValueError(f"Unsupported algo.name={cfg.name!r} (normalized to {algo_name!r}); supported={sorted(supported_algos)}")
 
@@ -260,6 +279,7 @@ def normalize_algo_config(cfg: AlgoConfig) -> tuple[AlgoConfig, str, str, str]:
         "dapo": "policy_gradient",
         "reinforce++": "policy_gradient",
         "maxrl": "policy_gradient",
+        "remax": "remax",
     }
 
     estimator_name = normalize_estimator_name(cfg.estimator.name)
@@ -283,6 +303,11 @@ def normalize_algo_config(cfg: AlgoConfig) -> tuple[AlgoConfig, str, str, str]:
 
     if estimator_name == "gae" and update_name != "ppo":
         raise ValueError("algo.estimator.name=gae requires algo.update.name=ppo")
+
+    if estimator_name == "remax" and update_name != "remax":
+        raise ValueError("algo.estimator.name=remax requires algo.update.name=remax")
+    if update_name == "remax" and estimator_name != "remax":
+        raise ValueError("algo.update.name=remax requires algo.estimator.name=remax")
 
     normalized = AlgoConfig(
         name=algo_name,

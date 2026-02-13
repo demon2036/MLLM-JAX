@@ -33,6 +33,11 @@ class TestRolloutBackendFactory(unittest.TestCase):
         backend = create_rollout_backend(name="naive", sampler=_DummySampler())
         self.assertEqual(backend.__class__.__name__, "NaiveSamplerRolloutBackend")
 
+    def test_create_rollout_backend_remax_requires_group_size(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            create_rollout_backend(name="remax_mixed_naive", sampler=_DummySampler())
+        self.assertIn("group_size", str(ctx.exception))
+
     def test_create_rollout_backend_rejects_unknown(self) -> None:
         with self.assertRaises(ValueError) as ctx:
             create_rollout_backend(name="does_not_exist", sampler=_DummySampler())

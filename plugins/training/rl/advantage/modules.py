@@ -8,6 +8,7 @@ from plugins.training.rl.advantage.estimators import (
     compute_dapo_advantages_by_group_id,
     compute_global_normalized_advantages,
     compute_maxrl_advantages_by_group_id,
+    compute_remax_advantages_by_group_id,
     compute_reinforce_plus_plus_advantages_by_group_id,
     compute_rloo_advantages_by_group_id,
 )
@@ -212,12 +213,44 @@ class MaxRLAdvantageModule:
         return AdvantageResult(advantages=advantages)
 
 
+@dataclass(frozen=True)
+class ReMaxGreedyBaselineAdvantageModule:
+    """ReMax advantages: subtract a greedy baseline within each prompt group.
+
+    The baseline completion itself gets advantage 0.
+
+    This module assumes rollout ordering is stable within each `group_id` so
+    `baseline_position` selects the intended baseline row.
+    """
+
+    baseline_position: int = 0
+    clip_range: float | None = None
+
+    def compute(
+        self,
+        *,
+        rewards: Any,
+        group_ids: Any,
+        mean_global: float | None = None,
+        std_global: float | None = None,
+    ) -> AdvantageResult:
+        del mean_global, std_global
+        advantages = compute_remax_advantages_by_group_id(
+            rewards=rewards,
+            group_ids=group_ids,
+            baseline_position=int(self.baseline_position),
+            clip_range=self.clip_range,
+        )
+        return AdvantageResult(advantages=advantages)
+
+
 __all__ = [
     "CallableAdvantageModule",
     "DAPOAdvantageModule",
     "GlobalNormAdvantageModule",
     "GroupIdGRPOAdvantageModule",
     "MaxRLAdvantageModule",
+    "ReMaxGreedyBaselineAdvantageModule",
     "ReinforcePlusPlusAdvantageModule",
     "RLOOAdvantageModule",
 ]

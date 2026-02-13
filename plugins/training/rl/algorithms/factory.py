@@ -7,9 +7,9 @@ from plugins.training.rl.algorithms.config import AlgoConfig, normalize_algo_con
 from plugins.training.rl.reward.modules import WeightedRewardModule
 from plugins.training.rl.update.modules import PolicyGradientUpdateModule, PPOUpdateModule
 
-SUPPORTED_ALGOS = ("reinforce", "ppo", "grpo", "rloo", "dapo", "reinforce++", "maxrl")
-SUPPORTED_ESTIMATORS = ("reinforce", "grpo", "rloo", "dapo", "reinforce++", "maxrl", "gae")
-SUPPORTED_UPDATES = ("ppo", "policy_gradient")
+SUPPORTED_ALGOS = ("reinforce", "ppo", "grpo", "rloo", "dapo", "reinforce++", "maxrl", "remax")
+SUPPORTED_ESTIMATORS = ("reinforce", "grpo", "rloo", "dapo", "reinforce++", "maxrl", "remax", "gae")
+SUPPORTED_UPDATES = ("ppo", "policy_gradient", "remax")
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,7 @@ def create_algorithm(
         GlobalNormAdvantageModule,
         GroupIdGRPOAdvantageModule,
         MaxRLAdvantageModule,
+        ReMaxGreedyBaselineAdvantageModule,
         ReinforcePlusPlusAdvantageModule,
         RLOOAdvantageModule,
     )
@@ -77,6 +78,12 @@ def create_algorithm(
         advantage_module = ReinforcePlusPlusAdvantageModule(eps=eps, clip_range=clip_range)
     elif estimator_name == "maxrl":
         advantage_module = MaxRLAdvantageModule(eps=eps, clip_range=clip_range)
+    elif estimator_name == "remax":
+        baseline_position = int(estimator_kwargs.get("baseline_position", 0))
+        advantage_module = ReMaxGreedyBaselineAdvantageModule(
+            baseline_position=baseline_position,
+            clip_range=clip_range,
+        )
     elif estimator_name == "gae":
         advantage_module = None
     else:  # pragma: no cover

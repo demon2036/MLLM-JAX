@@ -198,6 +198,60 @@ def compute_maxrl_advantages_by_group_id(
     return _maybe_clip(advantages.astype(np.float32), clip_range)
 
 
+
+
+def compute_remax_advantages_by_group_id(
+    *,
+    rewards: Any,
+    group_ids: Any,
+    baseline_position: int = 0,
+    clip_range: float | None = None,
+) -> np.ndarray:
+    """ReMax advantages: per-group greedy baseline.
+
+    For each prompt-group:
+      baseline = reward at `baseline_position` within the group order
+      advantage_i = reward_i - baseline
+
+    The baseline completion itself gets advantage 0.
+
+    Assumes items for each `group_id` are ordered by rollout position.
+    """
+    rewards_np = _as_1d_float32(rewards, name="rewards")
+    group_ids_np = _as_1d_group_ids(group_ids, name="group_ids", expected_size=int(rewards_np.size))
+
+    baseline_pos = int(baseline_position)
+    if baseline_pos < 0:
+        raise ValueError("baseline_position must be >= 0")
+
+    advantages = np.zeros_like(rewards_np, dtype=np.float32)
+
+    # Iterate groups in order of appearance for deterministic behavior.
+    seen: dict[Any, list[int]] = {}
+    for idx, gid in enumerate(group_ids_np.tolist()):
+        indices = seen.get(gid)
+        if indices is None:
+            indices = []
+            seen[gid] = indices
+        indices.append(int(idx))
+
+    for gid, indices in seen.items():
+        if len(indices) <= baseline_pos:
+            raise ValueError(
+                f"group_id {gid!r} has size {len(indices)} <= baseline_position={baseline_pos}; "
+                "ensure rollout.n includes the baseline completion."
+            )
+        baseline_idx = int(indices[baseline_pos])
+        baseline_reward = float(rewards_np[baseline_idx])
+        for idx in indices:
+            if int(idx) == baseline_idx:
+                advantages[int(idx)] = 0.0
+            else:
+                advantages[int(idx)] = float(rewards_np[int(idx)]) - baseline_reward
+
+    return _maybe_clip(advantages.astype(np.float32), clip_range)
+
+
 def build_token_rewards_from_final(
     *,
     rewards: Any,

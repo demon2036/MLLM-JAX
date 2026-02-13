@@ -6,6 +6,7 @@
 - Clone reference repos into `workdir/`: `docs/sops/clone-reference-repos-into-workdir.md`
 - Align MaxRL estimator with upstream `tajwarfahim/maxrl`: `docs/sops/maxrl-estimator-upstream-alignment.md`
 - Check whether ReMax is implemented: `docs/sops/rl-algo-remax-check.md`
+- Deep-dive official ReMax (DeepSpeed-Chat) reference repo: `docs/sops/remax-official-implementation-deepdive.md`
 - Clone AkaliKong/MiniOneRec into repo workdir: `docs/sops/clone-akalikong-minionerec-workdir.md`
 - MiniOneRec SID SFT + eval (projects/sid_sft): `docs/sops/minionerec-sid-sft-and-eval.md`
 - Inspect SFT + GRPO GSM8K data stack: `docs/sops/inspect-sft-grpo-data-stack.md`

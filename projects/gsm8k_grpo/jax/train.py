@@ -17,6 +17,7 @@ from plugins.training.core.tokenizer import prepare_tokenizer
 from plugins.training.rl.advantage.estimators import compute_gae_advantages
 from plugins.training.rl.algorithms import create_algorithm
 from plugins.training.rl.ppo import get_ppo_state, ppo_training_step
+from plugins.training.rl.remax import get_remax_state
 from plugins.training.rl.rollout.dynamic_sampling import (
     build_dynamic_sampling_summary,
     homogeneous_group_flags,
@@ -463,6 +464,21 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             )
 
         value_fn = jax.jit(_value_forward)
+    elif algo.update_name == "remax":
+        update_kwargs = dict(getattr(cfg.algo.update, "kwargs", {}) or {})
+        gamma = float(update_kwargs.get("gamma", 1.0))
+        state, sampler, _state_sharding = get_remax_state(
+            mesh,
+            training_steps=cfg.steps,
+            grad_accum_steps=grad_accum_steps,
+            model_path=cfg.model_path,
+            beta=cfg.train.beta,
+            gamma=gamma,
+            gradient_checkpointing=cfg.train.gradient_checkpointing,
+            create_sampler=True,
+            tx=tx,
+        )
+        train_fn = jax.jit(training_step, donate_argnums=(0,))
     else:
         update_kwargs = dict(getattr(cfg.algo.update, "kwargs", {}) or {})
         adv_zero_entropy_coef = float(update_kwargs.get("adv_zero_entropy_coef", 0.0))
@@ -485,6 +501,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             pg_loss_level=pg_loss_level,
         )
         train_fn = jax.jit(training_step, donate_argnums=(0,))
+
     if os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1":
         from plugins.training.rl.rollout.optimizations import patch_qwen2_attention_decode_fast
 
@@ -497,14 +514,26 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         patch_sampler_generate_fast(sampler)
         if jax.process_index() == 0:
             print("rollout_fast_generate=1 (patched sampler.generate)")
+    baseline_position = 0
+    if algo.estimator_name == "remax":
+        baseline_position = int((getattr(cfg.algo.estimator, "kwargs", {}) or {}).get("baseline_position", 0))
+
     rollout_backend = create_rollout_backend(
         name=rollout_backend_name,
         sampler=sampler,
         tokenizer=None,
         model_path=cfg.model_path,
+        group_size=int(cfg.rollout.n),
+        baseline_position=baseline_position,
     )
+
+    eval_backend_name = rollout_backend_name
+    if str(rollout_backend_name).strip().lower() in {"remax_mixed_naive", "remax_mixed"}:
+        eval_backend_name = "naive"
+        if jax.process_index() == 0:
+            print("eval_rollout_backend=naive (train rollout.backend is remax_mixed_naive)")
+
     eval_sampler = sampler
-    eval_rollout_backend = rollout_backend
     eval_greedy_enabled = os.environ.get("EVAL_GREEDY") == "1" or os.environ.get("EVAL_FULL_GREEDY") == "1"
     if eval_greedy_enabled and eval_qas:
         from jax.experimental.shard_map import shard_map
@@ -536,17 +565,21 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
 
             patch_sampler_generate_fast(eval_sampler)
 
-        eval_rollout_backend = create_rollout_backend(
-            name=rollout_backend_name,
-            sampler=eval_sampler,
-            tokenizer=None,
-            model_path=cfg.model_path,
-        )
         if jax.process_index() == 0:
             print("eval_greedy=1 (eval rollout uses argmax sampling)")
 
+    eval_rollout_backend = create_rollout_backend(
+        name=eval_backend_name,
+        sampler=eval_sampler,
+        tokenizer=None,
+        model_path=cfg.model_path,
+        group_size=int(cfg.rollout.n),
+        baseline_position=baseline_position,
+    )
+
     rollout_module = RolloutBackendModule(backend=rollout_backend)
     eval_rollout_module = RolloutBackendModule(backend=eval_rollout_backend)
+
 
     wandb = maybe_init_wandb(
         cfg=cfg.to_logging_dict(),

@@ -1,0 +1,85 @@
+# ReMax/GSM8K (test-monitor; clean run: no checkpoint resume)
+# - steps=400
+# - rollout.batch_size=16 prompts/step (global), rollout.n=8 sequences/prompt-group (1 greedy baseline + 7 sampled)
+# - token-local KL shaping via train.beta (kl_coef)
+# - train micro_batch_size_per_device=2 to fit KL shaping (ref model) on v6e-8 HBM
+# - full test-split eval every 50 steps
+# - Orbax checkpoints to GCS (resume disabled to guarantee a fresh start)
+# max_length_total = 512 + 1024 = 1536
+model_path: Qwen/Qwen2.5-3B-Instruct
+steps: 400
+
+rollout:
+  backend: remax_mixed_naive
+  batch_size: 16
+  n: 8
+  global_length: 512
+  max_length_sample: 1024
+  micro_batch_size: null
+  micro_batch_size_per_device: 32
+  dynamic_sampling:
+    enabled: false
+    trigger: homogeneous_group
+    metric: acc
+    homogeneity_threshold: 1.0
+    min_unique_reward_values: 2
+    max_extra_roll_rounds: 10
+    target_valid_groups: null
+    fallback_policy: keep_last
+
+train:
+  micro_batch_size: null
+  micro_batch_size_per_device: 2
+  max_length_total: 1536
+  ppo_epochs: 1
+  grad_accum_steps: 8
+  # Used as kl_coef for token-local KL shaping: -(logp - logp_ref) * beta.
+  beta: 0.04
+  gradient_checkpointing: true
+  optimizer:
+    name: lion
+    kwargs:
+      clip_norm: 1.0
+      weight_decay: 1.0e-8
+    lr_schedule:
+      name: warmup_cosine
+      kwargs:
+        init_value: 0.0
+        peak_value: 1.0e-6
+        end_value: 0.0
+        warmup_ratio: 0.05
+        warmup_steps: null
+
+algo:
+  name: remax
+  estimator:
+    name: remax
+    kwargs:
+      baseline_position: 0
+      eps: 1.0e-4
+      clip_range: null
+  update:
+    name: remax
+    kwargs:
+      gamma: 1.0
+
+mesh_shape: 1,-1,1
+
+wandb_project: test-monitor
+wandb_mode: online
+wandb_name: null
+
+reward_weights: [1.0, 0.5, 0.5]
+
+eval_every_steps: 0
+eval_batches_per_process: 1
+eval_split: test
+eval_rollout_n: 1
+eval_full_every_steps: 50
+eval_full_sweep: false
+
+checkpoint:
+  dir: gs://mllm-jax-test-monitor-ckpt-516801686594-260213/remax_gsm8k/remax_token_kl0p04_mb2_bs16_roll8_steps400_evalfull50_v6e8
+  save_every_steps: 50
+  max_to_keep: 3
+  resume: false

@@ -92,17 +92,21 @@ class ReMaxPolicyGradientModule(nn.Module):
         chosen_ids = input_ids[:, 1:]
         completion_mask = _as_float32(labels[:, 1:])
 
+        log_probs = jax.nn.log_softmax(_as_float32(logits[:, :-1, :]), axis=-1)
         per_token_logps = jnp.take_along_axis(
-            jax.nn.log_softmax(logits[:, :-1, :], axis=-1),
+            log_probs,
             chosen_ids[..., None],
             axis=-1,
         )[..., 0]
+
+        probs = jnp.exp(log_probs)
+        token_entropy = -jnp.sum(probs * log_probs, axis=-1)
 
         kl_log_ratio = jnp.zeros_like(per_token_logps, dtype=jnp.float32)
         kl_shaping = jnp.zeros_like(per_token_logps, dtype=jnp.float32)
         if ref_logits is not None:
             ref_per_token_logps = jnp.take_along_axis(
-                jax.nn.log_softmax(ref_logits[:, :-1, :], axis=-1),
+                jax.nn.log_softmax(_as_float32(ref_logits[:, :-1, :]), axis=-1),
                 chosen_ids[..., None],
                 axis=-1,
             )[..., 0]
@@ -124,6 +128,8 @@ class ReMaxPolicyGradientModule(nn.Module):
 
         policy_loss = -jnp.sum(returns * per_token_logps * completion_mask) / total_valid_token_count
 
+        entropy = jnp.sum(token_entropy * completion_mask) / total_valid_token_count
+
         return_mean = jnp.sum(returns * completion_mask) / total_valid_token_count
         kl_mean = jnp.sum(kl_log_ratio * completion_mask) / total_valid_token_count
         baseline_fraction = _as_float32(inputs.get("is_baseline", jnp.zeros((advantages.shape[0],), dtype=jnp.int32))).mean()
@@ -131,6 +137,7 @@ class ReMaxPolicyGradientModule(nn.Module):
         return {
             "loss": policy_loss,
             "policy_loss": policy_loss,
+            "entropy": entropy,
             "return_mean": return_mean,
             "adv_mean": jnp.mean(advantages),
             "kl_log_ratio_mean": kl_mean,

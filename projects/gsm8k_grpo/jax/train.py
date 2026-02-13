@@ -1133,16 +1133,44 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         labels_np = np.asarray(datas_np["labels"])
         attn_np = np.asarray(datas_np["attention_mask"])
         completion_len_local = labels_np.sum(axis=1).astype(np.float32)
+        completion_len_loss_local = labels_np[:, 1:].sum(axis=1).astype(np.float32)
         total_len_local = attn_np.sum(axis=1).astype(np.float32)
         prompt_len_local = (total_len_local - completion_len_local).astype(np.float32)
 
         completion_len_global = np.asarray(process_allgather(completion_len_local)).reshape(-1)
+        completion_len_loss_global = np.asarray(process_allgather(completion_len_loss_local)).reshape(-1)
         total_len_global = np.asarray(process_allgather(total_len_local)).reshape(-1)
         prompt_len_global = np.asarray(process_allgather(prompt_len_local)).reshape(-1)
 
         completion_stats = _stats_1d(completion_len_global)
         prompt_stats = _stats_1d(prompt_len_global)
         total_len_stats = _stats_1d(total_len_global)
+
+        adv_len_bias_log: dict[str, Any] = {}
+        if advantages_np.ndim == 1 and completion_len_loss_global.size == advantages_global.size:
+            adv_seq = advantages_global.astype(np.float32).reshape(-1)
+            len_seq = completion_len_loss_global.astype(np.float32).reshape(-1)
+
+            len_sum = float(len_seq.sum())
+            if len_sum > 0:
+                adv_token_weighted_mean = float((adv_seq * len_seq).sum() / len_sum)
+            else:
+                adv_token_weighted_mean = float("nan")
+
+            adv_mean = float(adv_seq.mean()) if adv_seq.size > 0 else float("nan")
+            len_mean = float(len_seq.mean()) if len_seq.size > 0 else float("nan")
+            adv_std = float(adv_seq.std()) if adv_seq.size > 0 else 0.0
+            len_std = float(len_seq.std()) if len_seq.size > 0 else 0.0
+            if adv_std > 0 and len_std > 0:
+                corr = float(((adv_seq - adv_mean) * (len_seq - len_mean)).mean() / (adv_std * len_std))
+            else:
+                corr = float("nan")
+
+            adv_len_bias_log = {
+                "train-reward/advantage/token_weighted_mean": adv_token_weighted_mean,
+                "train-reward/advantage/token_weighted_minus_mean": adv_token_weighted_mean - adv_mean,
+                "train-reward/advantage/completion_len_corr": corr,
+            }
 
         valid_tokens_local = int(labels_np[:, 1:].sum())
         valid_tokens_global = int(np.asarray(process_allgather(np.asarray([valid_tokens_local], dtype=np.int64))).sum())
@@ -1185,6 +1213,8 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         }
         if adv_sign_log:
             train_log.update(adv_sign_log)
+        if adv_len_bias_log:
+            train_log.update(adv_len_bias_log)
         if dynamic_enabled:
             if dynamic_total_groups > 0:
                 initial_ratio = float(dynamic_initial_homogeneous) / float(dynamic_total_groups)

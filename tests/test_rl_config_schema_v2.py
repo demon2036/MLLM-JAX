@@ -29,6 +29,36 @@ class TestRlConfigSchemaV2(unittest.TestCase):
                 )
             )
 
+    def test_policy_gradient_loss_level_defaults_to_token(self) -> None:
+        normalized, _algo_name, estimator_name, update_name = normalize_algo_config(
+            AlgoConfig(
+                estimator=PluginConfig(name="grpo", kwargs={}),
+                update=PluginConfig(name="policy_gradient", kwargs={}),
+            )
+        )
+        self.assertEqual(estimator_name, "grpo")
+        self.assertEqual(update_name, "policy_gradient")
+        self.assertEqual(normalized.update.kwargs["loss_level"], "token")
+
+    def test_policy_gradient_loss_level_sequence_is_accepted(self) -> None:
+        normalized, _algo_name, _estimator_name, update_name = normalize_algo_config(
+            AlgoConfig(
+                estimator=PluginConfig(name="grpo", kwargs={}),
+                update=PluginConfig(name="policy_gradient", kwargs={"loss_level": "sequence"}),
+            )
+        )
+        self.assertEqual(update_name, "policy_gradient")
+        self.assertEqual(normalized.update.kwargs["loss_level"], "sequence")
+
+    def test_policy_gradient_loss_level_invalid_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            normalize_algo_config(
+                AlgoConfig(
+                    estimator=PluginConfig(name="grpo", kwargs={}),
+                    update=PluginConfig(name="policy_gradient", kwargs={"loss_level": "banana"}),
+                )
+            )
+
     def test_ppo_defaults_filled(self) -> None:
         normalized, _algo_name, estimator_name, update_name = normalize_algo_config(
             AlgoConfig(

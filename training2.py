@@ -57,6 +57,7 @@ def get_state(
     tx: Any | None = None,
     adv_zero_entropy_coef: float = 0.0,
     adv_zero_epsilon: float = 0.0,
+    pg_loss_level: str = "token",
 ):
     model, params, tokenizer = get_model(mesh,model_path=model_path, )
     model_ref = get_model(mesh, model_path=model_path, only_model=True) if beta != 0 else None
@@ -74,6 +75,7 @@ def get_state(
             max_lengths=max_lengths,
             adv_zero_entropy_coef=float(adv_zero_entropy_coef),
             adv_zero_epsilon=float(adv_zero_epsilon),
+            loss_level=str(pg_loss_level),
         )
     else:
         train_module = TrainGRPOModule(
@@ -85,6 +87,7 @@ def get_state(
             max_lengths=max_lengths,
             adv_zero_entropy_coef=float(adv_zero_entropy_coef),
             adv_zero_epsilon=float(adv_zero_epsilon),
+            loss_level=str(pg_loss_level),
         )
 
 

@@ -22,6 +22,10 @@ DEFAULT_UPDATE_KWARGS: dict[str, dict[str, Any]] = {
         # logged to W&B configs and can be changed only via YAML (no env overrides).
         "adv_zero_entropy_coef": 0.0,
         "adv_zero_epsilon": 0.0,
+        # Policy-gradient loss aggregation level:
+        # - "token": average over all valid tokens (current default)
+        # - "sequence": average per sequence, then mean over sequences
+        "loss_level": "token",
     },
     "ppo": {
         "value_coef": 0.5,
@@ -184,6 +188,26 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
     if update_name == "policy_gradient":
         adv_zero_entropy_coef = float(merged["adv_zero_entropy_coef"])
         adv_zero_epsilon = float(merged["adv_zero_epsilon"])
+        loss_level_raw = merged["loss_level"]
+        loss_level = str(loss_level_raw).strip().lower()
+        loss_level_aliases = {
+            "token": "token",
+            "tokens": "token",
+            "per_token": "token",
+            "tok": "token",
+            "sequence": "sequence",
+            "seq": "sequence",
+            "per_sequence": "sequence",
+            "sequence_level": "sequence",
+        }
+        if loss_level not in loss_level_aliases:
+            allowed = sorted(set(loss_level_aliases.values()))
+            raise ValueError(
+                "algo.update.kwargs.loss_level must be one of: "
+                + ", ".join(repr(x) for x in allowed)
+                + f"; got {loss_level_raw!r}"
+            )
+        loss_level = loss_level_aliases[loss_level]
         if adv_zero_entropy_coef < 0:
             raise ValueError("algo.update.kwargs.adv_zero_entropy_coef must be >= 0")
         if adv_zero_epsilon < 0:
@@ -191,6 +215,7 @@ def _normalize_update_kwargs(update_name: str, kwargs: dict[str, Any]) -> dict[s
         return {
             "adv_zero_entropy_coef": adv_zero_entropy_coef,
             "adv_zero_epsilon": adv_zero_epsilon,
+            "loss_level": loss_level,
         }
 
     return {

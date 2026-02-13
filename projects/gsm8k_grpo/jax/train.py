@@ -467,6 +467,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
         update_kwargs = dict(getattr(cfg.algo.update, "kwargs", {}) or {})
         adv_zero_entropy_coef = float(update_kwargs.get("adv_zero_entropy_coef", 0.0))
         adv_zero_epsilon = float(update_kwargs.get("adv_zero_epsilon", 0.0))
+        pg_loss_level = str(update_kwargs.get("loss_level", "token"))
 
         state, sampler, _state_sharding = get_state(
             mesh,
@@ -481,6 +482,7 @@ def run_grpo_gsm8k(cfg: GRPOGsm8kConfig) -> None:
             tx=tx,
             adv_zero_entropy_coef=adv_zero_entropy_coef,
             adv_zero_epsilon=adv_zero_epsilon,
+            pg_loss_level=pg_loss_level,
         )
         train_fn = jax.jit(training_step, donate_argnums=(0,))
     if os.environ.get("ROLLOUT_FAST_QWEN2_DECODE_ATTENTION") == "1":

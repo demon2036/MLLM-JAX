@@ -93,6 +93,7 @@ class TrainGRPOModule(nn.Module):
     entropy_threshold: float = 0.3 # Used only for monitoring metrics now
     adv_zero_entropy_coef: float = 0.0
     adv_zero_epsilon: float = 0.0
+    loss_level: str = "token"
 
     def __call__(self, inputs) -> ArrayTree:
         input_ids = inputs['input_ids']
@@ -181,7 +182,13 @@ class TrainGRPOModule(nn.Module):
         total_valid_token_count = jnp.asarray(inputs.get("total_valid_token_count", mask_loss_f.sum()), dtype=jnp.float32)
         total_valid_token_count = jnp.maximum(total_valid_token_count, 1.0)
 
-        loss_pg = ((per_token_loss * mask_loss_f).sum()) / total_valid_token_count
+        loss_level = str(self.loss_level or "token").strip().lower()
+        if loss_level == "sequence":
+            seq_token_count = jnp.maximum(mask_loss_f.sum(axis=-1), 1.0)
+            per_seq_loss = (per_token_loss * mask_loss_f).sum(axis=-1) / seq_token_count
+            loss_pg = per_seq_loss.mean()
+        else:
+            loss_pg = ((per_token_loss * mask_loss_f).sum()) / total_valid_token_count
 
         advantages = jnp.asarray(inputs["advantages"], dtype=jnp.float32).reshape(-1)
         adv_zero_eps = float(self.adv_zero_epsilon)

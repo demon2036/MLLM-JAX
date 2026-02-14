@@ -286,6 +286,13 @@ while true; do
         exit 0
       fi
 
+      if [[ "$exit_code" == "42" ]]; then
+        echo "Preemption-signaled exit (42). Deleting and restarting..."
+        _delete_tpu "$TPU_NAME" "$ZONE"
+        restarts=$((restarts + 1))
+        break
+      fi
+
       echo "Non-zero exit. Tail of log:"
       set +e
       _remote "$TPU_NAME" "$ZONE" "set -euo pipefail; cd /root/MLLM-JAX; tail -n 80 '$LATEST_LOG' || true" || true

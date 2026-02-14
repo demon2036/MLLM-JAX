@@ -25,6 +25,7 @@ Optional:
   --branch BRANCH_OR_SHA    Git branch or commit to run (default: test-rl)
   --repo-url URL            Git repo URL (default: https://github.com/demon2036/MLLM-JAX.git)
   --name-prefix PREFIX      TPU name prefix (default: mllm-jax-<type>-grpo-autorestart)
+  --persist-disk DISK       Attach a zonal PD and persist /root/miniconda3,/root/.cache,/root/MLLM-JAX (default: disabled)
   --env-name ENV            Conda env name (default: mllm-jax)
   --python VERSION          Conda Python version (default: 3.12)
   --poll-secs N             Poll interval seconds (default: 60)
@@ -34,6 +35,8 @@ Notes:
   - Secrets are synced via scripts/sync_env_to_tpu_vm.sh (expects local .env).
   - Code is synced via Git on the TPU VM (no scp for code).
   - The workload is launched via: scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh
+  - If --persist-disk is set, the first run will still install deps once, but
+    subsequent restarts should be much faster (conda/pip/HF/JAX caches persist).
 USAGE
 }
 
@@ -56,6 +59,9 @@ USE_SPOT="1"
 BRANCH_OR_SHA="test-rl"
 REPO_URL="https://github.com/demon2036/MLLM-JAX.git"
 NAME_PREFIX=""
+
+PERSIST_DISK=""
+PERSIST_MOUNT="/mnt/persist"
 
 ENV_NAME="mllm-jax"
 PYTHON_VERSION="3.12"
@@ -85,6 +91,8 @@ while [[ $# -gt 0 ]]; do
       REPO_URL="${2:-}"; shift 2 ;;
     --name-prefix)
       NAME_PREFIX="${2:-}"; shift 2 ;;
+    --persist-disk)
+      PERSIST_DISK="${2:-}"; shift 2 ;;
     --env-name)
       ENV_NAME="${2:-}"; shift 2 ;;
     --python)
@@ -191,6 +199,31 @@ _delete_tpu() {
   set -e
 }
 
+_attach_persist_disk() {
+  local name="$1"
+  local zone="$2"
+  local disk="$3"
+
+  echo "Attaching persistent disk: $disk"
+  set +e
+  gcloud alpha compute tpus tpu-vm attach-disk "$name" \
+    --project="$PROJECT" \
+    --zone="$zone" \
+    --disk="$disk" \
+    --quiet
+  local rc=$?
+  set -e
+  return $rc
+}
+
+_setup_persist_mount_and_symlinks() {
+  local name="$1"
+  local zone="$2"
+  local disk="$3"
+
+  _remote "$name" "$zone" "set -euo pipefail; DISK='$disk'; MNT='$PERSIST_MOUNT'; DEV=/dev/disk/by-id/google-$disk; for i in $(seq 1 60); do [ -b $DEV ] && break; sleep 1; done; if [ ! -b $DEV ]; then echo disk_device_not_found dev=$DEV >&2; ls -la /dev/disk/by-id || true; exit 1; fi; mkdir -p $MNT; if ! mountpoint -q $MNT; then if ! blkid $DEV >/dev/null 2>&1; then mkfs.ext4 -F $DEV; fi; mount $DEV $MNT; fi; mkdir -p $MNT/miniconda3 $MNT/root-cache $MNT/MLLM-JAX; if [ -e /root/miniconda3 ] && [ ! -L /root/miniconda3 ]; then rm -rf /root/miniconda3; fi; ln -sfn $MNT/miniconda3 /root/miniconda3; if [ -e /root/.cache ] && [ ! -L /root/.cache ]; then rm -rf /root/.cache; fi; ln -sfn $MNT/root-cache /root/.cache; if [ -e /root/MLLM-JAX ] && [ ! -L /root/MLLM-JAX ]; then rm -rf /root/MLLM-JAX; fi; ln -sfn $MNT/MLLM-JAX /root/MLLM-JAX; echo persist_ready=1 mnt=$MNT dev=$DEV; df -h $MNT || true"
+}
+
 restarts=0
 attempt=0
 while true; do
@@ -214,6 +247,9 @@ while true; do
   echo "PROVISIONING=$([[ "$USE_SPOT" == "1" ]] && echo spot || echo on-demand)"
   echo "BRANCH_OR_SHA=$BRANCH_OR_SHA"
   echo "CONFIG_PATH=$CONFIG_PATH"
+  if [[ -n "$PERSIST_DISK" ]]; then
+    echo "PERSIST_DISK=$PERSIST_DISK"
+  fi
 
   set +e
   if [[ "$USE_SPOT" == "1" ]]; then
@@ -238,12 +274,27 @@ while true; do
     continue
   fi
 
+  if [[ -n "$PERSIST_DISK" ]]; then
+    if ! _attach_persist_disk "$TPU_NAME" "$ZONE" "$PERSIST_DISK"; then
+      echo "attach-disk failed. Deleting TPU and retrying..." >&2
+      _delete_tpu "$TPU_NAME" "$ZONE"
+      restarts=$((restarts + 1))
+      sleep 30
+      continue
+    fi
+    _setup_persist_mount_and_symlinks "$TPU_NAME" "$ZONE" "$PERSIST_DISK"
+  fi
+
   scripts/sync_env_to_tpu_vm.sh --name "$TPU_NAME" --zone "$ZONE" --project "$PROJECT" --worker all
   scripts/bootstrap_miniconda_on_tpu_vm.sh --name "$TPU_NAME" --zone "$ZONE" --project "$PROJECT" --env-name "$ENV_NAME" --python "$PYTHON_VERSION"
 
   _remote "$TPU_NAME" "$ZONE" "set -euo pipefail; REPO_URL='$REPO_URL'; REPO_DIR=/root/MLLM-JAX; if [ ! -d \"\$REPO_DIR/.git\" ]; then git clone \"\$REPO_URL\" \"\$REPO_DIR\"; fi; cd \"\$REPO_DIR\"; git fetch --all --prune; git checkout '$BRANCH_OR_SHA'; if git rev-parse --verify \"origin/$BRANCH_OR_SHA\" >/dev/null 2>&1; then git reset --hard \"origin/$BRANCH_OR_SHA\"; fi; echo git_head=\"\$(git rev-parse --short HEAD)\"; git status -sb"
 
-  _remote "$TPU_NAME" "$ZONE" "set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate '$ENV_NAME'; pip install -U pip; pip install -U \"jax[tpu]\" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html; pip install -U torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu; cd /root/MLLM-JAX; pip install -U -r requirements-tpu.txt; python -c 'import jax; print(jax.__version__); print(jax.default_backend())'"
+  if [[ -n "$PERSIST_DISK" ]]; then
+    _remote "$TPU_NAME" "$ZONE" "set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate '$ENV_NAME'; cd /root/MLLM-JAX; if [ ! -f .tpu_deps_installed ]; then pip install -U pip; pip install -U \"jax[tpu]\" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html; pip install -U torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu; pip install -U -r requirements-tpu.txt; python -c 'import jax; print(jax.__version__); print(jax.default_backend())'; touch .tpu_deps_installed; else echo deps_already_installed=1; fi"
+  else
+    _remote "$TPU_NAME" "$ZONE" "set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate '$ENV_NAME'; pip install -U pip; pip install -U \"jax[tpu]\" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html; pip install -U torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu; cd /root/MLLM-JAX; pip install -U -r requirements-tpu.txt; python -c 'import jax; print(jax.__version__); print(jax.default_backend())'"
+  fi
 
   _remote "$TPU_NAME" "$ZONE" "set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh --config '$CONFIG_PATH'"
 

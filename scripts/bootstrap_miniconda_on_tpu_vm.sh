@@ -73,7 +73,7 @@ if [[ -z "$PROJECT" ]]; then
   exit 1
 fi
 
-install_miniconda_cmd='set -euo pipefail; if [ ! -d /root/miniconda3 ]; then curl -fsSL -o /root/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh; bash /root/miniconda.sh -b -p /root/miniconda3; rm -f /root/miniconda.sh; fi; /root/miniconda3/bin/conda --version'
+install_miniconda_cmd='set -euo pipefail; if [ ! -x /root/miniconda3/bin/conda ]; then rm -rf /root/miniconda3; curl -fsSL -o /root/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh; bash /root/miniconda.sh -b -p /root/miniconda3; rm -f /root/miniconda.sh; fi; /root/miniconda3/bin/conda --version'
 create_env_cmd="set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true; conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true; if ! conda env list | grep -Eq \"^${ENV_NAME}[[:space:]]\"; then conda create -y -n \"$ENV_NAME\" python=$PYTHON_VERSION; fi; conda activate \"$ENV_NAME\"; python --version; pip install -U pip"
 
 gcloud alpha compute tpus tpu-vm ssh "root@${TPU_NAME}" \

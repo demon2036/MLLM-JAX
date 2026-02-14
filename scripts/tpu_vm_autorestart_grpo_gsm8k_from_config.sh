@@ -243,7 +243,7 @@ while true; do
 
   _remote "$TPU_NAME" "$ZONE" "set -euo pipefail; REPO_URL='$REPO_URL'; REPO_DIR=/root/MLLM-JAX; if [ ! -d \"\$REPO_DIR/.git\" ]; then git clone \"\$REPO_URL\" \"\$REPO_DIR\"; fi; cd \"\$REPO_DIR\"; git fetch --all --prune; git checkout '$BRANCH_OR_SHA'; if git rev-parse --verify \"origin/$BRANCH_OR_SHA\" >/dev/null 2>&1; then git reset --hard \"origin/$BRANCH_OR_SHA\"; fi; echo git_head=\"\$(git rev-parse --short HEAD)\"; git status -sb"
 
-  _remote "$TPU_NAME" "$ZONE" "set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate '$ENV_NAME'; pip install -U pip; pip install -U \"jax[tpu]\" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html; pip install -U torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu; cd /root/MLLM-JAX; pip install -U -r requirements-tpu.txt; python - <<'PY'\nimport jax\nprint('jax_version=', jax.__version__)\nprint('backend=', jax.default_backend())\nPY"
+  _remote "$TPU_NAME" "$ZONE" "set -euo pipefail; source /root/miniconda3/etc/profile.d/conda.sh; conda activate '$ENV_NAME'; pip install -U pip; pip install -U \"jax[tpu]\" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html; pip install -U torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu; cd /root/MLLM-JAX; pip install -U -r requirements-tpu.txt; python -c 'import jax; print(jax.__version__); print(jax.default_backend())'"
 
   _remote "$TPU_NAME" "$ZONE" "set -euo pipefail; cd /root/MLLM-JAX; bash scripts/tpu_vm_start_grpo_gsm8k_from_config_nohup.sh --config '$CONFIG_PATH'"
 

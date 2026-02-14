@@ -28,3 +28,6 @@ memo/
 .env
 .env.*
 !.env.example
+
+# Local logs (never commit)
+logs/
